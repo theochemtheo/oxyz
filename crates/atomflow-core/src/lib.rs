@@ -1,3 +1,7 @@
+pub mod extxyz;
+
+pub use extxyz::{ExtxyzError, Frame, read_first_frame};
+
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
