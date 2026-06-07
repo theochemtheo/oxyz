@@ -1,0 +1,33 @@
+# Python environments
+.venv/
+
+# Python bytecode/cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python packaging/build artifacts
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Test/lint/type-check caches
+.pytest_cache/
+.ruff_cache/
+.ty/
+.coverage
+.coverage.*
+htmlcov/
+
+# Rust
+target/
+
+# Compiled extension artifacts that may appear locally
+*.so
+*.pyd
+*.dylib
+*.dll
+
+# macOS
+.DS_Store

@@ -1,0 +1,41 @@
+[build-system]
+requires = ["maturin>=1.8,<2"]
+build-backend = "maturin"
+
+[project]
+name = "atomflow"
+version = "0.1.0"
+requires-python = ">=3.11"
+license = "MIT OR Apache-2.0"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "maturin>=1.13.3",
+    "pytest>=9.0.3",
+    "ruff>=0.15.16",
+    "ty>=0.0.44",
+]
+
+[tool.ruff]
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "UP",
+    "B",
+    "SIM",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.maturin]
+manifest-path = "crates/atomflow-py/Cargo.toml"
+module-name = "atomflow._rust"
+python-source = "src"
+features = ["extension-module"]
