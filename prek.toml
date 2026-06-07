@@ -1,0 +1,144 @@
+default_install_hook_types = ["pre-commit", "pre-push"]
+
+exclude = { glob = [
+  ".venv/**",
+  "target/**",
+  "dist/**",
+  "build/**",
+] }
+
+[[repos]]
+repo = "builtin"
+
+[[repos.hooks]]
+id = "trailing-whitespace"
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "end-of-file-fixer"
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "check-toml"
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "check-yaml"
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "check-merge-conflict"
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "detect-private-key"
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "check-added-large-files"
+stages = ["pre-commit"]
+
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "prek-validate-config"
+name = "prek validate-config"
+language = "system"
+entry = "uv run prek validate-config prek.toml"
+files = "^prek\\.toml$"
+pass_filenames = false
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "ruff-format"
+name = "ruff format"
+language = "system"
+entry = "uv run ruff format"
+files = "\\.pyi?$"
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "ruff-check-fix"
+name = "ruff check --fix"
+language = "system"
+entry = "uv run ruff check --fix"
+files = "\\.pyi?$"
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "cargo-fmt"
+name = "cargo fmt"
+language = "system"
+entry = "cargo fmt --all"
+files = "\\.rs$"
+pass_filenames = false
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "ruff-format-check"
+name = "ruff format --check"
+language = "system"
+entry = "uv run ruff format --check ."
+pass_filenames = false
+always_run = true
+stages = ["pre-push"]
+
+[[repos.hooks]]
+id = "ruff-check"
+name = "ruff check"
+language = "system"
+entry = "uv run ruff check ."
+pass_filenames = false
+always_run = true
+stages = ["pre-push"]
+
+[[repos.hooks]]
+id = "ty-check"
+name = "ty check"
+language = "system"
+entry = "uv run ty check"
+pass_filenames = false
+always_run = true
+stages = ["pre-push"]
+
+[[repos.hooks]]
+id = "cargo-fmt-check"
+name = "cargo fmt --check"
+language = "system"
+entry = "cargo fmt --all --check"
+pass_filenames = false
+always_run = true
+stages = ["pre-push"]
+
+[[repos.hooks]]
+id = "cargo-clippy"
+name = "cargo clippy"
+language = "system"
+entry = "cargo clippy --workspace --all-targets --all-features -- -D warnings"
+pass_filenames = false
+always_run = true
+stages = ["pre-push"]
+
+[[repos.hooks]]
+id = "cargo-test"
+name = "cargo test"
+language = "system"
+entry = "cargo test --workspace"
+pass_filenames = false
+always_run = true
+stages = ["pre-push"]
+
+[[repos.hooks]]
+id = "python-test"
+name = "python tests"
+language = "system"
+entry = """
+uv run maturin develop
+uv run pytest
+"""
+shell = "sh"
+pass_filenames = false
+always_run = true
+stages = ["pre-push"]
