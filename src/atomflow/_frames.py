@@ -3,18 +3,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
+import numpy.typing as npt
+
 import atomflow._rust as _rust
 
 
 @dataclass(frozen=True, slots=True)
 class Frame:
-    numbers: list[int]
-    positions: list[list[float]]
-    forces: list[list[float]]
+    numbers: npt.NDArray[np.uint8]
+    positions: npt.NDArray[np.float64]
+    forces: npt.NDArray[np.float64]
     energy: float
-    cell: list[list[float]]
-    stress: list[float]
-    pbc: list[bool]
+    cell: npt.NDArray[np.float64]
+    stress: npt.NDArray[np.float64]
+    pbc: npt.NDArray[np.bool_]
 
 
 def read_first_frame(path: str | Path) -> Frame:

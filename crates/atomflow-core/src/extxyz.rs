@@ -8,12 +8,27 @@ use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Frame {
+    /// Atomic numbers, shape `[n_atoms]`.
     pub numbers: Vec<u8>,
-    pub positions: Vec<[f64; 3]>,
-    pub forces: Vec<[f64; 3]>,
+
+    /// Cartesian positions in row-major order, shape `[n_atoms, 3]`.
+    pub positions: Vec<f64>,
+
+    /// Cartesian forces in row-major order, shape `[n_atoms, 3]`.
+    pub forces: Vec<f64>,
+
     pub energy: f64,
-    pub cell: [[f64; 3]; 3],
+
+    /// Cell matrix in row-major order, shape `[3, 3]`.
+    ///
+    /// Rows are lattice vectors. Standard extxyz `Lattice` metadata is decoded
+    /// from Fortran order into this representation.
+    pub cell: [f64; 9],
+
+    /// Stress in 6-component Voigt-style order.
     pub stress: [f64; 6],
+
+    /// Periodic boundary conditions along the three lattice directions.
     pub pbc: [bool; 3],
 }
 
@@ -82,14 +97,14 @@ pub fn read_first_frame(path: impl AsRef<Path>) -> Result<Frame> {
         });
     }
 
-    let cell = parse_matrix3(required_metadata(&metadata, "Lattice")?, "Lattice")?;
+    let cell = parse_lattice(required_metadata(&metadata, "Lattice")?)?;
     let energy = parse_one_f64(required_metadata(&metadata, "energy")?, "energy")?;
     let stress = parse_fixed_f64::<6>(required_metadata(&metadata, "stress")?, "stress")?;
     let pbc = parse_fixed_bool::<3>(required_metadata(&metadata, "pbc")?, "pbc")?;
 
     let mut numbers = Vec::with_capacity(atom_count);
-    let mut positions = Vec::with_capacity(atom_count);
-    let mut forces = Vec::with_capacity(atom_count);
+    let mut positions = Vec::with_capacity(atom_count * 3);
+    let mut forces = Vec::with_capacity(atom_count * 3);
 
     for atom_index in 0..atom_count {
         let line_number = atom_index + 3;
@@ -105,13 +120,13 @@ pub fn read_first_frame(path: impl AsRef<Path>) -> Result<Frame> {
 
         numbers.push(atomic_number(columns[0])?);
 
-        positions.push([
+        positions.extend_from_slice(&[
             parse_f64(columns[1], "positions")?,
             parse_f64(columns[2], "positions")?,
             parse_f64(columns[3], "positions")?,
         ]);
 
-        forces.push([
+        forces.extend_from_slice(&[
             parse_f64(columns[4], "forces")?,
             parse_f64(columns[5], "forces")?,
             parse_f64(columns[6], "forces")?,
@@ -228,16 +243,6 @@ fn parse_one_f64(value: &str, field: &'static str) -> Result<f64> {
     Ok(values[0])
 }
 
-fn parse_matrix3(value: &str, field: &'static str) -> Result<[[f64; 3]; 3]> {
-    let values = parse_fixed_f64::<9>(value, field)?;
-
-    Ok([
-        [values[0], values[1], values[2]],
-        [values[3], values[4], values[5]],
-        [values[6], values[7], values[8]],
-    ])
-}
-
 fn parse_fixed_f64<const N: usize>(value: &str, field: &'static str) -> Result<[f64; N]> {
     let parts: Vec<&str> = value.split_whitespace().collect();
 
@@ -303,4 +308,15 @@ fn atomic_number(symbol: &str) -> Result<u8> {
             symbol: symbol.to_owned(),
         }),
     }
+}
+
+fn parse_lattice(value: &str) -> Result<[f64; 9]> {
+    let values = parse_fixed_f64::<9>(value, "Lattice")?;
+
+    // extxyz/ASE stores Lattice in Fortran order.
+    // atomflow stores and exposes cells in row-major order with lattice vectors as rows.
+    Ok([
+        values[0], values[3], values[6], values[1], values[4], values[7], values[2], values[5],
+        values[8],
+    ])
 }

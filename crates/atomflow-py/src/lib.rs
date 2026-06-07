@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use ndarray::Array2;
+use numpy::{IntoPyArray, PyArray2};
 use pyo3::{
     exceptions::{PyOSError, PyValueError},
     prelude::*,
@@ -10,17 +12,27 @@ use pyo3::{
 fn read_first_frame<'py>(py: Python<'py>, path: PathBuf) -> PyResult<Bound<'py, PyDict>> {
     let frame = atomflow_core::read_first_frame(path).map_err(extxyz_error_to_py)?;
 
-    // PyO3 treats `Vec<u8>` as binary on python side, switch to u16 to avoid this
-    let numbers: Vec<u16> = frame.numbers.into_iter().map(u16::from).collect();
-    
+    let atomflow_core::Frame {
+        numbers,
+        positions,
+        forces,
+        energy,
+        cell,
+        stress,
+        pbc,
+    } = frame;
+
+    let n_atoms = numbers.len();
+
     let data = PyDict::new(py);
-    data.set_item("numbers", numbers)?;
-    data.set_item("positions", vectors3_to_lists(frame.positions))?;
-    data.set_item("forces", vectors3_to_lists(frame.forces))?;
-    data.set_item("energy", frame.energy)?;
-    data.set_item("cell", matrix3_to_lists(frame.cell))?;
-    data.set_item("stress", frame.stress.to_vec())?;
-    data.set_item("pbc", frame.pbc.to_vec())?;
+
+    data.set_item("numbers", numbers.into_pyarray(py))?;
+    data.set_item("positions", array2_from_flat(py, positions, n_atoms, 3)?)?;
+    data.set_item("forces", array2_from_flat(py, forces, n_atoms, 3)?)?;
+    data.set_item("energy", energy)?;
+    data.set_item("cell", array2_from_flat(py, cell.to_vec(), 3, 3)?)?;
+    data.set_item("stress", stress.to_vec().into_pyarray(py))?;
+    data.set_item("pbc", pbc.to_vec().into_pyarray(py))?;
 
     Ok(data)
 }
@@ -32,12 +44,16 @@ fn extxyz_error_to_py(error: atomflow_core::ExtxyzError) -> PyErr {
     }
 }
 
-fn vectors3_to_lists(values: Vec<[f64; 3]>) -> Vec<Vec<f64>> {
-    values.into_iter().map(|value| value.to_vec()).collect()
-}
+fn array2_from_flat<'py>(
+    py: Python<'py>,
+    values: Vec<f64>,
+    n_rows: usize,
+    n_cols: usize,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let array = Array2::from_shape_vec((n_rows, n_cols), values)
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
 
-fn matrix3_to_lists(value: [[f64; 3]; 3]) -> Vec<Vec<f64>> {
-    value.into_iter().map(|row| row.to_vec()).collect()
+    Ok(array.into_pyarray(py))
 }
 
 #[pymodule]
