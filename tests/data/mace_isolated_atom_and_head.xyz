@@ -1,0 +1,6 @@
+1
+Lattice="6 0 0 0 6 0 0 0 6" Properties=species:S:1:pos:R:3 REF_energy=-13.600 config_type=IsolatedAtom head="DFT"
+H 0.000 0.000 0.000
+1
+Lattice="6 0 0 0 6 0 0 0 6" Properties=species:S:1:pos:R:3 REF_energy=-13.500 config_type=IsolatedAtom head="MP2"
+H 0.000 0.000 0.000

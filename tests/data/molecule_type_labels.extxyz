@@ -1,0 +1,6 @@
+4
+Lattice="9 0 0 0 9 0 0 0 9" Properties=species:S:1:pos:R:3:molecule_type:S:1
+O 0.000 0.000 0.000 water
+H 0.758 0.000 0.504 water
+H -0.758 0.000 0.504 water
+Ar 4.500 4.500 4.500 noble_gas

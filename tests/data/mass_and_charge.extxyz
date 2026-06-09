@@ -1,0 +1,4 @@
+2
+Properties=species:S:1:pos:R:3:mass:R:1:charge:R:1 label="diatomic ion"
+Na 0.000 0.000 0.000 22.989769 1.0
+Cl 2.360 0.000 0.000 35.450000 -1.0

@@ -1,0 +1,5 @@
+3
+Lattice="8 0 0 0 8 0 0 0 8" pbc="T T T" Properties=id:I:1:species:S:1:pos:R:3:selection:I:1
+10 Si 0.000 0.000 0.000 1
+11 Si 2.000 2.000 2.000 0
+12 O 3.000 3.000 3.000 1

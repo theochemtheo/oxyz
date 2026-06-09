@@ -1,0 +1,8 @@
+2
+Lattice="5 0 0 0 5 0 0 0 5" Properties=species:S:1:pos:R:3:forces:R:3 energy=-6.45 Time=0.0
+H 0.000 0.000 0.000 0.100 0.000 0.000
+H 0.750 0.000 0.000 -0.100 0.000 0.000
+2
+Lattice="5 0 0 0 5 0 0 0 5" Properties=species:S:1:pos:R:3:forces:R:3 energy=-6.44 Time=1.0
+H 0.000 0.000 0.000 0.080 0.010 0.000
+H 0.760 0.000 0.000 -0.080 -0.010 0.000

@@ -1,0 +1,4 @@
+2
+Lattice="7 0 0 0 7 0 0 0 7" Properties=species:S:1:pos:R:3 source="generated for parser study" split=train converged=T step=12 temperature=298.15 frozen=F
+He 0.000 0.000 0.000
+Ne 1.500 1.500 1.500
