@@ -13,6 +13,19 @@ DATA_DIR = Path(__file__).parent / "data"
 CORPUS = sorted(path for ext in ("*.xyz", "*.extxyz") for path in DATA_DIR.glob(ext))
 
 
+def as_array(value: object) -> np.ndarray:
+    """Assert that ``value`` is an ndarray and re-type it for ty.
+
+    Exists only because of a current ty limitation: isinstance-narrowing
+    ``np.ndarray`` out of a union yields a type that fails numpy's
+    ``assert_allclose`` overloads, even though a plain ``np.ndarray`` passes.
+    Delete this helper (plain ``assert isinstance`` is enough) once
+    test_ty_canary.py fails.
+    """
+    assert isinstance(value, np.ndarray)
+    return value
+
+
 @pytest.mark.parametrize("path", CORPUS, ids=lambda path: path.name)
 def test_every_fixture_converts_to_python(path: Path) -> None:
     frame = atomflow.read_first_frame(path)
@@ -31,15 +44,13 @@ def test_read_first_frame_simple_extxyz() -> None:
 
     assert frame.columns["species"] == ["H"]
 
-    pos = frame.columns["pos"]
-    assert isinstance(pos, np.ndarray)
+    pos = as_array(frame.columns["pos"])
     assert pos.dtype == np.float64
     assert pos.shape == (1, 3)
     assert pos.flags.c_contiguous
     assert_allclose(pos, np.array([[0.0, 0.0, 0.0]]))
 
-    forces = frame.columns["forces"]
-    assert isinstance(forces, np.ndarray)
+    forces = as_array(frame.columns["forces"])
     assert forces.shape == (1, 3)
     assert_allclose(forces, np.array([[0.0, 0.0, 0.0]]))
 
@@ -48,18 +59,15 @@ def test_read_first_frame_simple_extxyz() -> None:
 
     # Lattice arrives flat, in as-written order; reshaping and reordering are
     # the normalisation layer's job.
-    lattice = frame.metadata["Lattice"]
-    assert isinstance(lattice, np.ndarray)
+    lattice = as_array(frame.metadata["Lattice"])
     assert lattice.shape == (9,)
     assert_allclose(lattice, np.array([15.0, 0.0, 0.0, 0.0, 15.0, 0.0, 0.0, 0.0, 15.0]))
 
-    stress = frame.metadata["stress"]
-    assert isinstance(stress, np.ndarray)
+    stress = as_array(frame.metadata["stress"])
     assert stress.shape == (6,)
     assert_allclose(stress, np.zeros(6))
 
-    pbc = frame.metadata["pbc"]
-    assert isinstance(pbc, np.ndarray)
+    pbc = as_array(frame.metadata["pbc"])
     assert pbc.dtype == np.bool_
     assert_array_equal(pbc, np.array([True, True, True]))
 
@@ -70,12 +78,10 @@ def test_read_first_frame_simple_extxyz() -> None:
 def test_nonorthogonal_lattice_preserved_as_written() -> None:
     frame = atomflow.read_first_frame(DATA_DIR / "nonorthogonal.extxyz")
 
-    lattice = frame.metadata["Lattice"]
-    assert isinstance(lattice, np.ndarray)
+    lattice = as_array(frame.metadata["Lattice"])
     assert_allclose(lattice, np.array([10.0, 1.0, 2.0, 0.0, 11.0, 3.0, 0.0, 0.0, 12.0]))
 
-    pos = frame.columns["pos"]
-    assert isinstance(pos, np.ndarray)
+    pos = as_array(frame.columns["pos"])
     assert pos.shape == (2, 3)
     assert_allclose(pos, np.array([[0.0, 0.1, 0.2], [3.0, 3.1, 3.2]]))
 
@@ -85,15 +91,13 @@ def test_integer_and_string_columns() -> None:
 
     assert list(frame.columns) == ["id", "species", "pos", "selection"]
 
-    ids = frame.columns["id"]
-    assert isinstance(ids, np.ndarray)
+    ids = as_array(frame.columns["id"])
     assert ids.dtype == np.int64
     assert_array_equal(ids, np.array([10, 11, 12]))
 
     assert frame.columns["species"] == ["Si", "Si", "O"]
 
-    selection = frame.columns["selection"]
-    assert isinstance(selection, np.ndarray)
+    selection = as_array(frame.columns["selection"])
     assert_array_equal(selection, np.array([1, 0, 1]))
 
 
@@ -118,13 +122,11 @@ def test_metadata_value_typing() -> None:
 def test_bracket_array_metadata() -> None:
     frame = atomflow.read_first_frame(DATA_DIR / "newstyle_array_metadata.extxyz")
 
-    kpoints = frame.metadata["kpoints"]
-    assert isinstance(kpoints, np.ndarray)
+    kpoints = as_array(frame.metadata["kpoints"])
     assert kpoints.dtype == np.int64
     assert_array_equal(kpoints, np.array([2, 2, 1]))
 
-    cutoffs = frame.metadata["cutoffs"]
-    assert isinstance(cutoffs, np.ndarray)
+    cutoffs = as_array(frame.metadata["cutoffs"])
     assert cutoffs.dtype == np.float64
     assert_allclose(cutoffs, np.array([4.5, 5.0]))
 
@@ -134,13 +136,11 @@ def test_bracket_array_metadata() -> None:
 def test_mace_training_schema_names_preserved() -> None:
     frame = atomflow.read_first_frame(DATA_DIR / "mace_ref_energy_forces_stress.xyz")
 
-    ref_forces = frame.columns["REF_forces"]
-    assert isinstance(ref_forces, np.ndarray)
+    ref_forces = as_array(frame.columns["REF_forces"])
     assert ref_forces.shape == (3, 3)
 
     assert frame.metadata["REF_energy"] == -76.123
     assert frame.metadata["config_type"] == "Default"
 
-    ref_stress = frame.metadata["REF_stress"]
-    assert isinstance(ref_stress, np.ndarray)
+    ref_stress = as_array(frame.metadata["REF_stress"])
     assert ref_stress.shape == (6,)
