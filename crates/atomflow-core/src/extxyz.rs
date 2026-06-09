@@ -1,36 +1,20 @@
+//! Lossless extxyz parsing into the columnar data model.
+//!
+//! The parser accepts and preserves; it does not interpret. Column names are
+//! kept as written (no `force`/`forces` aliasing) and metadata values are
+//! typed by shape but never renamed, reordered, or converted — `Lattice`
+//! stays a flat 9-value array in as-written order. Normalisation is a
+//! separate, later layer.
+
 use std::{
-    collections::HashMap,
     fs::File,
     io::{self, BufRead, BufReader},
     path::Path,
 };
+
 use thiserror::Error;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Frame {
-    /// Atomic numbers, shape `[n_atoms]`.
-    pub numbers: Vec<u8>,
-
-    /// Cartesian positions in row-major order, shape `[n_atoms, 3]`.
-    pub positions: Vec<f64>,
-
-    /// Cartesian forces in row-major order, shape `[n_atoms, 3]`.
-    pub forces: Vec<f64>,
-
-    pub energy: f64,
-
-    /// Cell matrix in row-major order, shape `[3, 3]`.
-    ///
-    /// Rows are lattice vectors. Standard extxyz `Lattice` metadata is decoded
-    /// from Fortran order into this representation.
-    pub cell: [f64; 9],
-
-    /// Stress in 6-component Voigt-style order.
-    pub stress: [f64; 6],
-
-    /// Periodic boundary conditions along the three lattice directions.
-    pub pbc: [bool; 3],
-}
+use crate::model::{Column, ColumnData, Frame, Value};
 
 #[derive(Debug, Error)]
 pub enum ExtxyzError {
@@ -49,27 +33,31 @@ pub enum ExtxyzError {
     #[error("missing metadata key {key:?}")]
     MissingMetadata { key: &'static str },
 
-    #[error("unsupported Properties descriptor: {properties:?}")]
-    UnsupportedProperties { properties: String },
+    #[error("invalid Properties descriptor {descriptor:?}: {reason}")]
+    InvalidProperties {
+        descriptor: String,
+        reason: &'static str,
+    },
 
-    #[error("metadata field {field:?} has {actual} values; expected {expected}")]
-    WrongValueCount {
-        field: &'static str,
+    #[error("unknown Properties kind {kind:?} for column {name:?}")]
+    UnknownPropertyKind { name: String, kind: String },
+
+    #[error("invalid Properties width {width:?} for column {name:?}")]
+    InvalidPropertyWidth { name: String, width: String },
+
+    #[error("atom line {line_number} has {actual} columns; expected {expected}")]
+    WrongAtomColumnCount {
+        line_number: usize,
         expected: usize,
         actual: usize,
     },
 
-    #[error("invalid float in field {field:?}: {value:?}")]
-    InvalidFloat { field: &'static str, value: String },
-
-    #[error("invalid bool in field {field:?}: {value:?}")]
-    InvalidBool { field: &'static str, value: String },
-
-    #[error("unsupported atomic symbol {symbol:?}")]
-    UnsupportedElement { symbol: String },
-
-    #[error("atom line {line_number} has {actual} columns; expected 7")]
-    WrongAtomColumnCount { line_number: usize, actual: usize },
+    #[error("invalid {kind} in column {column:?}: {value:?}")]
+    InvalidAtomValue {
+        column: String,
+        kind: &'static str,
+        value: String,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, ExtxyzError>;
@@ -79,7 +67,7 @@ pub fn read_first_frame(path: impl AsRef<Path>) -> Result<Frame> {
     let mut lines = BufReader::new(file).lines();
 
     let atom_count_line = next_line(&mut lines, "atom count")?;
-    let atom_count =
+    let n_atoms =
         atom_count_line
             .trim()
             .parse::<usize>()
@@ -88,59 +76,53 @@ pub fn read_first_frame(path: impl AsRef<Path>) -> Result<Frame> {
             })?;
 
     let comment = next_line(&mut lines, "comment")?;
-    let metadata = parse_comment_metadata(&comment)?;
+    let pairs = parse_comment_metadata(&comment)?;
 
-    let properties = required_metadata(&metadata, "Properties")?;
-    if properties != "species:S:1:pos:R:3:forces:R:3" {
-        return Err(ExtxyzError::UnsupportedProperties {
-            properties: properties.to_owned(),
-        });
+    // `Properties` is consumed into typed columns; every other pair is typed
+    // by shape and kept in file order.
+    let mut metadata = Vec::with_capacity(pairs.len().saturating_sub(1));
+    let mut specs: Option<Vec<PropertySpec>> = None;
+
+    for (key, raw) in pairs {
+        if key == "Properties" && specs.is_none() {
+            specs = Some(parse_properties(&raw)?);
+        } else {
+            metadata.push((key, type_metadata_value(&raw)));
+        }
     }
 
-    let cell = parse_lattice(required_metadata(&metadata, "Lattice")?)?;
-    let energy = parse_one_f64(required_metadata(&metadata, "energy")?, "energy")?;
-    let stress = parse_fixed_f64::<6>(required_metadata(&metadata, "stress")?, "stress")?;
-    let pbc = parse_fixed_bool::<3>(required_metadata(&metadata, "pbc")?, "pbc")?;
+    let specs = specs.ok_or(ExtxyzError::MissingMetadata { key: "Properties" })?;
 
-    let mut numbers = Vec::with_capacity(atom_count);
-    let mut positions = Vec::with_capacity(atom_count * 3);
-    let mut forces = Vec::with_capacity(atom_count * 3);
+    let mut columns: Vec<Column> = specs
+        .into_iter()
+        .map(|spec| spec.into_column(n_atoms))
+        .collect();
+    let row_width: usize = columns.iter().map(|column| column.width).sum();
 
-    for atom_index in 0..atom_count {
+    for atom_index in 0..n_atoms {
         let line_number = atom_index + 3;
         let line = next_line(&mut lines, "atom")?;
-        let columns: Vec<&str> = line.split_whitespace().collect();
+        let cells: Vec<&str> = line.split_whitespace().collect();
 
-        if columns.len() != 7 {
+        if cells.len() != row_width {
             return Err(ExtxyzError::WrongAtomColumnCount {
                 line_number,
-                actual: columns.len(),
+                expected: row_width,
+                actual: cells.len(),
             });
         }
 
-        numbers.push(atomic_number(columns[0])?);
-
-        positions.extend_from_slice(&[
-            parse_f64(columns[1], "positions")?,
-            parse_f64(columns[2], "positions")?,
-            parse_f64(columns[3], "positions")?,
-        ]);
-
-        forces.extend_from_slice(&[
-            parse_f64(columns[4], "forces")?,
-            parse_f64(columns[5], "forces")?,
-            parse_f64(columns[6], "forces")?,
-        ]);
+        let mut cursor = 0;
+        for column in &mut columns {
+            push_cells(column, &cells[cursor..cursor + column.width])?;
+            cursor += column.width;
+        }
     }
 
     Ok(Frame {
-        numbers,
-        positions,
-        forces,
-        energy,
-        cell,
-        stress,
-        pbc,
+        n_atoms,
+        columns,
+        metadata,
     })
 }
 
@@ -154,9 +136,153 @@ fn next_line(
         .ok_or(ExtxyzError::MissingLine(label))
 }
 
-fn parse_comment_metadata(comment: &str) -> Result<HashMap<String, String>> {
+/// One `name:kind:width` triplet from the Properties descriptor — the
+/// header's promise, as distinct from the materialised [`Column`].
+struct PropertySpec {
+    name: String,
+    kind: PropertyKind,
+    width: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PropertyKind {
+    Real,
+    Int,
+    Bool,
+    Str,
+}
+
+impl PropertySpec {
+    /// Materialise an empty column, pre-sized for the whole frame.
+    fn into_column(self, n_atoms: usize) -> Column {
+        let capacity = n_atoms * self.width;
+        let data = match self.kind {
+            PropertyKind::Real => ColumnData::Real(Vec::with_capacity(capacity)),
+            PropertyKind::Int => ColumnData::Int(Vec::with_capacity(capacity)),
+            PropertyKind::Bool => ColumnData::Bool(Vec::with_capacity(capacity)),
+            PropertyKind::Str => ColumnData::Str(Vec::with_capacity(capacity)),
+        };
+
+        Column {
+            name: self.name,
+            width: self.width,
+            data,
+        }
+    }
+}
+
+fn parse_properties(descriptor: &str) -> Result<Vec<PropertySpec>> {
+    let parts: Vec<&str> = descriptor.split(':').collect();
+
+    if parts.len() % 3 != 0 {
+        return Err(ExtxyzError::InvalidProperties {
+            descriptor: descriptor.to_owned(),
+            reason: "expected name:kind:width triplets",
+        });
+    }
+
+    parts
+        .chunks_exact(3)
+        .map(|triplet| {
+            let (name, kind, width) = (triplet[0], triplet[1], triplet[2]);
+
+            if name.is_empty() {
+                return Err(ExtxyzError::InvalidProperties {
+                    descriptor: descriptor.to_owned(),
+                    reason: "empty column name",
+                });
+            }
+
+            let kind = match kind {
+                "R" => PropertyKind::Real,
+                "I" => PropertyKind::Int,
+                "L" => PropertyKind::Bool,
+                "S" => PropertyKind::Str,
+                _ => {
+                    return Err(ExtxyzError::UnknownPropertyKind {
+                        name: name.to_owned(),
+                        kind: kind.to_owned(),
+                    });
+                }
+            };
+
+            let parsed_width = match width.parse::<usize>() {
+                Ok(parsed) if parsed >= 1 => parsed,
+                _ => {
+                    return Err(ExtxyzError::InvalidPropertyWidth {
+                        name: name.to_owned(),
+                        width: width.to_owned(),
+                    });
+                }
+            };
+
+            Ok(PropertySpec {
+                name: name.to_owned(),
+                kind,
+                width: parsed_width,
+            })
+        })
+        .collect()
+}
+
+/// Append one atom's cells onto the column's buffer.
+fn push_cells(column: &mut Column, cells: &[&str]) -> Result<()> {
+    match &mut column.data {
+        ColumnData::Real(buffer) => {
+            for cell in cells {
+                buffer.push(
+                    cell.parse::<f64>()
+                        .map_err(|_| invalid_cell(&column.name, "real", cell))?,
+                );
+            }
+        }
+        ColumnData::Int(buffer) => {
+            for cell in cells {
+                buffer.push(
+                    cell.parse::<i64>()
+                        .map_err(|_| invalid_cell(&column.name, "int", cell))?,
+                );
+            }
+        }
+        ColumnData::Bool(buffer) => {
+            for cell in cells {
+                buffer
+                    .push(bool_cell(cell).ok_or_else(|| invalid_cell(&column.name, "bool", cell))?);
+            }
+        }
+        ColumnData::Str(buffer) => {
+            for cell in cells {
+                buffer.push((*cell).to_owned());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn invalid_cell(column: &str, kind: &'static str, value: &str) -> ExtxyzError {
+    ExtxyzError::InvalidAtomValue {
+        column: column.to_owned(),
+        kind,
+        value: value.to_owned(),
+    }
+}
+
+/// `0`/`1` are valid here because the `L` kind removes the ambiguity; on the
+/// comment line a bare `1` must stay an integer (see [`bool_token`]).
+fn bool_cell(cell: &str) -> Option<bool> {
+    match cell {
+        "T" | "TRUE" | "True" | "true" | "1" => Some(true),
+        "F" | "FALSE" | "False" | "false" | "0" => Some(false),
+        _ => None,
+    }
+}
+
+/// Tokenize the comment line into ordered `(key, raw value)` pairs; file
+/// order and duplicate keys are preserved.
+fn parse_comment_metadata(comment: &str) -> Result<Vec<(String, String)>> {
     let bytes = comment.as_bytes();
-    let mut metadata = HashMap::new();
+    let mut pairs = Vec::new();
     let mut i = 0;
 
     while i < bytes.len() {
@@ -216,10 +342,10 @@ fn parse_comment_metadata(comment: &str) -> Result<HashMap<String, String>> {
             slice_comment(comment, value_start, i)?
         };
 
-        metadata.insert(key.to_owned(), value.to_owned());
+        pairs.push((key.to_owned(), value.to_owned()));
     }
 
-    Ok(metadata)
+    Ok(pairs)
 }
 
 fn slice_comment(comment: &str, start: usize, end: usize) -> Result<&str> {
@@ -228,95 +354,217 @@ fn slice_comment(comment: &str, start: usize, end: usize) -> Result<&str> {
         .ok_or(ExtxyzError::InvalidMetadata { index: start })
 }
 
-fn required_metadata<'a>(
-    metadata: &'a HashMap<String, String>,
-    key: &'static str,
-) -> Result<&'a str> {
-    metadata
-        .get(key)
-        .map(String::as_str)
-        .ok_or(ExtxyzError::MissingMetadata { key })
-}
-
-fn parse_one_f64(value: &str, field: &'static str) -> Result<f64> {
-    let values = parse_fixed_f64::<1>(value, field)?;
-    Ok(values[0])
-}
-
-fn parse_fixed_f64<const N: usize>(value: &str, field: &'static str) -> Result<[f64; N]> {
-    let parts: Vec<&str> = value.split_whitespace().collect();
-
-    if parts.len() != N {
-        return Err(ExtxyzError::WrongValueCount {
-            field,
-            expected: N,
-            actual: parts.len(),
-        });
+/// Type a raw comment-line value by its shape, falling back to `Str` when
+/// nothing more specific fits, so typing never rejects a file. Quoting does
+/// not influence typing: `Lattice="9 0 0 ..."` must become numbers.
+fn type_metadata_value(raw: &str) -> Value {
+    if let Some(array) = parse_bracket_array(raw) {
+        return array;
     }
 
-    let mut output = [0.0; N];
+    let tokens: Vec<&str> = raw.split_whitespace().collect();
 
-    for (slot, part) in output.iter_mut().zip(parts) {
-        *slot = parse_f64(part, field)?;
-    }
-
-    Ok(output)
-}
-
-fn parse_fixed_bool<const N: usize>(value: &str, field: &'static str) -> Result<[bool; N]> {
-    let parts: Vec<&str> = value.split_whitespace().collect();
-
-    if parts.len() != N {
-        return Err(ExtxyzError::WrongValueCount {
-            field,
-            expected: N,
-            actual: parts.len(),
-        });
-    }
-
-    let mut output = [false; N];
-
-    for (slot, part) in output.iter_mut().zip(parts) {
-        *slot = parse_bool(part, field)?;
-    }
-
-    Ok(output)
-}
-
-fn parse_f64(value: &str, field: &'static str) -> Result<f64> {
-    value.parse::<f64>().map_err(|_| ExtxyzError::InvalidFloat {
-        field,
-        value: value.to_owned(),
-    })
-}
-
-fn parse_bool(value: &str, field: &'static str) -> Result<bool> {
-    match value {
-        "T" | "True" | "true" | "1" => Ok(true),
-        "F" | "False" | "false" | "0" => Ok(false),
-        _ => Err(ExtxyzError::InvalidBool {
-            field,
-            value: value.to_owned(),
-        }),
+    match tokens.as_slice() {
+        // Empty (e.g. a quoted "") or all-whitespace value.
+        [] => Value::Str(raw.to_owned()),
+        [token] => scalar_value(token, raw),
+        _ => whitespace_array_value(&tokens, raw),
     }
 }
 
-fn atomic_number(symbol: &str) -> Result<u8> {
-    match symbol {
-        "H" => Ok(1),
-        _ => Err(ExtxyzError::UnsupportedElement {
-            symbol: symbol.to_owned(),
-        }),
+fn scalar_value(token: &str, raw: &str) -> Value {
+    // Integers before booleans so `1` stays Int; `bool_token` excludes 0/1.
+    if let Ok(int) = token.parse::<i64>() {
+        return Value::Int(int);
+    }
+
+    if let Ok(real) = token.parse::<f64>() {
+        return Value::Real(real);
+    }
+
+    match bool_token(token) {
+        Some(boolean) => Value::Bool(boolean),
+        None => Value::Str(raw.to_owned()),
     }
 }
 
-fn parse_lattice(value: &str) -> Result<[f64; 9]> {
-    let values = parse_fixed_f64::<9>(value, "Lattice")?;
+fn whitespace_array_value(tokens: &[&str], raw: &str) -> Value {
+    // All-integer stays IntArray; promotion to floats is the normalisation
+    // layer's call.
+    if let Some(ints) = parse_all::<i64>(tokens) {
+        return Value::IntArray(ints);
+    }
 
-    // extxyz/ASE stores Lattice in Fortran order.
-    // atomflow stores and exposes cells in row-major order with lattice vectors as rows.
-    Ok([
-        values[0], values[3], values[6], values[1], values[4], values[7], values[2], values[5],
-        values[8],
-    ])
+    if let Some(reals) = parse_all::<f64>(tokens) {
+        return Value::RealArray(reals);
+    }
+
+    if let Some(bools) = tokens.iter().map(|token| bool_token(token)).collect() {
+        return Value::BoolArray(bools);
+    }
+
+    // Mixed tokens are a sentence, not an array.
+    Value::Str(raw.to_owned())
+}
+
+/// Parse every token as `T`, or `None` on the first failure.
+fn parse_all<T: std::str::FromStr>(tokens: &[&str]) -> Option<Vec<T>> {
+    tokens.iter().map(|token| token.parse::<T>().ok()).collect()
+}
+
+/// Comment-line booleans; excludes `0`/`1` (contrast [`bool_cell`]).
+fn bool_token(token: &str) -> Option<bool> {
+    match token {
+        "T" | "TRUE" | "True" | "true" => Some(true),
+        "F" | "FALSE" | "False" | "false" => Some(false),
+        _ => None,
+    }
+}
+
+/// Parse a new-style bracket array like `[2,2,1]` or `["slab","relaxed"]`.
+/// Returns `None` for anything else — including nested 2-D arrays, for now —
+/// so the caller falls through to the `Str` fallback.
+fn parse_bracket_array(raw: &str) -> Option<Value> {
+    let inner = raw.strip_prefix('[')?.strip_suffix(']')?;
+
+    if inner.contains('[') || inner.contains(']') {
+        return None;
+    }
+
+    if inner.trim().is_empty() {
+        return None;
+    }
+
+    let elements: Vec<&str> = inner.split(',').map(str::trim).collect();
+
+    if elements.iter().any(|element| element.is_empty()) {
+        return None;
+    }
+
+    if let Some(ints) = parse_all::<i64>(&elements) {
+        return Some(Value::IntArray(ints));
+    }
+
+    if let Some(reals) = parse_all::<f64>(&elements) {
+        return Some(Value::RealArray(reals));
+    }
+
+    if let Some(bools) = elements.iter().map(|element| bool_token(element)).collect() {
+        return Some(Value::BoolArray(bools));
+    }
+
+    Some(Value::StrArray(
+        elements
+            .iter()
+            .map(|element| strip_quotes(element).to_owned())
+            .collect(),
+    ))
+}
+
+fn strip_quotes(token: &str) -> &str {
+    token
+        .strip_prefix('"')
+        .and_then(|stripped| stripped.strip_suffix('"'))
+        .unwrap_or(token)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn types_scalar_metadata() {
+        assert_eq!(type_metadata_value("12"), Value::Int(12));
+        assert_eq!(type_metadata_value("298.15"), Value::Real(298.15));
+        assert_eq!(type_metadata_value("T"), Value::Bool(true));
+        assert_eq!(type_metadata_value("False"), Value::Bool(false));
+        assert_eq!(type_metadata_value("train"), Value::Str("train".to_owned()));
+
+        // "1" is an integer, not a boolean, on the comment line.
+        assert_eq!(type_metadata_value("1"), Value::Int(1));
+    }
+
+    #[test]
+    fn types_whitespace_separated_arrays() {
+        assert_eq!(type_metadata_value("3 0 0"), Value::IntArray(vec![3, 0, 0]));
+        assert_eq!(
+            type_metadata_value("1.0 2.5"),
+            Value::RealArray(vec![1.0, 2.5])
+        );
+        // Mixed int/real promotes to reals.
+        assert_eq!(
+            type_metadata_value("1 2.5"),
+            Value::RealArray(vec![1.0, 2.5])
+        );
+        assert_eq!(
+            type_metadata_value("T T F"),
+            Value::BoolArray(vec![true, true, false])
+        );
+        // Mixed tokens are a sentence, kept whole.
+        assert_eq!(
+            type_metadata_value("water monomer"),
+            Value::Str("water monomer".to_owned())
+        );
+    }
+
+    #[test]
+    fn types_bracket_arrays() {
+        assert_eq!(
+            type_metadata_value("[2,2,1]"),
+            Value::IntArray(vec![2, 2, 1])
+        );
+        assert_eq!(
+            type_metadata_value("[4.5,5.0]"),
+            Value::RealArray(vec![4.5, 5.0])
+        );
+        assert_eq!(
+            type_metadata_value(r#"["slab","relaxed"]"#),
+            Value::StrArray(vec!["slab".to_owned(), "relaxed".to_owned()])
+        );
+        // 2-D arrays fall back to the raw string for now.
+        assert_eq!(
+            type_metadata_value("[[1,0],[0,1]]"),
+            Value::Str("[[1,0],[0,1]]".to_owned())
+        );
+    }
+
+    #[test]
+    fn parses_properties_descriptor() {
+        let specs = parse_properties("species:S:1:pos:R:3:selection:I:1:tagged:L:1").unwrap();
+
+        let summary: Vec<(&str, PropertyKind, usize)> = specs
+            .iter()
+            .map(|spec| (spec.name.as_str(), spec.kind, spec.width))
+            .collect();
+
+        assert_eq!(
+            summary,
+            [
+                ("species", PropertyKind::Str, 1),
+                ("pos", PropertyKind::Real, 3),
+                ("selection", PropertyKind::Int, 1),
+                ("tagged", PropertyKind::Bool, 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_properties_descriptors() {
+        assert!(matches!(
+            parse_properties("species:S"),
+            Err(ExtxyzError::InvalidProperties { .. })
+        ));
+        assert!(matches!(
+            parse_properties("pos:Q:3"),
+            Err(ExtxyzError::UnknownPropertyKind { .. })
+        ));
+        assert!(matches!(
+            parse_properties("pos:R:0"),
+            Err(ExtxyzError::InvalidPropertyWidth { .. })
+        ));
+        assert!(matches!(
+            parse_properties("pos:R:three"),
+            Err(ExtxyzError::InvalidPropertyWidth { .. })
+        ));
+    }
 }

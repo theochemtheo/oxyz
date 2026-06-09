@@ -1,38 +1,67 @@
 use std::path::PathBuf;
 
 use ndarray::Array2;
-use numpy::{IntoPyArray, PyArray2};
+use numpy::{Element, IntoPyArray};
 use pyo3::{
     exceptions::{PyOSError, PyValueError},
     prelude::*,
     types::PyDict,
 };
 
+use atomflow_core::{Column, ColumnData, Value};
+
+/// Read the first frame as `{"n_atoms": int, "columns": {...}, "metadata": {...}}`.
+///
+/// Numeric and boolean columns become numpy arrays (2-D when width > 1);
+/// string columns become `list[str]`. Both inner dicts preserve file order.
 #[pyfunction]
 fn read_first_frame<'py>(py: Python<'py>, path: PathBuf) -> PyResult<Bound<'py, PyDict>> {
     let frame = atomflow_core::read_first_frame(path).map_err(extxyz_error_to_py)?;
 
-    let atomflow_core::Frame {
-        numbers,
-        positions,
-        forces,
-        energy,
-        cell,
-        stress,
-        pbc,
-    } = frame;
-
-    let n_atoms = numbers.len();
-
     let data = PyDict::new(py);
+    data.set_item("n_atoms", frame.n_atoms)?;
 
-    data.set_item("numbers", numbers.into_pyarray(py))?;
-    data.set_item("positions", array2_from_flat(py, positions, n_atoms, 3)?)?;
-    data.set_item("forces", array2_from_flat(py, forces, n_atoms, 3)?)?;
-    data.set_item("energy", energy)?;
-    data.set_item("cell", array2_from_flat(py, cell.to_vec(), 3, 3)?)?;
-    data.set_item("stress", stress.to_vec().into_pyarray(py))?;
-    data.set_item("pbc", pbc.to_vec().into_pyarray(py))?;
+    let columns = PyDict::new(py);
+    for column in frame.columns {
+        let Column { name, width, data } = column;
+
+        match data {
+            ColumnData::Real(values) => {
+                columns.set_item(name, array_from_flat(py, values, width)?)?;
+            }
+            ColumnData::Int(values) => {
+                columns.set_item(name, array_from_flat(py, values, width)?)?;
+            }
+            ColumnData::Bool(values) => {
+                columns.set_item(name, array_from_flat(py, values, width)?)?;
+            }
+            ColumnData::Str(values) => {
+                if width == 1 {
+                    columns.set_item(name, values)?;
+                } else {
+                    let rows: Vec<Vec<String>> =
+                        values.chunks(width).map(<[String]>::to_vec).collect();
+                    columns.set_item(name, rows)?;
+                }
+            }
+        }
+    }
+    data.set_item("columns", columns)?;
+
+    let metadata = PyDict::new(py);
+    for (key, value) in frame.metadata {
+        match value {
+            Value::Real(x) => metadata.set_item(key, x)?,
+            Value::Int(x) => metadata.set_item(key, x)?,
+            Value::Bool(x) => metadata.set_item(key, x)?,
+            Value::Str(x) => metadata.set_item(key, x)?,
+            Value::RealArray(values) => metadata.set_item(key, values.into_pyarray(py))?,
+            Value::IntArray(values) => metadata.set_item(key, values.into_pyarray(py))?,
+            Value::BoolArray(values) => metadata.set_item(key, values.into_pyarray(py))?,
+            Value::StrArray(values) => metadata.set_item(key, values)?,
+        }
+    }
+    data.set_item("metadata", metadata)?;
 
     Ok(data)
 }
@@ -44,16 +73,24 @@ fn extxyz_error_to_py(error: atomflow_core::ExtxyzError) -> PyErr {
     }
 }
 
-fn array2_from_flat<'py>(
-    py: Python<'py>,
-    values: Vec<f64>,
-    n_rows: usize,
-    n_cols: usize,
-) -> PyResult<Bound<'py, PyArray2<f64>>> {
-    let array = Array2::from_shape_vec((n_rows, n_cols), values)
+/// Turn a flat width-strided buffer into a 1-D (width == 1) or 2-D numpy
+/// array.
+fn array_from_flat<T: Element>(
+    py: Python<'_>,
+    values: Vec<T>,
+    width: usize,
+) -> PyResult<Bound<'_, PyAny>> {
+    if width == 1 {
+        return Ok(values.into_pyarray(py).into_any());
+    }
+
+    // The parser upholds `values.len() == n_rows * width`; keep the error
+    // path anyway rather than unwrap at the Python boundary.
+    let n_rows = values.len() / width;
+    let array = Array2::from_shape_vec((n_rows, width), values)
         .map_err(|error| PyValueError::new_err(error.to_string()))?;
 
-    Ok(array.into_pyarray(py))
+    Ok(array.into_pyarray(py).into_any())
 }
 
 #[pymodule]
