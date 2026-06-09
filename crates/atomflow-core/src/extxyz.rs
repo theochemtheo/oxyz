@@ -58,82 +58,158 @@ pub enum ExtxyzError {
         kind: &'static str,
         value: String,
     },
+
+    /// Any parse error from [`FrameIter`], wrapped with the frame it
+    /// occurred in.
+    #[error("frame {frame_index}: {source}")]
+    InFrame {
+        frame_index: usize,
+        source: Box<ExtxyzError>,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, ExtxyzError>;
 
 pub fn read_first_frame(path: impl AsRef<Path>) -> Result<Frame> {
-    let file = File::open(path)?;
-    let mut lines = BufReader::new(file).lines();
-
-    let atom_count_line = next_line(&mut lines, "atom count")?;
-    let n_atoms =
-        atom_count_line
-            .trim()
-            .parse::<usize>()
-            .map_err(|_| ExtxyzError::InvalidAtomCount {
-                line: atom_count_line,
-            })?;
-
-    let comment = next_line(&mut lines, "comment")?;
-    let pairs = parse_comment_metadata(&comment)?;
-
-    // `Properties` is consumed into typed columns; every other pair is typed
-    // by shape and kept in file order.
-    let mut metadata = Vec::with_capacity(pairs.len().saturating_sub(1));
-    let mut specs: Option<Vec<PropertySpec>> = None;
-
-    for (key, raw) in pairs {
-        if key == "Properties" && specs.is_none() {
-            specs = Some(parse_properties(&raw)?);
-        } else {
-            metadata.push((key, type_metadata_value(&raw)));
-        }
-    }
-
-    let specs = specs.ok_or(ExtxyzError::MissingMetadata { key: "Properties" })?;
-
-    let mut columns: Vec<Column> = specs
-        .into_iter()
-        .map(|spec| spec.into_column(n_atoms))
-        .collect();
-    let row_width: usize = columns.iter().map(|column| column.width).sum();
-
-    for atom_index in 0..n_atoms {
-        let line_number = atom_index + 3;
-        let line = next_line(&mut lines, "atom")?;
-        let cells: Vec<&str> = line.split_whitespace().collect();
-
-        if cells.len() != row_width {
-            return Err(ExtxyzError::WrongAtomColumnCount {
-                line_number,
-                expected: row_width,
-                actual: cells.len(),
-            });
-        }
-
-        let mut cursor = 0;
-        for column in &mut columns {
-            push_cells(column, &cells[cursor..cursor + column.width])?;
-            cursor += column.width;
-        }
-    }
-
-    Ok(Frame {
-        n_atoms,
-        columns,
-        metadata,
-    })
+    iter_frames(path)?
+        .next()
+        .unwrap_or(Err(ExtxyzError::MissingLine("atom count")))
 }
 
-fn next_line(
-    lines: &mut impl Iterator<Item = io::Result<String>>,
-    label: &'static str,
-) -> Result<String> {
-    lines
-        .next()
-        .transpose()?
-        .ok_or(ExtxyzError::MissingLine(label))
+pub fn read_frames(path: impl AsRef<Path>) -> Result<Vec<Frame>> {
+    iter_frames(path)?.collect()
+}
+
+pub fn iter_frames(path: impl AsRef<Path>) -> Result<FrameIter<BufReader<File>>> {
+    Ok(FrameIter::new(BufReader::new(File::open(path)?)))
+}
+
+/// Streaming frame reader: one frame is materialised at a time.
+pub struct FrameIter<R: BufRead> {
+    lines: io::Lines<R>,
+    frame_index: usize,
+    /// 1-based file line number of the next unread line, for diagnostics.
+    line_number: usize,
+    done: bool,
+}
+
+impl<R: BufRead> FrameIter<R> {
+    pub fn new(reader: R) -> Self {
+        FrameIter {
+            lines: reader.lines(),
+            frame_index: 0,
+            line_number: 1,
+            done: false,
+        }
+    }
+
+    fn try_next_line(&mut self) -> Result<Option<String>> {
+        let line = self.lines.next().transpose()?;
+        if line.is_some() {
+            self.line_number += 1;
+        }
+        Ok(line)
+    }
+
+    fn next_line(&mut self, label: &'static str) -> Result<String> {
+        self.try_next_line()?.ok_or(ExtxyzError::MissingLine(label))
+    }
+
+    /// Parse one frame, or `None` at clean end-of-file. Anything after a
+    /// frame must be a new frame — blank lines in between are an error.
+    fn parse_frame(&mut self) -> Result<Option<Frame>> {
+        let Some(atom_count_line) = self.try_next_line()? else {
+            return Ok(None);
+        };
+
+        let n_atoms =
+            atom_count_line
+                .trim()
+                .parse::<usize>()
+                .map_err(|_| ExtxyzError::InvalidAtomCount {
+                    line: atom_count_line,
+                })?;
+
+        let comment = self.next_line("comment")?;
+        let pairs = parse_comment_metadata(&comment)?;
+
+        // `Properties` is consumed into typed columns; every other pair is
+        // typed by shape and kept in file order.
+        let mut metadata = Vec::with_capacity(pairs.len().saturating_sub(1));
+        let mut specs: Option<Vec<PropertySpec>> = None;
+
+        for (key, raw) in pairs {
+            if key == "Properties" && specs.is_none() {
+                specs = Some(parse_properties(&raw)?);
+            } else {
+                metadata.push((key, type_metadata_value(&raw)));
+            }
+        }
+
+        let specs = specs.ok_or(ExtxyzError::MissingMetadata { key: "Properties" })?;
+
+        let mut columns: Vec<Column> = specs
+            .into_iter()
+            .map(|spec| spec.into_column(n_atoms))
+            .collect();
+        let row_width: usize = columns.iter().map(|column| column.width).sum();
+
+        for _ in 0..n_atoms {
+            let line_number = self.line_number;
+            let line = self.next_line("atom")?;
+            let cells: Vec<&str> = line.split_whitespace().collect();
+
+            if cells.len() != row_width {
+                return Err(ExtxyzError::WrongAtomColumnCount {
+                    line_number,
+                    expected: row_width,
+                    actual: cells.len(),
+                });
+            }
+
+            let mut cursor = 0;
+            for column in &mut columns {
+                push_cells(column, &cells[cursor..cursor + column.width])?;
+                cursor += column.width;
+            }
+        }
+
+        Ok(Some(Frame {
+            n_atoms,
+            columns,
+            metadata,
+        }))
+    }
+}
+
+impl<R: BufRead> Iterator for FrameIter<R> {
+    type Item = Result<Frame>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+
+        match self.parse_frame() {
+            Ok(Some(frame)) => {
+                self.frame_index += 1;
+                Some(Ok(frame))
+            }
+            Ok(None) => {
+                self.done = true;
+                None
+            }
+            // Stop after the first error: the stream position is no longer
+            // trustworthy.
+            Err(error) => {
+                self.done = true;
+                Some(Err(ExtxyzError::InFrame {
+                    frame_index: self.frame_index,
+                    source: Box::new(error),
+                }))
+            }
+        }
+    }
 }
 
 /// One `name:kind:width` triplet from the Properties descriptor — the

@@ -5,19 +5,36 @@ use numpy::{Element, IntoPyArray};
 use pyo3::{
     exceptions::{PyOSError, PyValueError},
     prelude::*,
-    types::PyDict,
+    types::{PyDict, PyList},
 };
 
-use atomflow_core::{Column, ColumnData, Value};
+use atomflow_core::{Column, ColumnData, ExtxyzError, Frame, Value};
 
 /// Read the first frame as `{"n_atoms": int, "columns": {...}, "metadata": {...}}`.
-///
-/// Numeric and boolean columns become numpy arrays (2-D when width > 1);
-/// string columns become `list[str]`. Both inner dicts preserve file order.
 #[pyfunction]
 fn read_first_frame<'py>(py: Python<'py>, path: PathBuf) -> PyResult<Bound<'py, PyDict>> {
     let frame = atomflow_core::read_first_frame(path).map_err(extxyz_error_to_py)?;
+    frame_to_pydict(py, frame)
+}
 
+/// Read every frame, as a list of per-frame dicts.
+#[pyfunction]
+fn read_frames<'py>(py: Python<'py>, path: PathBuf) -> PyResult<Bound<'py, PyList>> {
+    let frames = atomflow_core::read_frames(path).map_err(extxyz_error_to_py)?;
+
+    let dicts = frames
+        .into_iter()
+        .map(|frame| frame_to_pydict(py, frame))
+        .collect::<PyResult<Vec<_>>>()?;
+
+    PyList::new(py, dicts)
+}
+
+/// Convert one frame to `{"n_atoms": int, "columns": {...}, "metadata": {...}}`.
+///
+/// Numeric and boolean columns become numpy arrays (2-D when width > 1);
+/// string columns become `list[str]`. Both inner dicts preserve file order.
+fn frame_to_pydict(py: Python<'_>, frame: Frame) -> PyResult<Bound<'_, PyDict>> {
     let data = PyDict::new(py);
     data.set_item("n_atoms", frame.n_atoms)?;
 
@@ -66,10 +83,18 @@ fn read_first_frame<'py>(py: Python<'py>, path: PathBuf) -> PyResult<Bound<'py, 
     Ok(data)
 }
 
-fn extxyz_error_to_py(error: atomflow_core::ExtxyzError) -> PyErr {
-    match error {
-        atomflow_core::ExtxyzError::Io(error) => PyOSError::new_err(error.to_string()),
-        error => PyValueError::new_err(error.to_string()),
+fn extxyz_error_to_py(error: ExtxyzError) -> PyErr {
+    let message = error.to_string();
+
+    // Unwrap frame context to classify the underlying error.
+    let mut inner = &error;
+    while let ExtxyzError::InFrame { source, .. } = inner {
+        inner = source;
+    }
+
+    match inner {
+        ExtxyzError::Io(io_error) => PyOSError::new_err(io_error.to_string()),
+        _ => PyValueError::new_err(message),
     }
 }
 
@@ -96,5 +121,6 @@ fn array_from_flat<T: Element>(
 #[pymodule]
 fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_first_frame, m)?)?;
+    m.add_function(wrap_pyfunction!(read_frames, m)?)?;
     Ok(())
 }

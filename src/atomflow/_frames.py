@@ -27,8 +27,14 @@ class Frame:
 
 
 def read_first_frame(path: str | Path) -> Frame:
-    data = _rust.read_first_frame(str(path))
+    return _frame_from_data(_rust.read_first_frame(str(path)))
 
+
+def read_frames(path: str | Path) -> list[Frame]:
+    return [_frame_from_data(data) for data in _rust.read_frames(str(path))]
+
+
+def _frame_from_data(data: _rust.FrameData) -> Frame:
     return Frame(
         n_atoms=data["n_atoms"],
         columns=data["columns"],

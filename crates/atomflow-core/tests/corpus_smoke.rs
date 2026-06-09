@@ -1,11 +1,12 @@
-//! Corpus scoreboard: every fixture in `tests/data/` must parse.
+//! Corpus scoreboard: every frame of every fixture in `tests/data/` must
+//! parse.
 //!
 //! Per-fixture error expectations will return when malformed fixtures
 //! arrive, in their own `invalid/` subdirectory.
 
 use std::{fs, path::PathBuf};
 
-use atomflow_core::read_first_frame;
+use atomflow_core::read_frames;
 
 /// Kept explicit so adding a fixture without an entry, or deleting one the
 /// suite still expects, fails loudly.
@@ -55,7 +56,7 @@ fn every_fixture_parses() {
             continue;
         }
 
-        if let Err(error) = read_first_frame(&path) {
+        if let Err(error) = read_frames(&path) {
             mismatches.push(format!("{name}: failed to parse: {error}"));
         }
 

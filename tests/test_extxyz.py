@@ -36,6 +36,25 @@ def test_every_fixture_converts_to_python(path: Path) -> None:
         assert len(values) == frame.n_atoms
 
 
+def test_read_frames_trajectory() -> None:
+    frames = atomflow.read_frames(DATA_DIR / "varying_atom_counts.xyz")
+
+    assert [frame.n_atoms for frame in frames] == [3, 1, 2]
+    assert [frame.metadata["energy"] for frame in frames] == [-76.3, -13.6, -31.8]
+
+    last_pos = as_array(frames[2].columns["pos"])
+    assert last_pos.shape == (2, 3)
+
+
+def test_read_frames_error_carries_frame_index(tmp_path: Path) -> None:
+    text = (DATA_DIR / "varying_atom_counts.xyz").read_text()
+    broken = tmp_path / "broken.xyz"
+    broken.write_text(text + "not-a-count\n")
+
+    with pytest.raises(ValueError, match="frame 3"):
+        atomflow.read_frames(broken)
+
+
 def test_read_first_frame_simple_extxyz() -> None:
     frame = atomflow.read_first_frame(DATA_DIR / "simple.extxyz")
 
