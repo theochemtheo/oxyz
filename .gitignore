@@ -31,3 +31,7 @@ target/
 
 # macOS
 .DS_Store
+
+# agents
+.claude
+.codex
