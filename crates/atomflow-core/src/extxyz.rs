@@ -228,10 +228,19 @@ enum PropertyKind {
     Str,
 }
 
+/// Sanity bound on a column's declared width.
+const MAX_COLUMN_WIDTH: usize = 1 << 16;
+
+/// Cap on pre-allocation from the *declared* atom count, which is untrusted
+/// input: a corrupt count must not trigger an absurd allocation before any
+/// data is read. Buffers still grow normally past this if the file really is
+/// that large.
+const MAX_PREALLOC: usize = 1 << 20;
+
 impl PropertySpec {
     /// Materialise an empty column, pre-sized for the whole frame.
     fn into_column(self, n_atoms: usize) -> Column {
-        let capacity = n_atoms * self.width;
+        let capacity = n_atoms.saturating_mul(self.width).min(MAX_PREALLOC);
         let data = match self.kind {
             PropertyKind::Real => ColumnData::Real(Vec::with_capacity(capacity)),
             PropertyKind::Int => ColumnData::Int(Vec::with_capacity(capacity)),
@@ -283,7 +292,7 @@ fn parse_properties(descriptor: &str) -> Result<Vec<PropertySpec>> {
             };
 
             let parsed_width = match width.parse::<usize>() {
-                Ok(parsed) if parsed >= 1 => parsed,
+                Ok(parsed) if (1..=MAX_COLUMN_WIDTH).contains(&parsed) => parsed,
                 _ => {
                     return Err(ExtxyzError::InvalidPropertyWidth {
                         name: name.to_owned(),
