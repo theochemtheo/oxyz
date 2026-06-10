@@ -90,13 +90,18 @@ impl IndexedFrames {
         frame_to_pydict(py, frame)
     }
 
+    #[pyo3(signature = (indices, threads=None))]
     fn get_batch<'py>(
         &mut self,
         py: Python<'py>,
         indices: Vec<usize>,
+        threads: Option<usize>,
     ) -> PyResult<Bound<'py, PyDict>> {
         let batch = py
-            .detach(|| self.inner.get_batch(&indices))
+            .detach(|| match threads {
+                Some(1) => self.inner.get_batch(&indices),
+                _ => self.inner.get_batch_parallel(&indices, threads),
+            })
             .map_err(extxyz_error_to_py)?;
         batch_to_pydict(py, batch)
     }
@@ -139,9 +144,22 @@ fn read_first_frame<'py>(py: Python<'py>, path: PathBuf) -> PyResult<Bound<'py, 
 }
 
 /// Read every frame, as a list of per-frame dicts.
+///
+/// `threads=None` parses on every core; `threads=1` is the exact serial
+/// streaming read (no scan). Output and errors are identical either way.
 #[pyfunction]
-fn read_frames<'py>(py: Python<'py>, path: PathBuf) -> PyResult<Bound<'py, PyList>> {
-    let frames = atomflow_core::read_frames(path).map_err(extxyz_error_to_py)?;
+#[pyo3(signature = (path, threads=None))]
+fn read_frames<'py>(
+    py: Python<'py>,
+    path: PathBuf,
+    threads: Option<usize>,
+) -> PyResult<Bound<'py, PyList>> {
+    let frames = py
+        .detach(|| match threads {
+            Some(1) => atomflow_core::read_frames(&path),
+            _ => atomflow_core::read_frames_parallel(&path, threads),
+        })
+        .map_err(extxyz_error_to_py)?;
 
     let dicts = frames
         .into_iter()

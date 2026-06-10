@@ -7,8 +7,8 @@
 
 use std::{fmt::Write as _, hint::black_box, io::Cursor};
 
-use atomflow_core::{FrameIter, scan_frames};
-use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use atomflow_core::{FrameIter, read_frames_parallel, scan_frames};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 const SPECIES: &[&str] = &["H", "C", "N", "O", "Si"];
 
@@ -125,5 +125,32 @@ fn bench_scan(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_parse, bench_scan);
+/// Thread-count scaling of the parallel bulk read (includes the scan).
+/// This is the measurement gate for mmap and scan/parse pipelining: it
+/// shows where per-worker buffered reads or the serial scan become the
+/// bottleneck.
+fn bench_parallel(c: &mut Criterion) {
+    let mut group = c.benchmark_group("parallel_read");
+
+    let cases = [
+        ("many_small_frames", trajectory(2_000, 16, 64, 0x5EED)),
+        ("large_frames", trajectory(4, 100_000, 100_001, 0x5EED2)),
+    ];
+
+    for (name, text) in cases {
+        let path = std::env::temp_dir().join(format!("atomflow_bench_{name}.extxyz"));
+        std::fs::write(&path, &text).unwrap();
+        group.throughput(Throughput::Bytes(text.len() as u64));
+
+        for threads in [1, 2, 4, 8] {
+            group.bench_function(BenchmarkId::new(name, threads), |b| {
+                b.iter(|| black_box(read_frames_parallel(&path, Some(threads)).unwrap().len()))
+            });
+        }
+    }
+
+    group.finish();
+}
+
+criterion_group!(benches, bench_parse, bench_scan, bench_parallel);
 criterion_main!(benches);

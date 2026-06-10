@@ -35,6 +35,10 @@ def atomflow_read_all(path: Path) -> list:
     return atomflow.read_frames(path)
 
 
+def atomflow_read_all_serial(path: Path) -> list:
+    return atomflow.read_frames(path, threads=1)
+
+
 def atomflow_read_first(path: Path) -> object:
     return atomflow.read_first_frame(path)
 
@@ -81,6 +85,7 @@ def ase_read_first(path: Path) -> object:
 
 READ_ALL = [
     pytest.param(atomflow_read_all, id="atomflow"),
+    pytest.param(atomflow_read_all_serial, id="atomflow-serial"),
     pytest.param(atomflow_to_ase_read_all, id="atomflow-to-ase", marks=needs_ase),
     pytest.param(ase_read_all, id="ase", marks=needs_ase),
 ]

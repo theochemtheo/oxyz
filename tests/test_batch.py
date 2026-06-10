@@ -102,6 +102,52 @@ def test_invalid_batching_arguments(kwargs) -> None:
         atomflow.iter_batches(VARYING, **kwargs)
 
 
+def assert_batches_equal(left: atomflow.Batch, right: atomflow.Batch) -> None:
+    assert_array_equal(left.frame_indices, right.frame_indices)
+    assert_array_equal(left.offsets, right.offsets)
+    assert set(left.columns) == set(right.columns)
+    for name, values in right.columns.items():
+        if isinstance(values, np.ndarray):
+            assert_array_equal(as_array(left.columns[name]), values)
+        else:
+            assert left.columns[name] == values
+    assert set(left.metadata) == set(right.metadata)
+    for key, values in right.metadata.items():
+        if isinstance(values, np.ndarray):
+            assert_array_equal(as_array(left.metadata[key]), values)
+        else:
+            assert left.metadata[key] == values
+
+
+def test_threads_never_change_batch_composition() -> None:
+    """Same seed, same file: identical batches at any thread count."""
+
+    def batches(threads: int | None) -> list[atomflow.Batch]:
+        return list(
+            atomflow.iter_batches(
+                VARYING, atoms_per_batch=4, shuffle=True, seed=7, threads=threads
+            )
+        )
+
+    serial = batches(1)
+    for threads in (None, 4):
+        for left, right in zip(batches(threads), serial, strict=True):
+            assert_batches_equal(left, right)
+
+
+def test_read_batch_threads_are_equivalent() -> None:
+    serial = atomflow.read_batch(VARYING, [2, 0, 1], threads=1)
+    parallel = atomflow.read_batch(VARYING, [2, 0, 1], threads=4)
+    assert_batches_equal(parallel, serial)
+
+
+def test_sequential_batches_match_across_thread_counts() -> None:
+    streamed = list(atomflow.iter_batches(VARYING, frames_per_batch=2, threads=1))
+    planned = list(atomflow.iter_batches(VARYING, frames_per_batch=2))
+    for left, right in zip(planned, streamed, strict=True):
+        assert_batches_equal(left, right)
+
+
 def test_int_real_metadata_promotes_to_float(tmp_path: Path) -> None:
     path = tmp_path / "promote.extxyz"
     path.write_text(

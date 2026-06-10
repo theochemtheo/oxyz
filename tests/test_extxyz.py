@@ -55,6 +55,23 @@ def test_read_frames_error_carries_frame_index(tmp_path: Path) -> None:
         atomflow.read_frames(broken)
 
 
+@pytest.mark.parametrize("path", CORPUS, ids=lambda path: path.name)
+def test_parallel_read_frames_matches_serial(path: Path) -> None:
+    serial = atomflow.read_frames(path, threads=1)
+    parallel = atomflow.read_frames(path, threads=4)
+
+    assert len(parallel) == len(serial)
+    for left, right in zip(parallel, serial, strict=True):
+        assert left.n_atoms == right.n_atoms
+        assert list(left.columns) == list(right.columns)
+        for name, values in right.columns.items():
+            if isinstance(values, np.ndarray):
+                assert_array_equal(as_array(left.columns[name]), values)
+            else:
+                assert left.columns[name] == values
+        assert list(left.metadata) == list(right.metadata)
+
+
 def test_iter_frames_streams_the_trajectory() -> None:
     frames = atomflow.iter_frames(DATA_DIR / "varying_atom_counts.xyz")
 

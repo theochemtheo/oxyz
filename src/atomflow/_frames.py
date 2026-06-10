@@ -41,8 +41,11 @@ def read_first_frame(path: str | Path) -> Frame:
     return _frame_from_data(_rust.read_first_frame(str(path)))
 
 
-def read_frames(path: str | Path) -> list[Frame]:
-    return [_frame_from_data(data) for data in _rust.read_frames(str(path))]
+def read_frames(path: str | Path, *, threads: int | None = None) -> list[Frame]:
+    """Read every frame. Parses on all cores by default; `threads=1` streams
+    serially. Results and errors are identical regardless of `threads`."""
+    data = _rust.read_frames(str(path), threads)
+    return [_frame_from_data(frame) for frame in data]
 
 
 class IndexedFrames:

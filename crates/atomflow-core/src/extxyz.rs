@@ -166,6 +166,7 @@ pub fn scan_frames<R: BufRead>(mut reader: R) -> Result<FrameIndex> {
     let mut entries = Vec::new();
     let mut line = Vec::new();
     let mut offset: u64 = 0;
+    let mut line_number: usize = 1;
 
     loop {
         line.clear();
@@ -175,7 +176,9 @@ pub fn scan_frames<R: BufRead>(mut reader: R) -> Result<FrameIndex> {
         }
 
         let count_offset = offset;
+        let count_line = line_number;
         offset += n_read as u64;
+        line_number += 1;
 
         let n_atoms = std::str::from_utf8(&line)
             .ok()
@@ -198,10 +201,12 @@ pub fn scan_frames<R: BufRead>(mut reader: R) -> Result<FrameIndex> {
                 });
             }
             offset += n_read as u64;
+            line_number += 1;
         }
 
         entries.push(FrameEntry {
             offset: count_offset,
+            line: count_line,
             n_atoms,
         });
     }
@@ -210,6 +215,8 @@ pub fn scan_frames<R: BufRead>(mut reader: R) -> Result<FrameIndex> {
 /// Random-access reader: a scanned [`FrameIndex`] plus the open file.
 pub struct IndexedFrames {
     file: File,
+    /// Kept so parallel reads can open per-worker handles.
+    path: std::path::PathBuf,
     index: FrameIndex,
 }
 
@@ -220,6 +227,7 @@ impl IndexedFrames {
         let index = scan_index(path)?;
         Ok(IndexedFrames {
             file: File::open(path)?,
+            path: path.to_owned(),
             index,
         })
     }
@@ -258,23 +266,120 @@ impl IndexedFrames {
         Ok(builder.finish()?)
     }
 
-    fn seek_and_parse(&mut self, entry: FrameEntry, frame_index: usize) -> Result<Frame> {
-        self.file.seek(SeekFrom::Start(entry.offset))?;
-        match FrameIter::new(BufReader::new(&mut self.file)).next() {
-            Some(Ok(frame)) => Ok(frame),
-            // Relabel from the iterator's local index 0 to the real one.
-            Some(Err(ExtxyzError::InFrame { source, .. })) => Err(ExtxyzError::InFrame {
-                frame_index,
-                source,
-            }),
-            Some(Err(other)) => Err(other),
-            // The index promised a frame here; the file must have changed.
-            None => Err(ExtxyzError::InFrame {
-                frame_index,
-                source: Box::new(ExtxyzError::MissingLine("atom count")),
-            }),
+    /// `get_batch` with the frame parses spread over worker threads;
+    /// `threads` of `None` uses every core. Output and errors are identical
+    /// to the serial version.
+    #[cfg(feature = "parallel")]
+    pub fn get_batch_parallel(&self, indices: &[usize], threads: Option<usize>) -> Result<Batch> {
+        let entries = indices
+            .iter()
+            .map(|&frame_index| {
+                self.index
+                    .get(frame_index)
+                    .map(|entry| (frame_index, entry))
+                    .ok_or(ExtxyzError::FrameOutOfRange {
+                        frame_index,
+                        n_frames: self.index.n_frames(),
+                    })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let frames = parse_entries_parallel(&self.path, &entries, threads)?;
+        let mut builder = BatchBuilder::new();
+        for frame in frames {
+            builder.push(frame)?;
         }
+        Ok(builder.finish()?)
     }
+
+    fn seek_and_parse(&mut self, entry: FrameEntry, frame_index: usize) -> Result<Frame> {
+        parse_frame_at(&mut self.file, entry, frame_index)
+    }
+}
+
+/// Seek to one indexed frame and parse it alone; errors carry `frame_index`
+/// and file-absolute line numbers, identical to a streamed read's.
+fn parse_frame_at(file: &mut File, entry: FrameEntry, frame_index: usize) -> Result<Frame> {
+    file.seek(SeekFrom::Start(entry.offset))?;
+    match FrameIter::starting_at_line(BufReader::new(file), entry.line).next() {
+        Some(Ok(frame)) => Ok(frame),
+        // Relabel from the iterator's local index 0 to the real one.
+        Some(Err(ExtxyzError::InFrame { source, .. })) => Err(ExtxyzError::InFrame {
+            frame_index,
+            source,
+        }),
+        Some(Err(other)) => Err(other),
+        // The index promised a frame here; the file must have changed.
+        None => Err(ExtxyzError::InFrame {
+            frame_index,
+            source: Box::new(ExtxyzError::MissingLine("atom count")),
+        }),
+    }
+}
+
+/// `read_frames` parallelised over the byte-offset index: scan first, then
+/// parse frames on worker threads. Output and errors are identical to the
+/// serial version; only the wall time differs.
+#[cfg(feature = "parallel")]
+pub fn read_frames_parallel(path: impl AsRef<Path>, threads: Option<usize>) -> Result<Vec<Frame>> {
+    let path = path.as_ref();
+    let index = scan_index(path)?;
+    let entries: Vec<(usize, FrameEntry)> = index.entries().iter().copied().enumerate().collect();
+    parse_entries_parallel(path, &entries, threads)
+}
+
+/// Parse tagged index entries on rayon workers, each chunk through its own
+/// file handle. Results keep request order; the reported error is the first
+/// in request order, exactly as a serial read would raise it.
+#[cfg(feature = "parallel")]
+fn parse_entries_parallel(
+    path: &Path,
+    entries: &[(usize, FrameEntry)],
+    threads: Option<usize>,
+) -> Result<Vec<Frame>> {
+    use rayon::prelude::*;
+
+    if entries.is_empty() {
+        return Err(BatchError::Empty.into());
+    }
+
+    let parse_all = || {
+        // A few chunks per thread: amortises the per-chunk open() while
+        // leaving rayon room to balance.
+        let chunk_size = entries
+            .len()
+            .div_ceil(rayon::current_num_threads() * 4)
+            .max(1);
+
+        let results: Vec<Result<Frame>> = entries
+            .par_chunks(chunk_size)
+            .map(|chunk| parse_chunk(path, chunk))
+            .flatten_iter()
+            .collect();
+
+        results.into_iter().collect()
+    };
+
+    match threads {
+        None => parse_all(),
+        Some(threads) => rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .map_err(|error| ExtxyzError::Io(io::Error::other(error)))?
+            .install(parse_all),
+    }
+}
+
+#[cfg(feature = "parallel")]
+fn parse_chunk(path: &Path, chunk: &[(usize, FrameEntry)]) -> Vec<Result<Frame>> {
+    let mut file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) => return vec![Err(error.into())],
+    };
+    chunk
+        .iter()
+        .map(|&(frame_index, entry)| parse_frame_at(&mut file, entry, frame_index))
+        .collect()
 }
 
 /// Streaming frame reader: one frame is materialised at a time.
@@ -288,10 +393,16 @@ pub struct FrameIter<R: BufRead> {
 
 impl<R: BufRead> FrameIter<R> {
     pub fn new(reader: R) -> Self {
+        FrameIter::starting_at_line(reader, 1)
+    }
+
+    /// For seek-based reads: keeps diagnostics in file line numbers even
+    /// though the reader starts mid-file.
+    pub(crate) fn starting_at_line(reader: R, line_number: usize) -> Self {
         FrameIter {
             lines: reader.lines(),
             frame_index: 0,
-            line_number: 1,
+            line_number,
             done: false,
         }
     }

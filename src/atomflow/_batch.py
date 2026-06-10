@@ -50,15 +50,18 @@ class Batch:
         return np.repeat(np.arange(self.n_frames), self.n_atoms)
 
 
-def read_batch(path: str | Path, indices: Sequence[int]) -> Batch:
+def read_batch(
+    path: str | Path, indices: Sequence[int], *, threads: int | None = None
+) -> Batch:
     """Gather the given frames (in order, repeats allowed) into one batch.
 
     Scans the file on every call; for repeated gathers from one file, prefer
-    `iter_batches`, which scans once.
+    `iter_batches`, which scans once. `threads=None` parses on every core,
+    `threads=1` serially; the batch is identical either way.
     """
     plan = [int(i) for i in indices]
     reader = _rust.IndexedFrames(str(path))
-    return _batch_from_data(reader.get_batch(plan), plan)
+    return _batch_from_data(reader.get_batch(plan, threads), plan)
 
 
 def iter_batches(
@@ -68,6 +71,7 @@ def iter_batches(
     atoms_per_batch: int | None = None,
     shuffle: bool = False,
     seed: int | None = None,
+    threads: int | None = None,
 ) -> Iterator[Batch]:
     """Read a file as a sequence of batches.
 
@@ -75,7 +79,12 @@ def iter_batches(
     `atoms_per_batch` (greedy packing to a total-atom budget; a frame larger
     than the budget gets a batch to itself) must be given. `shuffle` draws
     frames in a seeded random order via the byte-offset index instead of
-    file order; same seed, same file: identical batches.
+    file order.
+
+    Batch composition depends only on the file, the knobs, and the seed —
+    never on `threads`, which sets parsing parallelism within each batch
+    (None: all cores; 1: serial, which for unshuffled `frames_per_batch`
+    streams the file without scanning).
     """
     if (frames_per_batch is None) == (atoms_per_batch is None):
         raise ValueError("pass exactly one of frames_per_batch or atoms_per_batch")
@@ -86,9 +95,11 @@ def iter_batches(
     if seed is not None and not shuffle:
         raise ValueError("seed requires shuffle=True")
 
-    if frames_per_batch is not None and not shuffle:
+    if frames_per_batch is not None and not shuffle and threads == 1:
         return _sequential_batches(path, frames_per_batch)
-    return _planned_batches(path, frames_per_batch, atoms_per_batch, shuffle, seed)
+    return _planned_batches(
+        path, frames_per_batch, atoms_per_batch, shuffle, seed, threads
+    )
 
 
 def _sequential_batches(path: str | Path, frames_per_batch: int) -> Iterator[Batch]:
@@ -106,8 +117,12 @@ def _planned_batches(
     atoms_per_batch: int | None,
     shuffle: bool,
     seed: int | None,
+    threads: int | None,
 ) -> Iterator[Batch]:
-    """Index-backed batches over a frame order planned up front."""
+    """Index-backed batches over a frame order planned up front.
+
+    Planning is serial and happens before any parsing, so `threads` cannot
+    influence which frames land in which batch."""
     n_atoms = scan(path).n_atoms
     order = np.arange(len(n_atoms), dtype=np.intp)
     if shuffle:
@@ -124,7 +139,7 @@ def _planned_batches(
 
     reader = _rust.IndexedFrames(str(path))
     for plan in plans:
-        yield _batch_from_data(reader.get_batch(plan), plan)
+        yield _batch_from_data(reader.get_batch(plan, threads), plan)
 
 
 def _greedy_atom_plans(

@@ -11,6 +11,9 @@
 pub struct FrameEntry {
     /// Byte offset of the frame's count line.
     pub offset: u64,
+    /// 1-based file line number of the count line, so seek-based parses can
+    /// report the same line numbers as a streamed read.
+    pub line: usize,
     pub n_atoms: usize,
 }
 
@@ -61,7 +64,11 @@ mod tests {
         FrameIndex::new(
             counts
                 .iter()
-                .map(|&n_atoms| FrameEntry { offset: 0, n_atoms })
+                .map(|&n_atoms| FrameEntry {
+                    offset: 0,
+                    line: 1,
+                    n_atoms,
+                })
                 .collect(),
         )
     }
