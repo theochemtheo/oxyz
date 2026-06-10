@@ -1,6 +1,6 @@
-//! Phase-2 contract: single-pass reads match the two-pass path on valid
-//! input, and the partial-read promise (nothing past the last requested
-//! frame is inspected) holds where they deliberately differ.
+//! Single-pass reads must match the two-pass path on valid input, and the
+//! partial-read promise (nothing past the last requested frame is
+//! inspected) must hold where they deliberately differ.
 
 use std::path::PathBuf;
 

@@ -49,10 +49,8 @@ Issues = "https://github.com/theochemtheo/oxyz/issues"
 ase = ["ase>=3.28,<4"]
 
 [dependency-groups]
-bench = [
-    "ase>=3.28.0,<4",
-    "pytest-benchmark>=5.2.3",
-]
+# Benchmark dependencies live in benchmarks/run.py (PEP 723), not here:
+# the comparison parsers need CPython <3.14, which that script pins.
 dev = [
     "maturin>=1.13.3",
     "prek>=0.4.4",
