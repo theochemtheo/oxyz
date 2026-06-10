@@ -30,6 +30,16 @@ fn read_frames<'py>(py: Python<'py>, path: PathBuf) -> PyResult<Bound<'py, PyLis
     PyList::new(py, dicts)
 }
 
+/// Infer the file's schema and return the human-readable report.
+///
+/// Provisional surface: text only, until the schema shape settles enough to
+/// commit to structured Python access.
+#[pyfunction]
+fn infer_schema(path: PathBuf) -> PyResult<String> {
+    let schema = atomflow_core::infer_schema(path).map_err(extxyz_error_to_py)?;
+    Ok(schema.to_string())
+}
+
 /// Convert one frame to `{"n_atoms": int, "columns": {...}, "metadata": {...}}`.
 ///
 /// Numeric and boolean columns become numpy arrays (2-D when width > 1);
@@ -122,5 +132,6 @@ fn array_from_flat<T: Element>(
 fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_first_frame, m)?)?;
     m.add_function(wrap_pyfunction!(read_frames, m)?)?;
+    m.add_function(wrap_pyfunction!(infer_schema, m)?)?;
     Ok(())
 }

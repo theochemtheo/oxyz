@@ -55,6 +55,14 @@ def test_read_frames_error_carries_frame_index(tmp_path: Path) -> None:
         atomflow.read_frames(broken)
 
 
+def test_infer_schema_report() -> None:
+    report = atomflow.infer_schema(DATA_DIR / "varying_atom_counts.xyz")
+
+    assert "3 frames, 6 atoms (min 1, max 3)" in report
+    assert "pos: R:3 (3/3 frames)" in report
+    assert "energy: Real (3/3 frames)" in report
+
+
 def test_read_first_frame_simple_extxyz() -> None:
     frame = atomflow.read_first_frame(DATA_DIR / "simple.extxyz")
 

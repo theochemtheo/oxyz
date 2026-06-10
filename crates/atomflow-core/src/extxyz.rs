@@ -14,7 +14,8 @@ use std::{
 
 use thiserror::Error;
 
-use crate::model::{Column, ColumnData, Frame, Value};
+use crate::model::{Column, ColumnData, ColumnKind, Frame, Value};
+use crate::schema::Schema;
 
 #[derive(Debug, Error)]
 pub enum ExtxyzError {
@@ -82,6 +83,18 @@ pub fn read_frames(path: impl AsRef<Path>) -> Result<Vec<Frame>> {
 
 pub fn iter_frames(path: impl AsRef<Path>) -> Result<FrameIter<BufReader<File>>> {
     Ok(FrameIter::new(BufReader::new(File::open(path)?)))
+}
+
+/// Infer the whole file's schema. Full-parse fold for now: every frame is
+/// parsed and validated, so this doubles as a structural check of the file.
+pub fn infer_schema(path: impl AsRef<Path>) -> Result<Schema> {
+    let mut schema = Schema::default();
+
+    for frame in iter_frames(path)? {
+        schema.observe(&frame?);
+    }
+
+    Ok(schema)
 }
 
 /// Streaming frame reader: one frame is materialised at a time.
@@ -216,16 +229,8 @@ impl<R: BufRead> Iterator for FrameIter<R> {
 /// header's promise, as distinct from the materialised [`Column`].
 struct PropertySpec {
     name: String,
-    kind: PropertyKind,
+    kind: ColumnKind,
     width: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum PropertyKind {
-    Real,
-    Int,
-    Bool,
-    Str,
 }
 
 /// Sanity bound on a column's declared width.
@@ -242,10 +247,10 @@ impl PropertySpec {
     fn into_column(self, n_atoms: usize) -> Column {
         let capacity = n_atoms.saturating_mul(self.width).min(MAX_PREALLOC);
         let data = match self.kind {
-            PropertyKind::Real => ColumnData::Real(Vec::with_capacity(capacity)),
-            PropertyKind::Int => ColumnData::Int(Vec::with_capacity(capacity)),
-            PropertyKind::Bool => ColumnData::Bool(Vec::with_capacity(capacity)),
-            PropertyKind::Str => ColumnData::Str(Vec::with_capacity(capacity)),
+            ColumnKind::Real => ColumnData::Real(Vec::with_capacity(capacity)),
+            ColumnKind::Int => ColumnData::Int(Vec::with_capacity(capacity)),
+            ColumnKind::Bool => ColumnData::Bool(Vec::with_capacity(capacity)),
+            ColumnKind::Str => ColumnData::Str(Vec::with_capacity(capacity)),
         };
 
         Column {
@@ -279,10 +284,10 @@ fn parse_properties(descriptor: &str) -> Result<Vec<PropertySpec>> {
             }
 
             let kind = match kind {
-                "R" => PropertyKind::Real,
-                "I" => PropertyKind::Int,
-                "L" => PropertyKind::Bool,
-                "S" => PropertyKind::Str,
+                "R" => ColumnKind::Real,
+                "I" => ColumnKind::Int,
+                "L" => ColumnKind::Bool,
+                "S" => ColumnKind::Str,
                 _ => {
                     return Err(ExtxyzError::UnknownPropertyKind {
                         name: name.to_owned(),
@@ -617,7 +622,7 @@ mod tests {
     fn parses_properties_descriptor() {
         let specs = parse_properties("species:S:1:pos:R:3:selection:I:1:tagged:L:1").unwrap();
 
-        let summary: Vec<(&str, PropertyKind, usize)> = specs
+        let summary: Vec<(&str, ColumnKind, usize)> = specs
             .iter()
             .map(|spec| (spec.name.as_str(), spec.kind, spec.width))
             .collect();
@@ -625,10 +630,10 @@ mod tests {
         assert_eq!(
             summary,
             [
-                ("species", PropertyKind::Str, 1),
-                ("pos", PropertyKind::Real, 3),
-                ("selection", PropertyKind::Int, 1),
-                ("tagged", PropertyKind::Bool, 1),
+                ("species", ColumnKind::Str, 1),
+                ("pos", ColumnKind::Real, 3),
+                ("selection", ColumnKind::Int, 1),
+                ("tagged", ColumnKind::Bool, 1),
             ]
         );
     }

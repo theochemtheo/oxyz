@@ -8,6 +8,30 @@
 //! Parsing lives in [`crate::extxyz`]; a future `Batch` (concatenated
 //! columns across frames) is expected to reuse this vocabulary.
 
+use std::fmt;
+
+/// The type of a column, without its data — the `R`/`I`/`L`/`S` axis alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColumnKind {
+    Real,
+    Int,
+    Bool,
+    Str,
+}
+
+impl fmt::Display for ColumnKind {
+    /// Displays as the extxyz Properties letter (`R`, `I`, `L`, `S`).
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let letter = match self {
+            ColumnKind::Real => 'R',
+            ColumnKind::Int => 'I',
+            ColumnKind::Bool => 'L',
+            ColumnKind::Str => 'S',
+        };
+        write!(f, "{letter}")
+    }
+}
+
 /// The values of one per-atom column, stored as a single dense buffer.
 ///
 /// The enum wraps whole columns, not cells: one tag check per column access,
@@ -25,6 +49,15 @@ pub enum ColumnData {
 }
 
 impl ColumnData {
+    pub fn kind(&self) -> ColumnKind {
+        match self {
+            ColumnData::Real(_) => ColumnKind::Real,
+            ColumnData::Int(_) => ColumnKind::Int,
+            ColumnData::Bool(_) => ColumnKind::Bool,
+            ColumnData::Str(_) => ColumnKind::Str,
+        }
+    }
+
     pub fn len(&self) -> usize {
         match self {
             ColumnData::Real(values) => values.len(),
