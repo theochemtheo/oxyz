@@ -1,4 +1,4 @@
-//! Parser throughput baseline. Run with `cargo bench -p atomflow-core`.
+//! Parser throughput baseline. Run with `cargo bench -p oxyz-core`.
 //!
 //! Input is generated in memory from a fixed seed: identical bytes every run
 //! (comparable numbers), but varied within the file so the parser doesn't
@@ -7,8 +7,8 @@
 
 use std::{fmt::Write as _, hint::black_box, io::Cursor};
 
-use atomflow_core::{FrameIter, read_frames_parallel, scan_frames};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use oxyz_core::{FrameIter, read_frames_parallel, scan_frames};
 
 const SPECIES: &[&str] = &["H", "C", "N", "O", "Si"];
 
@@ -138,7 +138,7 @@ fn bench_parallel(c: &mut Criterion) {
     ];
 
     for (name, text) in cases {
-        let path = std::env::temp_dir().join(format!("atomflow_bench_{name}.extxyz"));
+        let path = std::env::temp_dir().join(format!("oxyz_bench_{name}.extxyz"));
         std::fs::write(&path, &text).unwrap();
         group.throughput(Throughput::Bytes(text.len() as u64));
 

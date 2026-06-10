@@ -4,7 +4,7 @@
 
 use std::io::Cursor;
 
-use atomflow_core::FrameIter;
+use oxyz_core::FrameIter;
 use proptest::prelude::*;
 
 fn parse_all(input: &str) {

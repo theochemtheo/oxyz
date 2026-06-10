@@ -30,26 +30,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
-name = "atomflow-core"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "proptest",
- "rayon",
- "thiserror",
-]
-
-[[package]]
-name = "atomflow-py"
-version = "0.1.0"
-dependencies = [
- "atomflow-core",
- "ndarray",
- "numpy",
- "pyo3",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -484,6 +464,26 @@ name = "oorandom"
 version = "11.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
+
+[[package]]
+name = "oxyz-core"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "proptest",
+ "rayon",
+ "thiserror",
+]
+
+[[package]]
+name = "oxyz-py"
+version = "0.1.0"
+dependencies = [
+ "ndarray",
+ "numpy",
+ "oxyz-core",
+ "pyo3",
+]
 
 [[package]]
 name = "pin-project-lite"

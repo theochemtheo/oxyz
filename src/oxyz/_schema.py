@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import atomflow._rust as _rust
+import oxyz._rust as _rust
 
 
 def infer_schema(path: str | Path) -> str:

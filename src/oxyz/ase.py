@@ -1,4 +1,4 @@
-"""ASE conversion layer: all ASE knowledge in atomflow lives in this module.
+"""ASE conversion layer: all ASE knowledge in oxyz lives in this module.
 
 Mirrors the mapping of `ase.io.extxyz`'s reader, reusing its routing tables
 and `set_calc_and_arrays` so the result agrees with `ase.io.read` by
@@ -21,7 +21,7 @@ from typing import overload
 
 import numpy as np
 
-from atomflow._frames import Frame, IndexedFrames, iter_frames
+from oxyz._frames import Frame, IndexedFrames, iter_frames
 
 try:
     from ase import Atoms
@@ -37,8 +37,8 @@ try:
     )
 except ImportError as error:
     raise ImportError(
-        "atomflow.ase requires the optional dependency 'ase'; "
-        "install it with: pip install atomflow[ase]"
+        "oxyz.ase requires the optional dependency 'ase'; "
+        "install it with: pip install oxyz[ase]"
     ) from error
 
 __all__ = ["ToAseError", "iread", "read", "to_atoms"]
@@ -141,7 +141,7 @@ def read(
     Like ASE, the default index is -1: the last frame. Forward selections
     stream; negative or reverse ones resolve via a structural scan and seek,
     never a full parse. Only requested frames have their contents read —
-    whole-file validation is `atomflow.infer_schema`'s job.
+    whole-file validation is `oxyz.infer_schema`'s job.
     """
     _check_format(format)
     index = _parse_index(-1 if index is None else index)
@@ -166,7 +166,7 @@ def iread(
 
 def _check_format(format: str | None) -> None:
     if format not in (None, "extxyz", "xyz"):
-        raise ValueError(f"atomflow.ase only reads extxyz, got format={format!r}")
+        raise ValueError(f"oxyz.ase only reads extxyz, got format={format!r}")
 
 
 def _parse_index(index: int | str | slice) -> int | slice:

@@ -1,8 +1,6 @@
 use std::{io::Cursor, path::PathBuf};
 
-use atomflow_core::{
-    BatchBuilder, ColumnData, FrameIter, IndexedFrames, iter_batches, read_frames,
-};
+use oxyz_core::{BatchBuilder, ColumnData, FrameIter, IndexedFrames, iter_batches, read_frames};
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -10,7 +8,7 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn batch_from(text: &str) -> Result<atomflow_core::Batch, atomflow_core::ExtxyzError> {
+fn batch_from(text: &str) -> Result<oxyz_core::Batch, oxyz_core::ExtxyzError> {
     let mut builder = BatchBuilder::new();
     for frame in FrameIter::new(Cursor::new(text)) {
         builder.push(frame?)?;

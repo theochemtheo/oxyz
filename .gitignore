@@ -36,6 +36,9 @@ target/
 .claude
 .codex
 
+# local planning notes, never committed
+.NOTES/
+
 # Benchmarks: generated fixtures and pytest-benchmark saved results
 benchmarks/.cache/
 .benchmarks/

@@ -6,9 +6,9 @@ from pathlib import Path
 
 import numpy as np
 
-import atomflow._rust as _rust
-from atomflow._frames import ColumnValues
-from atomflow._scan import scan
+import oxyz._rust as _rust
+from oxyz._frames import ColumnValues
+from oxyz._scan import scan
 
 
 @dataclass(frozen=True, slots=True)

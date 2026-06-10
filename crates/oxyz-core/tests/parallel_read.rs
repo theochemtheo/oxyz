@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use atomflow_core::{IndexedFrames, read_frames, read_frames_parallel};
+use oxyz_core::{IndexedFrames, read_frames, read_frames_parallel};
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -27,7 +27,7 @@ fn corpus() -> Vec<PathBuf> {
 }
 
 fn write_temp(name: &str, text: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("atomflow_par_{}_{name}", std::process::id()));
+    let path = std::env::temp_dir().join(format!("oxyz_par_{}_{name}", std::process::id()));
     std::fs::write(&path, text).unwrap();
     path
 }

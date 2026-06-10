@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-import atomflow._rust as _rust
+import oxyz._rust as _rust
 
 
 @dataclass(frozen=True, slots=True)

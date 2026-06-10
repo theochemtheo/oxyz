@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-import atomflow._rust as _rust
+import oxyz._rust as _rust
 
 if TYPE_CHECKING:
     from ase import Atoms
@@ -32,7 +32,7 @@ class Frame:
 
     def to_ase(self) -> Atoms:
         """Convert to `ase.Atoms` (requires the optional `ase` extra)."""
-        from atomflow.ase import to_atoms
+        from oxyz.ase import to_atoms
 
         return to_atoms(self)
 
@@ -51,8 +51,8 @@ def read_frames(path: str | Path, *, threads: int | None = None) -> list[Frame]:
 class IndexedFrames:
     """Random-access reader: scans on open, then reads frames in any order.
 
-    Internal for now — the public random-access surface is `atomflow.scan`
-    plus the completed index grammar in `atomflow.ase`.
+    Internal for now — the public random-access surface is `oxyz.scan`
+    plus the completed index grammar in `oxyz.ase`.
     """
 
     def __init__(self, path: str | Path) -> None:

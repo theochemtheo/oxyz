@@ -1,7 +1,7 @@
 use std::{io::Cursor, path::PathBuf};
 
-use atomflow_core::schema::{Schema, ValueType};
-use atomflow_core::{ColumnKind, FrameIter, infer_schema};
+use oxyz_core::schema::{Schema, ValueType};
+use oxyz_core::{ColumnKind, FrameIter, infer_schema};
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

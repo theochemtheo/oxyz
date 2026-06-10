@@ -3,7 +3,7 @@ requires = ["maturin>=1.8,<2"]
 build-backend = "maturin"
 
 [project]
-name = "atomflow"
+name = "oxyz"
 version = "0.1.0"
 requires-python = ">=3.11"
 license = "MIT OR Apache-2.0"
@@ -57,7 +57,7 @@ select = [
 testpaths = ["tests"]
 
 [tool.maturin]
-manifest-path = "crates/atomflow-py/Cargo.toml"
-module-name = "atomflow._rust"
+manifest-path = "crates/oxyz-py/Cargo.toml"
+module-name = "oxyz._rust"
 python-source = "src"
 features = ["extension-module"]

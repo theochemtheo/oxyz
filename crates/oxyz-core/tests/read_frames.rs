@@ -5,7 +5,7 @@
 
 use std::{io::Cursor, path::PathBuf};
 
-use atomflow_core::{ColumnData, ExtxyzError, FrameIter, Value, read_first_frame, read_frames};
+use oxyz_core::{ColumnData, ExtxyzError, FrameIter, Value, read_first_frame, read_frames};
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

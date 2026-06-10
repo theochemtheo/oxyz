@@ -6,7 +6,7 @@
 
 use std::{fs, path::PathBuf};
 
-use atomflow_core::read_frames;
+use oxyz_core::read_frames;
 
 /// Kept explicit so adding a fixture without an entry, or deleting one the
 /// suite still expects, fails loudly.

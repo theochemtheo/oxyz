@@ -1,4 +1,4 @@
-//! atomflow's internal data model: typed, columnar, format-agnostic.
+//! oxyz's internal data model: typed, columnar, format-agnostic.
 //!
 //! Runtime-typed on purpose: which columns a file has, their types, and
 //! their widths are discovered while parsing, so they cannot be compile-time

@@ -11,10 +11,10 @@ which a manual `maturin develop` can still install unnoticed.
 Results land in .benchmarks/ (gitignored); numbers are only comparable
 across runs on the same machine.
 
-Fairness: output contracts differ. The `atomflow` row returns Frame
+Fairness: output contracts differ. The `oxyz` row returns Frame
 dataclasses holding numpy arrays; the `ase` row builds full `Atoms`
-objects. The `atomflow-to-ase` row is the like-for-like comparison with
-`ase`: same `Atoms` output, via `atomflow.ase.read`.
+objects. The `oxyz-to-ase` row is the like-for-like comparison with
+`ase`: same `Atoms` output, via `oxyz.ase.read`.
 """
 
 from __future__ import annotations
@@ -24,23 +24,23 @@ from pathlib import Path
 
 import pytest
 
-import atomflow
+import oxyz
 
 needs_ase = pytest.mark.skipif(
     importlib.util.find_spec("ase") is None, reason="ase not installed"
 )
 
 
-def atomflow_read_all(path: Path) -> list:
-    return atomflow.read_frames(path)
+def oxyz_read_all(path: Path) -> list:
+    return oxyz.read_frames(path)
 
 
-def atomflow_read_all_serial(path: Path) -> list:
-    return atomflow.read_frames(path, threads=1)
+def oxyz_read_all_serial(path: Path) -> list:
+    return oxyz.read_frames(path, threads=1)
 
 
-def atomflow_read_first(path: Path) -> object:
-    return atomflow.read_first_frame(path)
+def oxyz_read_first(path: Path) -> object:
+    return oxyz.read_first_frame(path)
 
 
 def ase_read_all(path: Path) -> list:
@@ -52,21 +52,21 @@ def ase_read_all(path: Path) -> list:
     return frames
 
 
-def atomflow_to_ase_read_all(path: Path) -> list:
-    from atomflow.ase import read
+def oxyz_to_ase_read_all(path: Path) -> list:
+    from oxyz.ase import read
 
     # slice(None) rather than ":" picks the precisely-typed overload.
     return read(path, index=slice(None))
 
 
-def atomflow_to_ase_read_first(path: Path) -> object:
-    from atomflow.ase import read
+def oxyz_to_ase_read_first(path: Path) -> object:
+    from oxyz.ase import read
 
     return read(path, index=0)
 
 
-def atomflow_to_ase_read_last(path: Path) -> object:
-    from atomflow.ase import read
+def oxyz_to_ase_read_last(path: Path) -> object:
+    from oxyz.ase import read
 
     return read(path, index=-1)
 
@@ -84,15 +84,15 @@ def ase_read_first(path: Path) -> object:
 
 
 READ_ALL = [
-    pytest.param(atomflow_read_all, id="atomflow"),
-    pytest.param(atomflow_read_all_serial, id="atomflow-serial"),
-    pytest.param(atomflow_to_ase_read_all, id="atomflow-to-ase", marks=needs_ase),
+    pytest.param(oxyz_read_all, id="oxyz"),
+    pytest.param(oxyz_read_all_serial, id="oxyz-serial"),
+    pytest.param(oxyz_to_ase_read_all, id="oxyz-to-ase", marks=needs_ase),
     pytest.param(ase_read_all, id="ase", marks=needs_ase),
 ]
 
 READ_FIRST = [
-    pytest.param(atomflow_read_first, id="atomflow"),
-    pytest.param(atomflow_to_ase_read_first, id="atomflow-to-ase", marks=needs_ase),
+    pytest.param(oxyz_read_first, id="oxyz"),
+    pytest.param(oxyz_to_ase_read_first, id="oxyz-to-ase", marks=needs_ase),
     pytest.param(ase_read_first, id="ase", marks=needs_ase),
 ]
 
@@ -119,7 +119,7 @@ def test_read_first_frame_of_large_file(benchmark, read, large_frames):
 
 
 READ_LAST = [
-    pytest.param(atomflow_to_ase_read_last, id="atomflow-to-ase", marks=needs_ase),
+    pytest.param(oxyz_to_ase_read_last, id="oxyz-to-ase", marks=needs_ase),
     pytest.param(ase_read_last, id="ase", marks=needs_ase),
 ]
 
@@ -133,26 +133,26 @@ def test_read_last_frame_of_large_file(benchmark, read, large_frames):
     assert frame is not None
 
 
-def atomflow_sequential_batches(path: Path) -> int:
+def oxyz_sequential_batches(path: Path) -> int:
     total = 0
-    for batch in atomflow.iter_batches(path, frames_per_batch=64):
+    for batch in oxyz.iter_batches(path, frames_per_batch=64):
         total += batch.total_atoms
     return total
 
 
-def atomflow_shuffled_atom_batches(path: Path) -> int:
-    batches = atomflow.iter_batches(path, atoms_per_batch=2048, shuffle=True, seed=0)
+def oxyz_shuffled_atom_batches(path: Path) -> int:
+    batches = oxyz.iter_batches(path, atoms_per_batch=2048, shuffle=True, seed=0)
     return sum(batch.total_atoms for batch in batches)
 
 
-# No ASE rows: ASE has no batch concept. Tracked against read_all[atomflow]
+# No ASE rows: ASE has no batch concept. Tracked against read_all[oxyz]
 # (same parse work, per-frame objects) as the informal baseline.
 @pytest.mark.benchmark(group="batches/many_small_frames")
 @pytest.mark.parametrize(
     "batched_read",
     [
-        pytest.param(atomflow_sequential_batches, id="sequential-64-frames"),
-        pytest.param(atomflow_shuffled_atom_batches, id="shuffled-2048-atoms"),
+        pytest.param(oxyz_sequential_batches, id="sequential-64-frames"),
+        pytest.param(oxyz_shuffled_atom_batches, id="shuffled-2048-atoms"),
     ],
 )
 def test_batched_read_of_many_small_frames(benchmark, batched_read, many_small_frames):

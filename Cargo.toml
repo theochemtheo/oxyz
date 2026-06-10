@@ -1,7 +1,7 @@
 [workspace]
 members = [
-    "crates/atomflow-core",
-    "crates/atomflow-py",
+    "crates/oxyz-core",
+    "crates/oxyz-py",
 ]
 resolver = "2"
 

@@ -1,6 +1,6 @@
 use std::{io::Cursor, path::PathBuf};
 
-use atomflow_core::{IndexedFrames, read_frames, scan_frames, scan_index};
+use oxyz_core::{IndexedFrames, read_frames, scan_frames, scan_index};
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

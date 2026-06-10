@@ -1,5 +1,5 @@
 [package]
-name = "atomflow-py"
+name = "oxyz-py"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -14,7 +14,7 @@ default = []
 extension-module = ["pyo3/extension-module"]
 
 [dependencies]
-atomflow-core = { path = "../atomflow-core" }
+oxyz-core = { path = "../oxyz-core" }
 ndarray = "0.16"
 numpy = "0.28"
 pyo3 = "0.28"

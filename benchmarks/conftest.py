@@ -1,6 +1,6 @@
 """Deterministic trajectory fixtures, generated once and cached on disk.
 
-Shapes mirror crates/atomflow-core/benches/parse.rs (many small frames vs few
+Shapes mirror crates/oxyz-core/benches/parse.rs (many small frames vs few
 large frames) so PyO3 binding overhead can be read off against the cargo
 bench numbers for the same workload.
 """
@@ -12,15 +12,15 @@ from pathlib import Path
 
 import pytest
 
-import atomflow._rust
+import oxyz._rust
 
 
 def pytest_configure(config) -> None:
     # Debug-build timings are ~9x off and look like real regressions.
-    if atomflow._rust.__build_profile__ != "release":
+    if oxyz._rust.__build_profile__ != "release":
         raise pytest.UsageError(
-            "the installed atomflow._rust extension is a "
-            f"{atomflow._rust.__build_profile__!r} build; benchmarks need "
+            "the installed oxyz._rust extension is a "
+            f"{oxyz._rust.__build_profile__!r} build; benchmarks need "
             "release. Run: uv run maturin develop --release"
         )
 

@@ -1,8 +1,8 @@
-# `atomflow`
+# `oxyz`
 
 **Schema-aware streaming for atomistic machine-learning datasets.**
 
-`atomflow` is an experimental Python/Rust project for reading, validating, and streaming large atomistic datasets into machine-learning workflows.
+`oxyz` is an experimental Python/Rust project for reading, validating, and streaming large atomistic datasets into machine-learning workflows.
 
 The initial focus is on the [`extxyz`](https://github.com/libAtoms/extxyz) format, with an emphasis on fast ingestion, low memory use, schema inference, useful diagnostics, and optional interoperability with `ase.Atoms`.
 
@@ -27,7 +27,7 @@ Common issues include:
 * overhead from constructing Python objects for every frame;
 * difficulty validating a dataset before using it for training.
 
-`atomflow` aims to make these problems easier to detect and manage.
+`oxyz` aims to make these problems easier to detect and manage.
 
 The project treats atomistic dataset ingestion as a data-engineering problem, not only a file-parsing problem.
 
@@ -40,12 +40,12 @@ The long-term goal is to provide a fast, reliable ingestion layer for atomistic 
 A typical workflow might look like:
 
 ```python
-import atomflow
+import oxyz
 
-schema = atomflow.infer_schema("train.extxyz")
+schema = oxyz.infer_schema("train.extxyz")
 schema.report()
 
-for batch in atomflow.iter_batches(
+for batch in oxyz.iter_batches(
     "train.extxyz",
     schema=schema,
     fields=["numbers", "positions", "forces", "energy", "cell", "pbc"],
@@ -57,13 +57,13 @@ The core idea is:
 
 > Validate the structure of the data once, then stream only what is needed into downstream ML code.
 
-`atomflow` should support ASE-style workflows where convenient, but should not require every high-throughput workflow to materialize data as `ase.Atoms` objects.
+`oxyz` should support ASE-style workflows where convenient, but should not require every high-throughput workflow to materialize data as `ase.Atoms` objects.
 
 ---
 
 ## Initial scope
 
-The first version of `atomflow` will focus on `extxyz` ingestion.
+The first version of `oxyz` will focus on `extxyz` ingestion.
 
 Initial goals:
 
@@ -81,11 +81,11 @@ Initial goals:
 
 ---
 
-## What `atomflow` should be good at
+## What `oxyz` should be good at
 
 ### Schema inference
 
-`atomflow` should be able to inspect a dataset and answer questions such as:
+`oxyz` should be able to inspect a dataset and answer questions such as:
 
 * What per-atom properties are present?
 * What per-frame metadata is present?
@@ -99,7 +99,7 @@ Initial goals:
 Example:
 
 ```python
-schema = atomflow.infer_schema("dataset.extxyz")
+schema = oxyz.infer_schema("dataset.extxyz")
 schema.report()
 schema.to_json("schema.json")
 ```
@@ -113,9 +113,9 @@ Before training a model, it should be possible to validate the dataset against a
 Example:
 
 ```python
-schema = atomflow.Schema.from_json("schema.json")
+schema = oxyz.Schema.from_json("schema.json")
 
-report = atomflow.validate(
+report = oxyz.validate(
     "dataset.extxyz",
     schema=schema,
     strictness="warn",
@@ -148,7 +148,7 @@ The default high-throughput path should support iterating through frames or batc
 Example:
 
 ```python
-for batch in atomflow.iter_batches(
+for batch in oxyz.iter_batches(
     "dataset.extxyz",
     fields=["numbers", "positions", "forces", "energy"],
     batch_size=512,
@@ -162,12 +162,12 @@ for batch in atomflow.iter_batches(
 
 Many ML workflows only need a subset of the available data.
 
-`atomflow` should make it possible to request only the fields needed for a particular task.
+`oxyz` should make it possible to request only the fields needed for a particular task.
 
 Example:
 
 ```python
-energies = atomflow.read_arrays(
+energies = oxyz.read_arrays(
     "dataset.extxyz",
     fields=["energy"],
 )
@@ -184,11 +184,11 @@ ASE compatibility is important for inspection, debugging, and integration with e
 Example:
 
 ```python
-atoms = atomflow.read_ase("dataset.extxyz", index=0)
+atoms = oxyz.read_ase("dataset.extxyz", index=0)
 ```
 
 ```python
-for atoms in atomflow.iread_ase("dataset.extxyz"):
+for atoms in oxyz.iread_ase("dataset.extxyz"):
     ...
 ```
 
@@ -202,7 +202,7 @@ The guiding principle is:
 
 ## Possible strictness modes
 
-`atomflow` should provide explicit control over how strictly files are interpreted.
+`oxyz` should provide explicit control over how strictly files are interpreted.
 
 Possible modes:
 
@@ -224,7 +224,7 @@ Important questions include:
 
 ## Benchmarking goals
 
-`atomflow` should be benchmarked against existing readers on realistic datasets.
+`oxyz` should be benchmarked against existing readers on realistic datasets.
 
 Benchmarks should measure more than raw parser speed.
 
@@ -246,10 +246,10 @@ Initial comparisons should include:
 
 * ASE's default `extxyz` reader;
 * `cextxyz` / `ase-extxyz`;
-* `atomflow` array-oriented reads;
-* `atomflow` ASE-compatible reads.
+* `oxyz` array-oriented reads;
+* `oxyz` ASE-compatible reads.
 
-The aim is not only to be faster in every case, but to clearly identify the workloads where `atomflow` provides the most value.
+The aim is not only to be faster in every case, but to clearly identify the workloads where `oxyz` provides the most value.
 
 ---
 
@@ -257,7 +257,7 @@ The aim is not only to be faster in every case, but to clearly identify the work
 
 Correctness matters more than benchmark wins.
 
-The test suite should give confidence that `atomflow` handles both well-formed and malformed data predictably.
+The test suite should give confidence that `oxyz` handles both well-formed and malformed data predictably.
 
 Important test categories include:
 
@@ -280,9 +280,9 @@ The aim is high confidence, not a symbolic coverage percentage.
 
 ## Non-goals
 
-`atomflow` is not intended to replace ASE.
+`oxyz` is not intended to replace ASE.
 
-ASE is a mature, general-purpose atomistic simulation environment. `atomflow` should complement it by focusing on fast, validated, ML-oriented dataset ingestion.
+ASE is a mature, general-purpose atomistic simulation environment. `oxyz` should complement it by focusing on fast, validated, ML-oriented dataset ingestion.
 
 The project does not initially aim to:
 
@@ -427,7 +427,7 @@ Frame indexing could be highly valuable for large datasets, but it may not be ne
 
 Questions to decide:
 
-* Should `atomflow` build byte-offset indices?
+* Should `oxyz` build byte-offset indices?
 * Should indices be stored on disk?
 * Should indexed reads be opt-in?
 * Should random access come before or after streaming reads?
@@ -526,7 +526,7 @@ Add conversion to `ase.Atoms` for interoperability.
 
 The aim is to answer:
 
-* Does `atomflow` agree with ASE on representative files?
+* Does `oxyz` agree with ASE on representative files?
 * How much performance is lost when constructing ASE objects?
 * Which ASE conventions should be preserved?
 
@@ -538,7 +538,7 @@ Benchmark realistic workloads and prepare the first public release.
 
 The aim is to answer:
 
-* Where is `atomflow` faster?
+* Where is `oxyz` faster?
 * Where is it more memory efficient?
 * Where is it more informative?
 * What should be advertised as the core value proposition?
@@ -547,15 +547,15 @@ The aim is to answer:
 
 ## Project philosophy
 
-`atomflow` should make atomistic datasets easier to trust.
+`oxyz` should make atomistic datasets easier to trust.
 
 The ideal user experience is:
 
 ```python
-schema = atomflow.infer_schema("dataset.extxyz")
+schema = oxyz.infer_schema("dataset.extxyz")
 schema.report()
 
-for batch in atomflow.iter_batches("dataset.extxyz", schema=schema):
+for batch in oxyz.iter_batches("dataset.extxyz", schema=schema):
     train(batch)
 ```
 
@@ -563,4 +563,4 @@ The easy path should be fast.
 The strict path should be safe.
 The broken path should be obvious.
 
-`atomflow` should grow from a practical solution to a real ETL problem into a reusable open-source tool for materials machine learning.
+`oxyz` should grow from a practical solution to a real ETL problem into a reusable open-source tool for materials machine learning.

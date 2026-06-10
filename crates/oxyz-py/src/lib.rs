@@ -8,7 +8,7 @@ use pyo3::{
     types::{PyDict, PyList},
 };
 
-use atomflow_core::{Batch, Column, ColumnData, ExtxyzError, Frame, Value};
+use oxyz_core::{Batch, Column, ColumnData, ExtxyzError, Frame, Value};
 
 /// Streaming iterator: one frame parsed and converted per `__next__`.
 ///
@@ -16,14 +16,14 @@ use atomflow_core::{Batch, Column, ColumnData, ExtxyzError, Frame, Value};
 /// iterator is fused — after an error or EOF it only raises StopIteration.
 #[pyclass]
 struct FrameIter {
-    inner: atomflow_core::FrameIter<BufReader<File>>,
+    inner: oxyz_core::FrameIter<BufReader<File>>,
 }
 
 #[pymethods]
 impl FrameIter {
     #[new]
     fn new(path: PathBuf) -> PyResult<Self> {
-        let inner = atomflow_core::iter_frames(path).map_err(extxyz_error_to_py)?;
+        let inner = oxyz_core::iter_frames(path).map_err(extxyz_error_to_py)?;
         Ok(FrameIter { inner })
     }
 
@@ -46,7 +46,7 @@ impl FrameIter {
 #[pyfunction]
 fn scan<'py>(py: Python<'py>, path: PathBuf) -> PyResult<Bound<'py, PyDict>> {
     let index = py
-        .detach(|| atomflow_core::scan_index(path))
+        .detach(|| oxyz_core::scan_index(path))
         .map_err(extxyz_error_to_py)?;
 
     let offsets: Vec<u64> = index.entries().iter().map(|entry| entry.offset).collect();
@@ -66,7 +66,7 @@ fn scan<'py>(py: Python<'py>, path: PathBuf) -> PyResult<Bound<'py, PyDict>> {
 /// parses single frames in any order.
 #[pyclass]
 struct IndexedFrames {
-    inner: atomflow_core::IndexedFrames,
+    inner: oxyz_core::IndexedFrames,
 }
 
 #[pymethods]
@@ -74,7 +74,7 @@ impl IndexedFrames {
     #[new]
     fn new(py: Python<'_>, path: PathBuf) -> PyResult<Self> {
         let inner = py
-            .detach(|| atomflow_core::IndexedFrames::open(path))
+            .detach(|| oxyz_core::IndexedFrames::open(path))
             .map_err(extxyz_error_to_py)?;
         Ok(IndexedFrames { inner })
     }
@@ -111,15 +111,14 @@ impl IndexedFrames {
 /// `__next__`; the final batch may be smaller. Fused after errors.
 #[pyclass]
 struct BatchIter {
-    inner: atomflow_core::BatchIter<BufReader<File>>,
+    inner: oxyz_core::BatchIter<BufReader<File>>,
 }
 
 #[pymethods]
 impl BatchIter {
     #[new]
     fn new(path: PathBuf, frames_per_batch: usize) -> PyResult<Self> {
-        let inner =
-            atomflow_core::iter_batches(path, frames_per_batch).map_err(extxyz_error_to_py)?;
+        let inner = oxyz_core::iter_batches(path, frames_per_batch).map_err(extxyz_error_to_py)?;
         Ok(BatchIter { inner })
     }
 
@@ -139,7 +138,7 @@ impl BatchIter {
 /// Read the first frame as `{"n_atoms": int, "columns": {...}, "metadata": {...}}`.
 #[pyfunction]
 fn read_first_frame<'py>(py: Python<'py>, path: PathBuf) -> PyResult<Bound<'py, PyDict>> {
-    let frame = atomflow_core::read_first_frame(path).map_err(extxyz_error_to_py)?;
+    let frame = oxyz_core::read_first_frame(path).map_err(extxyz_error_to_py)?;
     frame_to_pydict(py, frame)
 }
 
@@ -156,8 +155,8 @@ fn read_frames<'py>(
 ) -> PyResult<Bound<'py, PyList>> {
     let frames = py
         .detach(|| match threads {
-            Some(1) => atomflow_core::read_frames(&path),
-            _ => atomflow_core::read_frames_parallel(&path, threads),
+            Some(1) => oxyz_core::read_frames(&path),
+            _ => oxyz_core::read_frames_parallel(&path, threads),
         })
         .map_err(extxyz_error_to_py)?;
 
@@ -175,7 +174,7 @@ fn read_frames<'py>(
 /// commit to structured Python access.
 #[pyfunction]
 fn infer_schema(path: PathBuf) -> PyResult<String> {
-    let schema = atomflow_core::infer_schema(path).map_err(extxyz_error_to_py)?;
+    let schema = oxyz_core::infer_schema(path).map_err(extxyz_error_to_py)?;
     Ok(schema.to_string())
 }
 

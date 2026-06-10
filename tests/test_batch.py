@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
-import atomflow
+import oxyz
 
 DATA_DIR = Path(__file__).parent / "data"
 VARYING = DATA_DIR / "varying_atom_counts.xyz"
@@ -19,7 +19,7 @@ def as_array(value: object) -> np.ndarray:
 
 
 def test_sequential_batches_chunk_the_file() -> None:
-    batches = list(atomflow.iter_batches(VARYING, frames_per_batch=2))
+    batches = list(oxyz.iter_batches(VARYING, frames_per_batch=2))
 
     assert len(batches) == 2
     first, last = batches
@@ -31,8 +31,8 @@ def test_sequential_batches_chunk_the_file() -> None:
 
 
 def test_batch_columns_concatenate_frames() -> None:
-    frames = atomflow.read_frames(VARYING)
-    (batch,) = atomflow.iter_batches(VARYING, frames_per_batch=3)
+    frames = oxyz.read_frames(VARYING)
+    (batch,) = oxyz.iter_batches(VARYING, frames_per_batch=3)
 
     stacked = np.vstack([as_array(frame.columns["pos"]) for frame in frames])
     assert_allclose(as_array(batch.columns["pos"]), stacked)
@@ -43,7 +43,7 @@ def test_batch_columns_concatenate_frames() -> None:
 
 
 def test_batch_derived_properties() -> None:
-    (batch,) = atomflow.iter_batches(VARYING, frames_per_batch=3)
+    (batch,) = oxyz.iter_batches(VARYING, frames_per_batch=3)
 
     assert_array_equal(batch.n_atoms, [3, 1, 2])
     assert_array_equal(batch.ptr, batch.offsets)
@@ -51,11 +51,11 @@ def test_batch_derived_properties() -> None:
 
 
 def test_atom_budget_packs_greedily() -> None:
-    batches = list(atomflow.iter_batches(VARYING, atoms_per_batch=4))
+    batches = list(oxyz.iter_batches(VARYING, atoms_per_batch=4))
     assert [list(b.frame_indices) for b in batches] == [[0, 1], [2]]
 
     # A frame above the budget still gets a batch to itself.
-    batches = list(atomflow.iter_batches(VARYING, atoms_per_batch=2))
+    batches = list(oxyz.iter_batches(VARYING, atoms_per_batch=2))
     assert [list(b.frame_indices) for b in batches] == [[0], [1], [2]]
 
 
@@ -63,7 +63,7 @@ def test_shuffled_batches_are_seeded_and_partition_the_file() -> None:
     def plan(seed: int) -> list[list[int]]:
         return [
             list(b.frame_indices)
-            for b in atomflow.iter_batches(
+            for b in oxyz.iter_batches(
                 VARYING, atoms_per_batch=4, shuffle=True, seed=seed
             )
         ]
@@ -75,8 +75,8 @@ def test_shuffled_batches_are_seeded_and_partition_the_file() -> None:
 
 
 def test_read_batch_gathers_in_requested_order() -> None:
-    frames = atomflow.read_frames(VARYING)
-    batch = atomflow.read_batch(VARYING, [2, 0])
+    frames = oxyz.read_frames(VARYING)
+    batch = oxyz.read_batch(VARYING, [2, 0])
 
     assert_array_equal(batch.frame_indices, [2, 0])
     assert_array_equal(batch.offsets, [0, 2, 5])
@@ -99,10 +99,10 @@ def test_read_batch_gathers_in_requested_order() -> None:
 )
 def test_invalid_batching_arguments(kwargs) -> None:
     with pytest.raises(ValueError):
-        atomflow.iter_batches(VARYING, **kwargs)
+        oxyz.iter_batches(VARYING, **kwargs)
 
 
-def assert_batches_equal(left: atomflow.Batch, right: atomflow.Batch) -> None:
+def assert_batches_equal(left: oxyz.Batch, right: oxyz.Batch) -> None:
     assert_array_equal(left.frame_indices, right.frame_indices)
     assert_array_equal(left.offsets, right.offsets)
     assert set(left.columns) == set(right.columns)
@@ -122,9 +122,9 @@ def assert_batches_equal(left: atomflow.Batch, right: atomflow.Batch) -> None:
 def test_threads_never_change_batch_composition() -> None:
     """Same seed, same file: identical batches at any thread count."""
 
-    def batches(threads: int | None) -> list[atomflow.Batch]:
+    def batches(threads: int | None) -> list[oxyz.Batch]:
         return list(
-            atomflow.iter_batches(
+            oxyz.iter_batches(
                 VARYING, atoms_per_batch=4, shuffle=True, seed=7, threads=threads
             )
         )
@@ -136,14 +136,14 @@ def test_threads_never_change_batch_composition() -> None:
 
 
 def test_read_batch_threads_are_equivalent() -> None:
-    serial = atomflow.read_batch(VARYING, [2, 0, 1], threads=1)
-    parallel = atomflow.read_batch(VARYING, [2, 0, 1], threads=4)
+    serial = oxyz.read_batch(VARYING, [2, 0, 1], threads=1)
+    parallel = oxyz.read_batch(VARYING, [2, 0, 1], threads=4)
     assert_batches_equal(parallel, serial)
 
 
 def test_sequential_batches_match_across_thread_counts() -> None:
-    streamed = list(atomflow.iter_batches(VARYING, frames_per_batch=2, threads=1))
-    planned = list(atomflow.iter_batches(VARYING, frames_per_batch=2))
+    streamed = list(oxyz.iter_batches(VARYING, frames_per_batch=2, threads=1))
+    planned = list(oxyz.iter_batches(VARYING, frames_per_batch=2))
     for left, right in zip(planned, streamed, strict=True):
         assert_batches_equal(left, right)
 
@@ -154,7 +154,7 @@ def test_int_real_metadata_promotes_to_float(tmp_path: Path) -> None:
         "1\nProperties=species:S:1:pos:R:3 energy=-1\nH 0 0 0\n"
         "1\nProperties=species:S:1:pos:R:3 energy=-1.5\nH 0 0 0\n"
     )
-    (batch,) = atomflow.iter_batches(path, frames_per_batch=2)
+    (batch,) = oxyz.iter_batches(path, frames_per_batch=2)
 
     energy = as_array(batch.metadata["energy"])
     assert energy.dtype == np.float64
@@ -168,7 +168,7 @@ def test_schema_drift_within_a_batch_is_an_error(tmp_path: Path) -> None:
         "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
     )
     with pytest.raises(ValueError, match="missing metadata"):
-        list(atomflow.iter_batches(path, frames_per_batch=2))
+        list(oxyz.iter_batches(path, frames_per_batch=2))
 
     # Batches that never span the drift are still readable.
-    assert len(list(atomflow.iter_batches(path, frames_per_batch=1))) == 2
+    assert len(list(oxyz.iter_batches(path, frames_per_batch=1))) == 2

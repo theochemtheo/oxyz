@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
-import atomflow
+import oxyz
 
 DATA_DIR = Path(__file__).parent / "data"
 
@@ -28,7 +28,7 @@ def as_array(value: object) -> np.ndarray:
 
 @pytest.mark.parametrize("path", CORPUS, ids=lambda path: path.name)
 def test_every_fixture_converts_to_python(path: Path) -> None:
-    frame = atomflow.read_first_frame(path)
+    frame = oxyz.read_first_frame(path)
 
     assert frame.n_atoms > 0
     assert frame.columns
@@ -37,7 +37,7 @@ def test_every_fixture_converts_to_python(path: Path) -> None:
 
 
 def test_read_frames_trajectory() -> None:
-    frames = atomflow.read_frames(DATA_DIR / "varying_atom_counts.xyz")
+    frames = oxyz.read_frames(DATA_DIR / "varying_atom_counts.xyz")
 
     assert [frame.n_atoms for frame in frames] == [3, 1, 2]
     assert [frame.metadata["energy"] for frame in frames] == [-76.3, -13.6, -31.8]
@@ -52,13 +52,13 @@ def test_read_frames_error_carries_frame_index(tmp_path: Path) -> None:
     broken.write_text(text + "not-a-count\n")
 
     with pytest.raises(ValueError, match="frame 3"):
-        atomflow.read_frames(broken)
+        oxyz.read_frames(broken)
 
 
 @pytest.mark.parametrize("path", CORPUS, ids=lambda path: path.name)
 def test_parallel_read_frames_matches_serial(path: Path) -> None:
-    serial = atomflow.read_frames(path, threads=1)
-    parallel = atomflow.read_frames(path, threads=4)
+    serial = oxyz.read_frames(path, threads=1)
+    parallel = oxyz.read_frames(path, threads=4)
 
     assert len(parallel) == len(serial)
     for left, right in zip(parallel, serial, strict=True):
@@ -73,7 +73,7 @@ def test_parallel_read_frames_matches_serial(path: Path) -> None:
 
 
 def test_iter_frames_streams_the_trajectory() -> None:
-    frames = atomflow.iter_frames(DATA_DIR / "varying_atom_counts.xyz")
+    frames = oxyz.iter_frames(DATA_DIR / "varying_atom_counts.xyz")
 
     assert [frame.n_atoms for frame in frames] == [3, 1, 2]
 
@@ -83,7 +83,7 @@ def test_iter_frames_yields_good_frames_then_raises_then_fuses(tmp_path: Path) -
     broken = tmp_path / "broken.xyz"
     broken.write_text(text + "not-a-count\n")
 
-    frames = atomflow.iter_frames(broken)
+    frames = oxyz.iter_frames(broken)
     assert [next(frames).n_atoms for _ in range(3)] == [3, 1, 2]
     with pytest.raises(ValueError, match="frame 3"):
         next(frames)
@@ -93,7 +93,7 @@ def test_iter_frames_yields_good_frames_then_raises_then_fuses(tmp_path: Path) -
 
 def test_two_iterators_are_independent() -> None:
     path = DATA_DIR / "varying_atom_counts.xyz"
-    first, second = atomflow.iter_frames(path), atomflow.iter_frames(path)
+    first, second = oxyz.iter_frames(path), oxyz.iter_frames(path)
 
     next(first)
     assert next(first).n_atoms == 1
@@ -101,7 +101,7 @@ def test_two_iterators_are_independent() -> None:
 
 
 def test_scan_reports_structure_and_statistics() -> None:
-    index = atomflow.scan(DATA_DIR / "varying_atom_counts.xyz")
+    index = oxyz.scan(DATA_DIR / "varying_atom_counts.xyz")
 
     assert index.n_frames == 3
     assert index.total_atoms == 6
@@ -118,11 +118,11 @@ def test_scan_rejects_structural_garbage(tmp_path: Path) -> None:
     broken.write_text(text + "not-a-count\n")
 
     with pytest.raises(ValueError, match="frame 3"):
-        atomflow.scan(broken)
+        oxyz.scan(broken)
 
 
 def test_infer_schema_report() -> None:
-    report = atomflow.infer_schema(DATA_DIR / "varying_atom_counts.xyz")
+    report = oxyz.infer_schema(DATA_DIR / "varying_atom_counts.xyz")
 
     assert "3 frames, 6 atoms (min 1, max 3)" in report
     assert "pos: R:3 (3/3 frames)" in report
@@ -130,7 +130,7 @@ def test_infer_schema_report() -> None:
 
 
 def test_read_first_frame_simple_extxyz() -> None:
-    frame = atomflow.read_first_frame(DATA_DIR / "simple.extxyz")
+    frame = oxyz.read_first_frame(DATA_DIR / "simple.extxyz")
 
     assert frame.n_atoms == 1
     assert list(frame.columns) == ["species", "pos", "forces"]
@@ -169,7 +169,7 @@ def test_read_first_frame_simple_extxyz() -> None:
 
 
 def test_nonorthogonal_lattice_preserved_as_written() -> None:
-    frame = atomflow.read_first_frame(DATA_DIR / "nonorthogonal.extxyz")
+    frame = oxyz.read_first_frame(DATA_DIR / "nonorthogonal.extxyz")
 
     lattice = as_array(frame.metadata["Lattice"])
     assert_allclose(lattice, np.array([10.0, 1.0, 2.0, 0.0, 11.0, 3.0, 0.0, 0.0, 12.0]))
@@ -180,7 +180,7 @@ def test_nonorthogonal_lattice_preserved_as_written() -> None:
 
 
 def test_integer_and_string_columns() -> None:
-    frame = atomflow.read_first_frame(DATA_DIR / "id_and_selection.extxyz")
+    frame = oxyz.read_first_frame(DATA_DIR / "id_and_selection.extxyz")
 
     assert list(frame.columns) == ["id", "species", "pos", "selection"]
 
@@ -195,9 +195,7 @@ def test_integer_and_string_columns() -> None:
 
 
 def test_metadata_value_typing() -> None:
-    frame = atomflow.read_first_frame(
-        DATA_DIR / "quoted_strings_booleans_scalars.extxyz"
-    )
+    frame = oxyz.read_first_frame(DATA_DIR / "quoted_strings_booleans_scalars.extxyz")
 
     assert frame.metadata["source"] == "generated for parser study"
     assert frame.metadata["split"] == "train"
@@ -213,7 +211,7 @@ def test_metadata_value_typing() -> None:
 
 
 def test_bracket_array_metadata() -> None:
-    frame = atomflow.read_first_frame(DATA_DIR / "newstyle_array_metadata.extxyz")
+    frame = oxyz.read_first_frame(DATA_DIR / "newstyle_array_metadata.extxyz")
 
     kpoints = as_array(frame.metadata["kpoints"])
     assert kpoints.dtype == np.int64
@@ -227,7 +225,7 @@ def test_bracket_array_metadata() -> None:
 
 
 def test_mace_training_schema_names_preserved() -> None:
-    frame = atomflow.read_first_frame(DATA_DIR / "mace_ref_energy_forces_stress.xyz")
+    frame = oxyz.read_first_frame(DATA_DIR / "mace_ref_energy_forces_stress.xyz")
 
     ref_forces = as_array(frame.columns["REF_forces"])
     assert ref_forces.shape == (3, 3)
