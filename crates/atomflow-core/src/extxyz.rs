@@ -8,12 +8,13 @@
 
 use std::{
     fs::File,
-    io::{self, BufRead, BufReader},
+    io::{self, BufRead, BufReader, Seek, SeekFrom},
     path::Path,
 };
 
 use thiserror::Error;
 
+use crate::index::{FrameEntry, FrameIndex};
 use crate::model::{Column, ColumnData, ColumnKind, Frame, Value};
 use crate::schema::Schema;
 
@@ -67,6 +68,9 @@ pub enum ExtxyzError {
         frame_index: usize,
         source: Box<ExtxyzError>,
     },
+
+    #[error("frame index {frame_index} out of range: file has {n_frames} frames")]
+    FrameOutOfRange { frame_index: usize, n_frames: usize },
 }
 
 pub type Result<T> = std::result::Result<T, ExtxyzError>;
@@ -95,6 +99,119 @@ pub fn infer_schema(path: impl AsRef<Path>) -> Result<Schema> {
     }
 
     Ok(schema)
+}
+
+/// Structural scan: record each frame's byte offset and declared atom count
+/// without parsing comment or atom lines.
+pub fn scan_index(path: impl AsRef<Path>) -> Result<FrameIndex> {
+    scan_frames(BufReader::new(File::open(path)?))
+}
+
+/// Scan any reader. The count line is trusted, per the format spec: atom
+/// lines are skipped blindly, so a lying count desyncs the scan and surfaces
+/// as an invalid count line one frame late. Contents are never validated —
+/// that is the parser's and [`infer_schema`]'s job.
+pub fn scan_frames<R: BufRead>(mut reader: R) -> Result<FrameIndex> {
+    let mut entries = Vec::new();
+    let mut line = Vec::new();
+    let mut offset: u64 = 0;
+
+    loop {
+        line.clear();
+        let n_read = reader.read_until(b'\n', &mut line)?;
+        if n_read == 0 {
+            return Ok(FrameIndex::new(entries));
+        }
+
+        let count_offset = offset;
+        offset += n_read as u64;
+
+        let n_atoms = std::str::from_utf8(&line)
+            .ok()
+            .and_then(|text| text.trim().parse::<usize>().ok())
+            .ok_or_else(|| ExtxyzError::InFrame {
+                frame_index: entries.len(),
+                source: Box::new(ExtxyzError::InvalidAtomCount {
+                    line: String::from_utf8_lossy(&line).trim().to_owned(),
+                }),
+            })?;
+
+        for skipped in 0..=n_atoms {
+            line.clear();
+            let n_read = reader.read_until(b'\n', &mut line)?;
+            if n_read == 0 {
+                let label = if skipped == 0 { "comment" } else { "atom" };
+                return Err(ExtxyzError::InFrame {
+                    frame_index: entries.len(),
+                    source: Box::new(ExtxyzError::MissingLine(label)),
+                });
+            }
+            offset += n_read as u64;
+        }
+
+        entries.push(FrameEntry {
+            offset: count_offset,
+            n_atoms,
+        });
+    }
+}
+
+/// Random-access reader: a scanned [`FrameIndex`] plus the open file.
+pub struct IndexedFrames {
+    file: File,
+    index: FrameIndex,
+}
+
+impl IndexedFrames {
+    /// Scan `path`, keeping the file open for random access.
+    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
+        let index = scan_index(path)?;
+        Ok(IndexedFrames {
+            file: File::open(path)?,
+            index,
+        })
+    }
+
+    pub fn index(&self) -> &FrameIndex {
+        &self.index
+    }
+
+    pub fn len(&self) -> usize {
+        self.index.n_frames()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.index.is_empty()
+    }
+
+    /// Seek to frame `frame_index` and parse it alone. Errors carry that
+    /// index; the contents of other frames are never touched.
+    pub fn get(&mut self, frame_index: usize) -> Result<Frame> {
+        let entry = self
+            .index
+            .get(frame_index)
+            .ok_or(ExtxyzError::FrameOutOfRange {
+                frame_index,
+                n_frames: self.index.n_frames(),
+            })?;
+
+        self.file.seek(SeekFrom::Start(entry.offset))?;
+        match FrameIter::new(BufReader::new(&mut self.file)).next() {
+            Some(Ok(frame)) => Ok(frame),
+            // Relabel from the iterator's local index 0 to the real one.
+            Some(Err(ExtxyzError::InFrame { source, .. })) => Err(ExtxyzError::InFrame {
+                frame_index,
+                source,
+            }),
+            Some(Err(other)) => Err(other),
+            // The index promised a frame here; the file must have changed.
+            None => Err(ExtxyzError::InFrame {
+                frame_index,
+                source: Box::new(ExtxyzError::MissingLine("atom count")),
+            }),
+        }
+    }
 }
 
 /// Streaming frame reader: one frame is materialised at a time.

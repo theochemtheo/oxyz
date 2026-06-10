@@ -45,6 +45,23 @@ def read_frames(path: str | Path) -> list[Frame]:
     return [_frame_from_data(data) for data in _rust.read_frames(str(path))]
 
 
+class IndexedFrames:
+    """Random-access reader: scans on open, then reads frames in any order.
+
+    Internal for now — the public random-access surface is `atomflow.scan`
+    plus the completed index grammar in `atomflow.ase`.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        self._inner = _rust.IndexedFrames(str(path))
+
+    def __len__(self) -> int:
+        return len(self._inner)
+
+    def get(self, frame_index: int) -> Frame:
+        return _frame_from_data(self._inner.get(frame_index))
+
+
 def iter_frames(path: str | Path) -> Iterator[Frame]:
     """Stream frames one at a time, in constant memory.
 

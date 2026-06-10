@@ -51,13 +51,26 @@ def ase_read_all(path: Path) -> list:
 def atomflow_to_ase_read_all(path: Path) -> list:
     from atomflow.ase import read
 
-    return read(path, index=":")
+    # slice(None) rather than ":" picks the precisely-typed overload.
+    return read(path, index=slice(None))
 
 
 def atomflow_to_ase_read_first(path: Path) -> object:
     from atomflow.ase import read
 
     return read(path, index=0)
+
+
+def atomflow_to_ase_read_last(path: Path) -> object:
+    from atomflow.ase import read
+
+    return read(path, index=-1)
+
+
+def ase_read_last(path: Path) -> object:
+    from ase.io import read
+
+    return read(path, index=-1, format="extxyz")
 
 
 def ase_read_first(path: Path) -> object:
@@ -96,5 +109,20 @@ def test_read_all_large_frames(benchmark, read, large_frames):
 @pytest.mark.benchmark(group="read_first/large_frames")
 @pytest.mark.parametrize("read", READ_FIRST)
 def test_read_first_frame_of_large_file(benchmark, read, large_frames):
+    frame = benchmark(read, large_frames)
+    assert frame is not None
+
+
+READ_LAST = [
+    pytest.param(atomflow_to_ase_read_last, id="atomflow-to-ase", marks=needs_ase),
+    pytest.param(ase_read_last, id="ase", marks=needs_ase),
+]
+
+
+# Exercises the structural scan: seek to the last frame instead of parsing
+# the whole file (which is what index=-1 costs without an index).
+@pytest.mark.benchmark(group="read_last/large_frames")
+@pytest.mark.parametrize("read", READ_LAST)
+def test_read_last_frame_of_large_file(benchmark, read, large_frames):
     frame = benchmark(read, large_frames)
     assert frame is not None

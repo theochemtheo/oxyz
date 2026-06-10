@@ -3,7 +3,7 @@ use std::{fs::File, io::BufReader, path::PathBuf};
 use ndarray::Array2;
 use numpy::{Element, IntoPyArray};
 use pyo3::{
-    exceptions::{PyOSError, PyValueError},
+    exceptions::{PyIndexError, PyOSError, PyValueError},
     prelude::*,
     types::{PyDict, PyList},
 };
@@ -39,6 +39,55 @@ impl FrameIter {
             Some(Ok(frame)) => frame_to_pydict(py, frame).map(Some),
             Some(Err(error)) => Err(extxyz_error_to_py(error)),
         }
+    }
+}
+
+/// Structurally scan the file: `{"offsets": ndarray, "n_atoms": ndarray}`.
+#[pyfunction]
+fn scan<'py>(py: Python<'py>, path: PathBuf) -> PyResult<Bound<'py, PyDict>> {
+    let index = py
+        .detach(|| atomflow_core::scan_index(path))
+        .map_err(extxyz_error_to_py)?;
+
+    let offsets: Vec<u64> = index.entries().iter().map(|entry| entry.offset).collect();
+    let n_atoms: Vec<u64> = index
+        .entries()
+        .iter()
+        .map(|entry| entry.n_atoms as u64)
+        .collect();
+
+    let data = PyDict::new(py);
+    data.set_item("offsets", offsets.into_pyarray(py))?;
+    data.set_item("n_atoms", n_atoms.into_pyarray(py))?;
+    Ok(data)
+}
+
+/// Random-access reader: scans on construction, then `get(i)` seeks and
+/// parses single frames in any order.
+#[pyclass]
+struct IndexedFrames {
+    inner: atomflow_core::IndexedFrames,
+}
+
+#[pymethods]
+impl IndexedFrames {
+    #[new]
+    fn new(py: Python<'_>, path: PathBuf) -> PyResult<Self> {
+        let inner = py
+            .detach(|| atomflow_core::IndexedFrames::open(path))
+            .map_err(extxyz_error_to_py)?;
+        Ok(IndexedFrames { inner })
+    }
+
+    fn __len__(&self) -> usize {
+        self.inner.len()
+    }
+
+    fn get<'py>(&mut self, py: Python<'py>, frame_index: usize) -> PyResult<Bound<'py, PyDict>> {
+        let frame = py
+            .detach(|| self.inner.get(frame_index))
+            .map_err(extxyz_error_to_py)?;
+        frame_to_pydict(py, frame)
     }
 }
 
@@ -136,6 +185,7 @@ fn extxyz_error_to_py(error: ExtxyzError) -> PyErr {
 
     match inner {
         ExtxyzError::Io(io_error) => PyOSError::new_err(io_error.to_string()),
+        ExtxyzError::FrameOutOfRange { .. } => PyIndexError::new_err(message),
         _ => PyValueError::new_err(message),
     }
 }
@@ -174,6 +224,8 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_first_frame, m)?)?;
     m.add_function(wrap_pyfunction!(read_frames, m)?)?;
     m.add_function(wrap_pyfunction!(infer_schema, m)?)?;
+    m.add_function(wrap_pyfunction!(scan, m)?)?;
     m.add_class::<FrameIter>()?;
+    m.add_class::<IndexedFrames>()?;
     Ok(())
 }

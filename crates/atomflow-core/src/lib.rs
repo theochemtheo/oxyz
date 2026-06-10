@@ -1,10 +1,13 @@
 pub mod extxyz;
+pub mod index;
 pub mod model;
 pub mod schema;
 
 pub use extxyz::{
-    ExtxyzError, FrameIter, infer_schema, iter_frames, read_first_frame, read_frames,
+    ExtxyzError, FrameIter, IndexedFrames, infer_schema, iter_frames, read_first_frame,
+    read_frames, scan_frames, scan_index,
 };
 pub use model::{Column, ColumnData, ColumnKind, Frame, Value};
-// Schema types stay behind `schema::` — a diagnostic/contract surface, not
-// core vocabulary like `Frame`. `infer_schema` is the root-level entry point.
+// Schema and index types stay behind `schema::` / `index::` — derived
+// surfaces, not core vocabulary like `Frame`. The entry points (readers and
+// `infer_schema` / `scan_index`) live at the root.

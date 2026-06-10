@@ -163,22 +163,40 @@ def test_read_negative_and_out_of_range_indices() -> None:
         atomflow.ase.read(path, index=5)
 
 
-def test_read_slice_forms() -> None:
+# The full grammar a drop-in must accept: ints, int strings, slice strings
+# (with negatives and steps), and slice objects.
+@pytest.mark.parametrize(
+    "index",
+    [0, 2, -1, "1", "1:", ":2", ":-1", "-2:", "::2", "1::2", slice(-2, None)],
+)
+def test_index_grammar_matches_ase(index) -> None:
+    import ase.io
+
     import atomflow.ase
 
     path = DATA_DIR / "varying_atom_counts.xyz"
-    assert len(atomflow.ase.read(path, index="0:2")) == 2
-    assert len(atomflow.ase.read(path, index=slice(1, None))) == 2
+    ours = atomflow.ase.read(path, index=index)
+    theirs = ase.io.read(path, index=index, format="extxyz")
+
+    if isinstance(theirs, list):
+        assert isinstance(ours, list)
+        assert len(ours) == len(theirs)
+        for atoms_ours, atoms_theirs in zip(ours, theirs, strict=True):
+            assert_atoms_match(atoms_ours, atoms_theirs)
+    else:
+        assert not isinstance(ours, list)
+        assert_atoms_match(ours, theirs)
 
 
-@pytest.mark.parametrize(
-    "index", ["::2", "0:4:2", slice(None, None, 2), "3", ":-1", slice(-2, None)]
-)
-def test_unsupported_index_grammar_raises(index) -> None:
+def test_reverse_slice_reads_backwards() -> None:
     import atomflow.ase
 
-    with pytest.raises(NotImplementedError):
-        atomflow.ase.read(DATA_DIR / "varying_atom_counts.xyz", index=index)
+    path = DATA_DIR / "varying_atom_counts.xyz"
+    forward = atomflow.ase.read(path, index=":")
+    for atoms_reversed, atoms in zip(
+        atomflow.ase.read(path, index="::-1"), reversed(forward), strict=True
+    ):
+        assert_atoms_match(atoms_reversed, atoms)
 
 
 def test_non_chemical_species_is_strict_error(tmp_path: Path) -> None:

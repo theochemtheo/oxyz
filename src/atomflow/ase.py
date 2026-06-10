@@ -14,7 +14,6 @@ is accepted and routed to the calculator; ASE's comment parser rejects it.
 
 from __future__ import annotations
 
-from collections import deque
 from collections.abc import Iterator
 from itertools import islice
 from pathlib import Path
@@ -22,7 +21,7 @@ from typing import overload
 
 import numpy as np
 
-from atomflow._frames import Frame, iter_frames
+from atomflow._frames import Frame, IndexedFrames, iter_frames
 
 try:
     from ase import Atoms
@@ -121,8 +120,14 @@ def read(
 
 @overload
 def read(
-    path: str | Path, index: str | slice, *, format: str | None = ...
+    path: str | Path, index: slice, *, format: str | None = ...
 ) -> list[Atoms]: ...
+
+
+@overload
+def read(
+    path: str | Path, index: str, *, format: str | None = ...
+) -> Atoms | list[Atoms]: ...
 
 
 def read(
@@ -131,19 +136,18 @@ def read(
     *,
     format: str | None = None,
 ) -> Atoms | list[Atoms]:
-    """Drop-in for `ase.io.read` on extxyz files.
+    """Drop-in for `ase.io.read` on extxyz files; full ASE index grammar.
 
-    Like ASE, the default index is -1: the last frame. Also like ASE, frames
-    are streamed and only the requested ones converted, so a malformed frame
-    past the requested index goes unnoticed — whole-file validation is
-    `atomflow.infer_schema`'s job.
+    Like ASE, the default index is -1: the last frame. Forward selections
+    stream; negative or reverse ones resolve via a structural scan and seek,
+    never a full parse. Only requested frames have their contents read —
+    whole-file validation is `atomflow.infer_schema`'s job.
     """
     _check_format(format)
-    if index is None:
-        index = -1
+    index = _parse_index(-1 if index is None else index)
     if isinstance(index, int):
         return to_atoms(_nth_frame(path, index))
-    return [to_atoms(frame) for frame in _frame_slice(path, _as_slice(index))]
+    return [to_atoms(frame) for frame in _sliced_frames(path, index)]
 
 
 def iread(
@@ -154,10 +158,10 @@ def iread(
 ) -> Iterator[Atoms]:
     """Drop-in for `ase.io.iread` on extxyz files: yields one Atoms at a time."""
     _check_format(format)
+    index = _parse_index(index)
     if isinstance(index, int):
         return iter((to_atoms(_nth_frame(path, index)),))
-    frames = _frame_slice(path, _as_slice(index))
-    return (to_atoms(frame) for frame in frames)
+    return (to_atoms(frame) for frame in _sliced_frames(path, index))
 
 
 def _check_format(format: str | None) -> None:
@@ -165,14 +169,28 @@ def _check_format(format: str | None) -> None:
         raise ValueError(f"atomflow.ase only reads extxyz, got format={format!r}")
 
 
+def _parse_index(index: int | str | slice) -> int | slice:
+    """ASE's index grammar: an int, an int string, or a slice string."""
+    if not isinstance(index, str):
+        return index
+    if ":" not in index:
+        return int(index)
+    parts = index.split(":")
+    if len(parts) > 3:
+        raise ValueError(f"invalid slice string: {index!r}")
+    start, stop, step = (int(part) if part else None for part in (*parts, "", "")[:3])
+    return slice(start, stop, step)
+
+
 def _nth_frame(path: str | Path, index: int) -> Frame:
-    """Frame `index` (negative counted from the end) in constant memory."""
+    """Frame `index`; negatives resolve via a scan and seek, not a full parse."""
     if index < 0:
-        # The last -index frames; deque evicts everything earlier.
-        tail = deque(iter_frames(path), maxlen=-index)
-        if len(tail) == -index:
-            return tail[0]
-        raise IndexError(f"frame {index} out of range: file has {len(tail)} frames")
+        frames = IndexedFrames(path)
+        if index + len(frames) < 0:
+            raise IndexError(
+                f"frame {index} out of range: file has {len(frames)} frames"
+            )
+        return frames.get(index + len(frames))
 
     frame = next(islice(iter_frames(path), index, None), None)
     if frame is None:
@@ -180,33 +198,15 @@ def _nth_frame(path: str | Path, index: int) -> Frame:
     return frame
 
 
-def _frame_slice(path: str | Path, frames: slice) -> Iterator[Frame]:
-    return islice(iter_frames(path), frames.start, frames.stop)
+def _sliced_frames(path: str | Path, frames: slice) -> Iterator[Frame]:
+    """Forward slices stream; negative bounds or steps go via the index."""
+    start, stop, step = frames.start, frames.stop, frames.step
+    forward = all(bound is None or bound >= 0 for bound in (start, stop)) and (
+        step is None or step > 0
+    )
+    if forward:
+        return islice(iter_frames(path), start, stop, step)
 
-
-def _as_slice(index: str | slice) -> slice:
-    """Subset of ASE's index grammar: ':' and 'start:stop' with bounds >= 0.
-
-    TODO: step and negative bounds (need the offset index), int strings.
-    """
-    if isinstance(index, str):
-        parts = index.split(":")
-        if len(parts) == 1:
-            raise NotImplementedError(
-                f"string index {index!r} not supported yet; pass an int instead"
-            )
-        if len(parts) > 2:
-            raise NotImplementedError(f"slice step not supported yet: {index!r}")
-        start, stop = (int(part) if part else None for part in parts)
-    elif index.step in (None, 1):
-        start, stop = index.start, index.stop
-    else:
-        raise NotImplementedError(f"slice step not supported yet: {index!r}")
-
-    for bound in (start, stop):
-        if bound is not None and bound < 0:
-            raise NotImplementedError(
-                f"negative slice bounds not supported yet (need random access): "
-                f"{index!r}"
-            )
-    return slice(start, stop)
+    indexed = IndexedFrames(path)
+    selected = range(*frames.indices(len(indexed)))
+    return (indexed.get(i) for i in selected)

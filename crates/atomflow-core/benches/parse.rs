@@ -7,7 +7,7 @@
 
 use std::{fmt::Write as _, hint::black_box, io::Cursor};
 
-use atomflow_core::FrameIter;
+use atomflow_core::{FrameIter, scan_frames};
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
 const SPECIES: &[&str] = &["H", "C", "N", "O", "Si"];
@@ -82,6 +82,12 @@ fn parse_all(text: &str) -> usize {
         .sum()
 }
 
+fn scan_all(text: &str) -> usize {
+    scan_frames(Cursor::new(text.as_bytes()))
+        .unwrap()
+        .total_atoms()
+}
+
 fn bench_parse(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse");
 
@@ -101,5 +107,23 @@ fn bench_parse(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_parse);
+/// The structural scan must stay far above parse throughput to earn its
+/// keep; this is the measurement gate for reaching for `memchr`.
+fn bench_scan(c: &mut Criterion) {
+    let mut group = c.benchmark_group("scan");
+
+    let small = trajectory(2_000, 16, 64, 0x5EED);
+    group.throughput(Throughput::Bytes(small.len() as u64));
+    group.bench_function("many_small_frames", |b| {
+        b.iter(|| black_box(scan_all(&small)))
+    });
+
+    let large = trajectory(4, 100_000, 100_001, 0x5EED2);
+    group.throughput(Throughput::Bytes(large.len() as u64));
+    group.bench_function("large_frames", |b| b.iter(|| black_box(scan_all(&large))));
+
+    group.finish();
+}
+
+criterion_group!(benches, bench_parse, bench_scan);
 criterion_main!(benches);

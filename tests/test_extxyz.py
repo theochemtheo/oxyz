@@ -83,6 +83,27 @@ def test_two_iterators_are_independent() -> None:
     assert next(second).n_atoms == 3
 
 
+def test_scan_reports_structure_and_statistics() -> None:
+    index = atomflow.scan(DATA_DIR / "varying_atom_counts.xyz")
+
+    assert index.n_frames == 3
+    assert index.total_atoms == 6
+    assert list(index.n_atoms) == [3, 1, 2]
+    assert (index.min_atoms, index.max_atoms) == (1, 3)
+    assert index.mean_atoms == 2.0
+    assert index.median_atoms == 2.0
+    assert index.std_atoms == pytest.approx((2 / 3) ** 0.5)
+
+
+def test_scan_rejects_structural_garbage(tmp_path: Path) -> None:
+    text = (DATA_DIR / "varying_atom_counts.xyz").read_text()
+    broken = tmp_path / "broken.xyz"
+    broken.write_text(text + "not-a-count\n")
+
+    with pytest.raises(ValueError, match="frame 3"):
+        atomflow.scan(broken)
+
+
 def test_infer_schema_report() -> None:
     report = atomflow.infer_schema(DATA_DIR / "varying_atom_counts.xyz")
 
