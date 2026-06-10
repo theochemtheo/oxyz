@@ -55,13 +55,14 @@ def read_batch(
 ) -> Batch:
     """Gather the given frames (in order, repeats allowed) into one batch.
 
-    Scans the file on every call; for repeated gathers from one file, prefer
-    `iter_batches`, which scans once. `threads=None` parses on every core,
+    Single pass: the file is read once, and only as far as the last
+    requested frame — structure and contents beyond it are never inspected.
+    For repeated gathers from one file prefer `iter_batches`, which scans
+    once and reuses the index. `threads=None` parses on every core,
     `threads=1` serially; the batch is identical either way.
     """
     plan = [int(i) for i in indices]
-    reader = _rust.IndexedFrames(str(path))
-    return _batch_from_data(reader.get_batch(plan, threads), plan)
+    return _batch_from_data(_rust.read_batch(str(path), plan, threads), plan)
 
 
 def iter_batches(

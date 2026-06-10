@@ -7,6 +7,7 @@
 //! separate, later layer.
 
 use std::{
+    collections::HashMap,
     fs::File,
     io::{self, BufRead, BufReader, Seek, SeekFrom},
     path::Path,
@@ -212,6 +213,374 @@ pub fn scan_frames<R: BufRead>(mut reader: R) -> Result<FrameIndex> {
     }
 }
 
+/// One frame's bytes, cut out of the stream by a single-pass scan: the
+/// count line through the last atom line, plus where it sat in the file.
+struct RawFrame {
+    frame_index: usize,
+    /// 1-based file line number of the count line.
+    line: usize,
+    bytes: Vec<u8>,
+}
+
+/// Single-pass scanner: walks the stream once, yielding the bytes of each
+/// selected frame. Unselected frames are skipped without copying, and
+/// nothing past the last selected frame is ever read — the partial-read
+/// promise. Structural trust matches [`scan_frames`]: only count lines are
+/// interpreted. Fused after the first error.
+struct RawFrames<R: BufRead> {
+    reader: R,
+    line_number: usize,
+    frame_index: usize,
+    /// Sorted, deduplicated selection; `None` selects every frame.
+    selection: Option<Vec<usize>>,
+    /// Last frame the scan needs; later bytes are never read.
+    stop_after: Option<usize>,
+    /// Line buffer reused while skipping unselected frames.
+    scratch: Vec<u8>,
+    fused: bool,
+}
+
+impl<R: BufRead> RawFrames<R> {
+    /// Only the parallel full read scans without a selection.
+    #[cfg(feature = "parallel")]
+    fn all(reader: R) -> Self {
+        RawFrames {
+            reader,
+            line_number: 1,
+            frame_index: 0,
+            selection: None,
+            stop_after: None,
+            scratch: Vec::new(),
+            fused: false,
+        }
+    }
+
+    fn selecting(reader: R, indices: &[usize]) -> Self {
+        let mut selection = indices.to_vec();
+        selection.sort_unstable();
+        selection.dedup();
+        let stop_after = selection.last().copied();
+        RawFrames {
+            reader,
+            line_number: 1,
+            frame_index: 0,
+            selection: Some(selection),
+            stop_after,
+            scratch: Vec::new(),
+            fused: false,
+        }
+    }
+
+    fn selected(&self, frame_index: usize) -> bool {
+        match &self.selection {
+            None => true,
+            Some(selection) => selection.binary_search(&frame_index).is_ok(),
+        }
+    }
+
+    /// First selected frame the scan never reached, knowable only at EOF.
+    fn first_unreached(&self) -> Option<usize> {
+        self.selection.as_ref().and_then(|selection| {
+            let position = selection.partition_point(|&index| index < self.frame_index);
+            selection.get(position).copied()
+        })
+    }
+
+    fn fuse(&mut self, source: ExtxyzError) -> Option<Result<RawFrame>> {
+        self.fused = true;
+        Some(Err(ExtxyzError::InFrame {
+            frame_index: self.frame_index,
+            source: Box::new(source),
+        }))
+    }
+}
+
+impl<R: BufRead> Iterator for RawFrames<R> {
+    type Item = Result<RawFrame>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.fused {
+            return None;
+        }
+
+        loop {
+            if self.stop_after.is_some_and(|stop| self.frame_index > stop) {
+                self.fused = true;
+                return None;
+            }
+
+            self.scratch.clear();
+            let n_read = match self.reader.read_until(b'\n', &mut self.scratch) {
+                Ok(n_read) => n_read,
+                Err(error) => return self.fuse(error.into()),
+            };
+            if n_read == 0 {
+                self.fused = true;
+                // EOF: any selected frame not reached is out of range, and
+                // `frame_index` is now the file's true frame count.
+                return self.first_unreached().map(|frame_index| {
+                    Err(ExtxyzError::FrameOutOfRange {
+                        frame_index,
+                        n_frames: self.frame_index,
+                    })
+                });
+            }
+
+            let frame_index = self.frame_index;
+            let line = self.line_number;
+            self.line_number += 1;
+
+            let Some(n_atoms) = std::str::from_utf8(&self.scratch)
+                .ok()
+                .and_then(|text| text.trim().parse::<usize>().ok())
+            else {
+                return self.fuse(ExtxyzError::InvalidAtomCount {
+                    line: String::from_utf8_lossy(&self.scratch).trim().to_owned(),
+                });
+            };
+
+            let keep = self.selected(frame_index);
+            let mut bytes = if keep {
+                std::mem::take(&mut self.scratch)
+            } else {
+                Vec::new()
+            };
+
+            for skipped in 0..=n_atoms {
+                let buffer = if keep {
+                    &mut bytes
+                } else {
+                    self.scratch.clear();
+                    &mut self.scratch
+                };
+                let n_read = match self.reader.read_until(b'\n', buffer) {
+                    Ok(n_read) => n_read,
+                    Err(error) => return self.fuse(error.into()),
+                };
+                if n_read == 0 {
+                    let label = if skipped == 0 { "comment" } else { "atom" };
+                    return self.fuse(ExtxyzError::MissingLine(label));
+                }
+                self.line_number += 1;
+            }
+
+            self.frame_index += 1;
+            if keep {
+                return Some(Ok(RawFrame {
+                    frame_index,
+                    line,
+                    bytes,
+                }));
+            }
+        }
+    }
+}
+
+/// Parser work-unit sizing: a few frames per unit amortise the `par_bridge`
+/// handoff; the byte cap keeps large frames from clumping into one unit.
+#[cfg(feature = "parallel")]
+const CHUNK_FRAMES: usize = 64;
+#[cfg(feature = "parallel")]
+const CHUNK_BYTES: usize = 1 << 20;
+
+/// Groups scanned frames into work units for the parallel pipeline. An
+/// error ends the stream, but frames cut before it are delivered first.
+#[cfg(feature = "parallel")]
+struct RawChunks<R: BufRead> {
+    raw: RawFrames<R>,
+    pending_error: Option<ExtxyzError>,
+}
+
+#[cfg(feature = "parallel")]
+impl<R: BufRead> Iterator for RawChunks<R> {
+    type Item = Result<Vec<RawFrame>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(error) = self.pending_error.take() {
+            return Some(Err(error));
+        }
+
+        let mut chunk = Vec::new();
+        let mut chunk_bytes = 0;
+        while chunk.len() < CHUNK_FRAMES && chunk_bytes < CHUNK_BYTES {
+            match self.raw.next() {
+                Some(Ok(raw)) => {
+                    chunk_bytes += raw.bytes.len();
+                    chunk.push(raw);
+                }
+                Some(Err(error)) => {
+                    if chunk.is_empty() {
+                        return Some(Err(error));
+                    }
+                    self.pending_error = Some(error);
+                    break;
+                }
+                None => break,
+            }
+        }
+
+        if chunk.is_empty() {
+            None
+        } else {
+            Some(Ok(chunk))
+        }
+    }
+}
+
+/// Parse results tagged with their file frame index.
+#[cfg(feature = "parallel")]
+type TaggedFrames = Vec<(usize, Result<Frame>)>;
+
+/// Per-frame parse results, plus the scan error that ended the stream.
+#[cfg(feature = "parallel")]
+type PipelineOutcome = (TaggedFrames, Option<ExtxyzError>);
+
+/// Drive a scanner through the parse workers in one pass: whichever worker
+/// is idle pulls the next chunk from the shared scan (`par_bridge`), so
+/// scanning overlaps parsing and `threads` is the total thread count — the
+/// scan has no thread of its own.
+///
+/// The scanner is fused, so at most one scan error exists and every parsed
+/// frame precedes it in the file.
+#[cfg(feature = "parallel")]
+fn run_pipeline<R: BufRead + Send>(
+    raw: RawFrames<R>,
+    threads: Option<usize>,
+) -> Result<PipelineOutcome> {
+    use rayon::prelude::*;
+
+    let outcome: Vec<Result<TaggedFrames>> = with_pool(threads, || {
+        RawChunks {
+            raw,
+            pending_error: None,
+        }
+        .par_bridge()
+        .map(|item| {
+            item.map(|chunk| {
+                chunk
+                    .iter()
+                    .map(|raw| (raw.frame_index, parse_raw(raw)))
+                    .collect()
+            })
+        })
+        .collect()
+    })?;
+
+    let mut parsed = Vec::new();
+    let mut scan_error = None;
+    for item in outcome {
+        match item {
+            Ok(chunk) => parsed.extend(chunk),
+            Err(error) => scan_error = Some(error),
+        }
+    }
+    Ok((parsed, scan_error))
+}
+
+/// Run `op` on a pool of exactly `threads` workers (`None`: the global
+/// all-core pool).
+#[cfg(feature = "parallel")]
+fn with_pool<T: Send>(threads: Option<usize>, op: impl FnOnce() -> T + Send) -> Result<T> {
+    match threads {
+        None => Ok(op()),
+        Some(threads) => Ok(rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .map_err(|error| ExtxyzError::Io(io::Error::other(error)))?
+            .install(op)),
+    }
+}
+
+/// Gather `indices` (request order, repeats allowed) into one batch, in a
+/// single pass that ends at the last requested frame.
+///
+/// The partial-read promise: bytes past the last requested frame are never
+/// read, so structural damage there goes unreported, and contents are
+/// validated only for requested frames. Errors resolve in request order —
+/// the earliest requested position that is out of range or fails to parse
+/// is reported — except that a structural error in the scanned prefix
+/// always wins, since nothing after it can be located.
+pub fn read_batch(path: impl AsRef<Path>, indices: &[usize]) -> Result<Batch> {
+    if indices.is_empty() {
+        return Err(BatchError::Empty.into());
+    }
+
+    let reader = BufReader::new(File::open(path)?);
+    let mut parsed = Vec::new();
+    let mut scan_error = None;
+    for item in RawFrames::selecting(reader, indices) {
+        match item {
+            Ok(raw) => parsed.push((raw.frame_index, parse_raw(&raw))),
+            Err(error) => scan_error = Some(error),
+        }
+    }
+    assemble_batch(indices, parsed, scan_error)
+}
+
+/// [`read_batch`] with the parses spread over `threads` workers (`None`:
+/// every core). Output and errors are identical to the serial version.
+#[cfg(feature = "parallel")]
+pub fn read_batch_parallel(
+    path: impl AsRef<Path>,
+    indices: &[usize],
+    threads: Option<usize>,
+) -> Result<Batch> {
+    if indices.is_empty() {
+        return Err(BatchError::Empty.into());
+    }
+
+    let reader = BufReader::new(File::open(path)?);
+    let (parsed, scan_error) = run_pipeline(RawFrames::selecting(reader, indices), threads)?;
+    assemble_batch(indices, parsed, scan_error)
+}
+
+/// Resolve single-pass outcomes against the request, in request order.
+fn assemble_batch(
+    indices: &[usize],
+    parsed: Vec<(usize, Result<Frame>)>,
+    scan_error: Option<ExtxyzError>,
+) -> Result<Batch> {
+    // Out-of-range is only knowable at EOF; the scanner reports it carrying
+    // the file's true frame count. Any other scan error is structural and
+    // wins outright (the two-pass scan also failed before any parsing).
+    let n_frames = match scan_error {
+        Some(ExtxyzError::FrameOutOfRange { n_frames, .. }) => Some(n_frames),
+        Some(structural) => return Err(structural),
+        None => None,
+    };
+
+    let mut results: HashMap<usize, Result<Frame>> = parsed.into_iter().collect();
+    let mut uses: HashMap<usize, usize> = HashMap::new();
+    for &index in indices {
+        *uses.entry(index).or_insert(0) += 1;
+    }
+
+    let mut builder = BatchBuilder::new();
+    for &index in indices {
+        if let Some(n_frames) = n_frames {
+            if index >= n_frames {
+                return Err(ExtxyzError::FrameOutOfRange {
+                    frame_index: index,
+                    n_frames,
+                });
+            }
+        }
+
+        let remaining = uses.get_mut(&index).expect("counted above");
+        *remaining -= 1;
+
+        // Repeats clone the frame; the last use takes ownership.
+        let frame = match results.get(&index) {
+            Some(Ok(frame)) if *remaining > 0 => frame.clone(),
+            _ => results
+                .remove(&index)
+                .expect("scanner yields every selected in-range frame")?,
+        };
+        builder.push(frame)?;
+    }
+    Ok(builder.finish()?)
+}
+
 /// Random-access reader: a scanned [`FrameIndex`] plus the open file.
 pub struct IndexedFrames {
     file: File,
@@ -301,15 +670,28 @@ impl IndexedFrames {
 /// and file-absolute line numbers, identical to a streamed read's.
 fn parse_frame_at(file: &mut File, entry: FrameEntry, frame_index: usize) -> Result<Frame> {
     file.seek(SeekFrom::Start(entry.offset))?;
-    match FrameIter::starting_at_line(BufReader::new(file), entry.line).next() {
+    let item = FrameIter::starting_at_line(BufReader::new(file), entry.line).next();
+    relabel_frame(item, frame_index)
+}
+
+/// Parse a frame the scanner cut out of the stream; errors carry the real
+/// frame index and file-absolute line numbers, identical to a streamed
+/// read's.
+fn parse_raw(raw: &RawFrame) -> Result<Frame> {
+    let item = FrameIter::starting_at_line(raw.bytes.as_slice(), raw.line).next();
+    relabel_frame(item, raw.frame_index)
+}
+
+/// Relabel a single-frame parse from the iterator's local index 0 to the
+/// real one. `None` means the promised bytes were not there.
+fn relabel_frame(item: Option<Result<Frame>>, frame_index: usize) -> Result<Frame> {
+    match item {
         Some(Ok(frame)) => Ok(frame),
-        // Relabel from the iterator's local index 0 to the real one.
         Some(Err(ExtxyzError::InFrame { source, .. })) => Err(ExtxyzError::InFrame {
             frame_index,
             source,
         }),
         Some(Err(other)) => Err(other),
-        // The index promised a frame here; the file must have changed.
         None => Err(ExtxyzError::InFrame {
             frame_index,
             source: Box::new(ExtxyzError::MissingLine("atom count")),
@@ -317,15 +699,28 @@ fn parse_frame_at(file: &mut File, entry: FrameEntry, frame_index: usize) -> Res
     }
 }
 
-/// `read_frames` parallelised over the byte-offset index: scan first, then
-/// parse frames on worker threads. Output and errors are identical to the
-/// serial version; only the wall time differs.
+/// `read_frames` parallelised in a single pass over the file: the scan that
+/// finds frame boundaries and the parses share the same `threads` workers
+/// (see [`run_pipeline`]), so every byte is read exactly once. Output and
+/// errors are identical to the serial version: the first error in frame
+/// order wins. (This supersedes the two-pass behaviour, where a scan error
+/// anywhere in the file preempted parse errors in earlier frames.)
 #[cfg(feature = "parallel")]
 pub fn read_frames_parallel(path: impl AsRef<Path>, threads: Option<usize>) -> Result<Vec<Frame>> {
-    let path = path.as_ref();
-    let index = scan_index(path)?;
-    let entries: Vec<(usize, FrameEntry)> = index.entries().iter().copied().enumerate().collect();
-    parse_entries_parallel(path, &entries, threads)
+    let reader = BufReader::new(File::open(path)?);
+    let (mut parsed, scan_error) = run_pipeline(RawFrames::all(reader), threads)?;
+
+    parsed.sort_unstable_by_key(|&(frame_index, _)| frame_index);
+    let mut frames = Vec::with_capacity(parsed.len());
+    for (_, result) in parsed {
+        // First parse error in frame order; a scan error always sits past
+        // every parsed frame, so it is checked after.
+        frames.push(result?);
+    }
+    if let Some(error) = scan_error {
+        return Err(error);
+    }
+    Ok(frames)
 }
 
 /// Parse tagged index entries on rayon workers, each chunk through its own
@@ -343,7 +738,7 @@ fn parse_entries_parallel(
         return Err(BatchError::Empty.into());
     }
 
-    let parse_all = || {
+    with_pool(threads, || {
         // A few chunks per thread: amortises the per-chunk open() while
         // leaving rayon room to balance.
         let chunk_size = entries
@@ -358,16 +753,7 @@ fn parse_entries_parallel(
             .collect();
 
         results.into_iter().collect()
-    };
-
-    match threads {
-        None => parse_all(),
-        Some(threads) => rayon::ThreadPoolBuilder::new()
-            .num_threads(threads)
-            .build()
-            .map_err(|error| ExtxyzError::Io(io::Error::other(error)))?
-            .install(parse_all),
-    }
+    })?
 }
 
 #[cfg(feature = "parallel")]
@@ -426,12 +812,14 @@ impl<R: BufRead> FrameIter<R> {
             return Ok(None);
         };
 
+        // Trimmed in the message so streamed and scanned reads of the same
+        // bad line raise the identical error.
         let n_atoms =
             atom_count_line
                 .trim()
                 .parse::<usize>()
                 .map_err(|_| ExtxyzError::InvalidAtomCount {
-                    line: atom_count_line,
+                    line: atom_count_line.trim().to_owned(),
                 })?;
 
         let comment = self.next_line("comment")?;

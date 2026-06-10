@@ -135,6 +135,30 @@ def test_threads_never_change_batch_composition() -> None:
             assert_batches_equal(left, right)
 
 
+def test_read_batch_ignores_damage_past_the_last_requested_frame(
+    tmp_path: Path,
+) -> None:
+    """The partial-read promise: only the needed file prefix is inspected."""
+    path = tmp_path / "tail.extxyz"
+    good = "1\nProperties=species:S:1:pos:R:3 energy=-1\nH 0 0 0\n"
+    path.write_text(good * 2 + "garbage\n")
+
+    batch = oxyz.read_batch(path, [0, 1])
+    assert batch.n_frames == 2
+
+    # A whole-file read must still reject the damage.
+    with pytest.raises(ValueError, match="invalid atom count"):
+        oxyz.read_frames(path)
+
+
+def test_read_batch_out_of_range_raises_index_error(tmp_path: Path) -> None:
+    path = tmp_path / "short.extxyz"
+    path.write_text("1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n")
+
+    with pytest.raises(IndexError, match="frame index 3 out of range"):
+        oxyz.read_batch(path, [0, 3])
+
+
 def test_read_batch_threads_are_equivalent() -> None:
     serial = oxyz.read_batch(VARYING, [2, 0, 1], threads=1)
     parallel = oxyz.read_batch(VARYING, [2, 0, 1], threads=4)

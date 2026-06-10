@@ -145,7 +145,8 @@ fn read_first_frame<'py>(py: Python<'py>, path: PathBuf) -> PyResult<Bound<'py, 
 /// Read every frame, as a list of per-frame dicts.
 ///
 /// `threads=None` parses on every core; `threads=1` is the exact serial
-/// streaming read (no scan). Output and errors are identical either way.
+/// streaming read. Either way the file is read in a single pass; output and
+/// errors are identical.
 #[pyfunction]
 #[pyo3(signature = (path, threads=None))]
 fn read_frames<'py>(
@@ -166,6 +167,29 @@ fn read_frames<'py>(
         .collect::<PyResult<Vec<_>>>()?;
 
     PyList::new(py, dicts)
+}
+
+/// Gather the given frames (request order, repeats allowed) into one batch.
+///
+/// Single pass: the file is read once, and only as far as the last
+/// requested frame — bytes past it are never inspected. `threads=None`
+/// parses on every core; `threads=1` is fully serial. The batch and any
+/// errors are identical either way.
+#[pyfunction]
+#[pyo3(signature = (path, indices, threads=None))]
+fn read_batch<'py>(
+    py: Python<'py>,
+    path: PathBuf,
+    indices: Vec<usize>,
+    threads: Option<usize>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let batch = py
+        .detach(|| match threads {
+            Some(1) => oxyz_core::read_batch(&path, &indices),
+            _ => oxyz_core::read_batch_parallel(&path, &indices, threads),
+        })
+        .map_err(extxyz_error_to_py)?;
+    batch_to_pydict(py, batch)
 }
 
 /// Infer the file's schema and return the human-readable report.
@@ -298,6 +322,7 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
     m.add_function(wrap_pyfunction!(read_first_frame, m)?)?;
     m.add_function(wrap_pyfunction!(read_frames, m)?)?;
+    m.add_function(wrap_pyfunction!(read_batch, m)?)?;
     m.add_function(wrap_pyfunction!(infer_schema, m)?)?;
     m.add_function(wrap_pyfunction!(scan, m)?)?;
     m.add_class::<FrameIter>()?;
