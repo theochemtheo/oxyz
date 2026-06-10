@@ -101,7 +101,7 @@ language = "system"
 entry = "uv run ty check"
 pass_filenames = false
 always_run = true
-stages = ["pre-push"]
+stages = ["pre-commit", "pre-push"]
 
 [[repos.hooks]]
 id = "cargo-fmt-check"
