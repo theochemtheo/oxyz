@@ -55,6 +55,34 @@ def test_read_frames_error_carries_frame_index(tmp_path: Path) -> None:
         atomflow.read_frames(broken)
 
 
+def test_iter_frames_streams_the_trajectory() -> None:
+    frames = atomflow.iter_frames(DATA_DIR / "varying_atom_counts.xyz")
+
+    assert [frame.n_atoms for frame in frames] == [3, 1, 2]
+
+
+def test_iter_frames_yields_good_frames_then_raises_then_fuses(tmp_path: Path) -> None:
+    text = (DATA_DIR / "varying_atom_counts.xyz").read_text()
+    broken = tmp_path / "broken.xyz"
+    broken.write_text(text + "not-a-count\n")
+
+    frames = atomflow.iter_frames(broken)
+    assert [next(frames).n_atoms for _ in range(3)] == [3, 1, 2]
+    with pytest.raises(ValueError, match="frame 3"):
+        next(frames)
+    with pytest.raises(StopIteration):
+        next(frames)
+
+
+def test_two_iterators_are_independent() -> None:
+    path = DATA_DIR / "varying_atom_counts.xyz"
+    first, second = atomflow.iter_frames(path), atomflow.iter_frames(path)
+
+    next(first)
+    assert next(first).n_atoms == 1
+    assert next(second).n_atoms == 3
+
+
 def test_infer_schema_report() -> None:
     report = atomflow.infer_schema(DATA_DIR / "varying_atom_counts.xyz")
 

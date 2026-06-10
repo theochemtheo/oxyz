@@ -4,6 +4,10 @@ Run:        uv run pytest benchmarks/ --benchmark-autosave
 Compare:    uv run pytest-benchmark compare
 Smoke only: uv run pytest benchmarks/ --benchmark-disable
 
+uv rebuilds the extension in release when Rust sources change (cache-keys
+in pyproject.toml), and conftest refuses to run against a debug build —
+which a manual `maturin develop` can still install unnoticed.
+
 Results land in .benchmarks/ (gitignored); numbers are only comparable
 across runs on the same machine.
 

@@ -16,5 +16,5 @@ extension-module = ["pyo3/extension-module"]
 [dependencies]
 atomflow-core = { path = "../atomflow-core" }
 ndarray = "0.16"
-numpy = "0.25"
-pyo3 = "0.25"
+numpy = "0.28"
+pyo3 = "0.28"

@@ -14,12 +14,15 @@ is accepted and routed to the calculator; ASE's comment parser rejects it.
 
 from __future__ import annotations
 
+from collections import deque
+from collections.abc import Iterator
+from itertools import islice
 from pathlib import Path
 from typing import overload
 
 import numpy as np
 
-from atomflow._frames import Frame, read_frames
+from atomflow._frames import Frame, iter_frames
 
 try:
     from ase import Atoms
@@ -39,7 +42,7 @@ except ImportError as error:
         "install it with: pip install atomflow[ase]"
     ) from error
 
-__all__ = ["ToAseError", "read", "to_atoms"]
+__all__ = ["ToAseError", "iread", "read", "to_atoms"]
 
 
 class ToAseError(ValueError):
@@ -130,22 +133,62 @@ def read(
 ) -> Atoms | list[Atoms]:
     """Drop-in for `ase.io.read` on extxyz files.
 
-    Like ASE, the default index is -1: the last frame.
+    Like ASE, the default index is -1: the last frame. Also like ASE, frames
+    are streamed and only the requested ones converted, so a malformed frame
+    past the requested index goes unnoticed — whole-file validation is
+    `atomflow.infer_schema`'s job.
     """
-    if format not in (None, "extxyz", "xyz"):
-        raise ValueError(f"atomflow.ase.read only reads extxyz, got format={format!r}")
-
-    # TODO(step 2): stream via the FrameIter binding instead of materialising.
-    frames = read_frames(path)
+    _check_format(format)
     if index is None:
         index = -1
     if isinstance(index, int):
-        return to_atoms(frames[index])
-    return [to_atoms(frame) for frame in frames[_as_slice(index)]]
+        return to_atoms(_nth_frame(path, index))
+    return [to_atoms(frame) for frame in _frame_slice(path, _as_slice(index))]
+
+
+def iread(
+    path: str | Path,
+    index: int | str | slice = ":",
+    *,
+    format: str | None = None,
+) -> Iterator[Atoms]:
+    """Drop-in for `ase.io.iread` on extxyz files: yields one Atoms at a time."""
+    _check_format(format)
+    if isinstance(index, int):
+        return iter((to_atoms(_nth_frame(path, index)),))
+    frames = _frame_slice(path, _as_slice(index))
+    return (to_atoms(frame) for frame in frames)
+
+
+def _check_format(format: str | None) -> None:
+    if format not in (None, "extxyz", "xyz"):
+        raise ValueError(f"atomflow.ase only reads extxyz, got format={format!r}")
+
+
+def _nth_frame(path: str | Path, index: int) -> Frame:
+    """Frame `index` (negative counted from the end) in constant memory."""
+    if index < 0:
+        # The last -index frames; deque evicts everything earlier.
+        tail = deque(iter_frames(path), maxlen=-index)
+        if len(tail) == -index:
+            return tail[0]
+        raise IndexError(f"frame {index} out of range: file has {len(tail)} frames")
+
+    frame = next(islice(iter_frames(path), index, None), None)
+    if frame is None:
+        raise IndexError(f"frame {index} out of range")
+    return frame
+
+
+def _frame_slice(path: str | Path, frames: slice) -> Iterator[Frame]:
+    return islice(iter_frames(path), frames.start, frames.stop)
 
 
 def _as_slice(index: str | slice) -> slice:
-    """Subset of ASE's index grammar: ':' and 'start:stop'. TODO: step, int strings."""
+    """Subset of ASE's index grammar: ':' and 'start:stop' with bounds >= 0.
+
+    TODO: step and negative bounds (need the offset index), int strings.
+    """
     if isinstance(index, str):
         parts = index.split(":")
         if len(parts) == 1:
@@ -155,8 +198,15 @@ def _as_slice(index: str | slice) -> slice:
         if len(parts) > 2:
             raise NotImplementedError(f"slice step not supported yet: {index!r}")
         start, stop = (int(part) if part else None for part in parts)
-        return slice(start, stop)
-
-    if index.step not in (None, 1):
+    elif index.step in (None, 1):
+        start, stop = index.start, index.stop
+    else:
         raise NotImplementedError(f"slice step not supported yet: {index!r}")
-    return slice(index.start, index.stop)
+
+    for bound in (start, stop):
+        if bound is not None and bound < 0:
+            raise NotImplementedError(
+                f"negative slice bounds not supported yet (need random access): "
+                f"{index!r}"
+            )
+    return slice(start, stop)

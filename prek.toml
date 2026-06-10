@@ -134,11 +134,9 @@ stages = ["pre-push"]
 id = "python-test"
 name = "python tests"
 language = "system"
-entry = """
-uv run maturin develop
-uv run pytest
-"""
-shell = "sh"
+# No explicit rebuild: uv cache-keys (see pyproject.toml) rebuild the
+# extension in release whenever Rust sources change — one writer, one profile.
+entry = "uv run pytest"
 pass_filenames = false
 always_run = true
 stages = ["pre-push"]

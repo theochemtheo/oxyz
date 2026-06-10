@@ -28,6 +28,17 @@ dev = [
     "ty>=0.0.44",
 ]
 
+[tool.uv]
+# Rebuild the editable extension (release, via maturin PEP517) whenever the
+# Rust sources change, so `uv run` never tests or benchmarks a stale build.
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "Cargo.lock" },
+    { file = "crates/**/Cargo.toml" },
+    { file = "crates/**/*.rs" },
+]
+
 [tool.ruff]
 target-version = "py311"
 src = ["src", "tests"]

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{fs::File, io::BufReader, path::PathBuf};
 
 use ndarray::Array2;
 use numpy::{Element, IntoPyArray};
@@ -9,6 +9,38 @@ use pyo3::{
 };
 
 use atomflow_core::{Column, ColumnData, ExtxyzError, Frame, Value};
+
+/// Streaming iterator: one frame parsed and converted per `__next__`.
+///
+/// Owns the file handle; it closes when the object is dropped. The inner
+/// iterator is fused — after an error or EOF it only raises StopIteration.
+#[pyclass]
+struct FrameIter {
+    inner: atomflow_core::FrameIter<BufReader<File>>,
+}
+
+#[pymethods]
+impl FrameIter {
+    #[new]
+    fn new(path: PathBuf) -> PyResult<Self> {
+        let inner = atomflow_core::iter_frames(path).map_err(extxyz_error_to_py)?;
+        Ok(FrameIter { inner })
+    }
+
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        // Parse with the interpreter detached (GIL released, or the
+        // free-threaded equivalent) — only the numpy conversion needs it.
+        match py.detach(|| self.inner.next()) {
+            None => Ok(None),
+            Some(Ok(frame)) => frame_to_pydict(py, frame).map(Some),
+            Some(Err(error)) => Err(extxyz_error_to_py(error)),
+        }
+    }
+}
 
 /// Read the first frame as `{"n_atoms": int, "columns": {...}, "metadata": {...}}`.
 #[pyfunction]
@@ -130,8 +162,18 @@ fn array_from_flat<T: Element>(
 
 #[pymodule]
 fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Lets Python (e.g. the benchmark harness) refuse debug builds.
+    m.add(
+        "__build_profile__",
+        if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        },
+    )?;
     m.add_function(wrap_pyfunction!(read_first_frame, m)?)?;
     m.add_function(wrap_pyfunction!(read_frames, m)?)?;
     m.add_function(wrap_pyfunction!(infer_schema, m)?)?;
+    m.add_class::<FrameIter>()?;
     Ok(())
 }

@@ -115,12 +115,52 @@ def test_newstyle_string_array_diverges_from_ase() -> None:
         assert_values_equal(ours.info[key], theirs.info[key], f"info[{key!r}]")
 
 
+def test_iread_matches_ase_iread() -> None:
+    import ase.io
+
+    import atomflow.ase
+
+    path = DATA_DIR / "varying_atom_counts.xyz"
+    ours = atomflow.ase.iread(path)
+    theirs = ase.io.iread(path, index=":", format="extxyz")
+    for atoms_ours, atoms_theirs in zip(ours, theirs, strict=True):
+        assert_atoms_match(atoms_ours, atoms_theirs)
+
+
+def test_reads_are_lazy_past_the_requested_frames(tmp_path: Path) -> None:
+    """Like ase.io.read, a malformed later frame goes unnoticed."""
+    import atomflow.ase
+
+    text = (DATA_DIR / "varying_atom_counts.xyz").read_text()
+    broken = tmp_path / "broken.xyz"
+    broken.write_text(text + "not-a-count\n")
+
+    assert atomflow.ase.read(broken, index=0).get_global_number_of_atoms() == 3
+    assert len(atomflow.ase.read(broken, index="0:2")) == 2
+    iterator = atomflow.ase.iread(broken)
+    assert next(iterator) is not None
+    with pytest.raises(ValueError, match="frame 3"):
+        list(iterator)
+
+
 def test_read_default_index_is_last_frame() -> None:
     import atomflow.ase
 
     path = DATA_DIR / "varying_atom_counts.xyz"
     all_frames = atomflow.ase.read(path, index=":")
     assert_atoms_match(atomflow.ase.read(path), all_frames[-1])
+
+
+def test_read_negative_and_out_of_range_indices() -> None:
+    import atomflow.ase
+
+    path = DATA_DIR / "varying_atom_counts.xyz"
+    all_frames = atomflow.ase.read(path, index=":")
+    assert_atoms_match(atomflow.ase.read(path, index=-3), all_frames[0])
+    with pytest.raises(IndexError, match="3 frames"):
+        atomflow.ase.read(path, index=-4)
+    with pytest.raises(IndexError):
+        atomflow.ase.read(path, index=5)
 
 
 def test_read_slice_forms() -> None:
@@ -131,7 +171,9 @@ def test_read_slice_forms() -> None:
     assert len(atomflow.ase.read(path, index=slice(1, None))) == 2
 
 
-@pytest.mark.parametrize("index", ["::2", "0:4:2", slice(None, None, 2), "3"])
+@pytest.mark.parametrize(
+    "index", ["::2", "0:4:2", slice(None, None, 2), "3", ":-1", slice(-2, None)]
+)
 def test_unsupported_index_grammar_raises(index) -> None:
     import atomflow.ase
 

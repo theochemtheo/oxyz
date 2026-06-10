@@ -12,6 +12,19 @@ from pathlib import Path
 
 import pytest
 
+import atomflow._rust
+
+
+def pytest_configure(config) -> None:
+    # Debug-build timings are ~9x off and look like real regressions.
+    if atomflow._rust.__build_profile__ != "release":
+        raise pytest.UsageError(
+            "the installed atomflow._rust extension is a "
+            f"{atomflow._rust.__build_profile__!r} build; benchmarks need "
+            "release. Run: uv run maturin develop --release"
+        )
+
+
 CACHE_DIR = Path(__file__).parent / ".cache"
 
 # Bump to invalidate cached files when the generator changes.

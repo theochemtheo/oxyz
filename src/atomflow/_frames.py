@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -42,6 +43,17 @@ def read_first_frame(path: str | Path) -> Frame:
 
 def read_frames(path: str | Path) -> list[Frame]:
     return [_frame_from_data(data) for data in _rust.read_frames(str(path))]
+
+
+def iter_frames(path: str | Path) -> Iterator[Frame]:
+    """Stream frames one at a time, in constant memory.
+
+    The file stays open while iterating and closes when the iterator is
+    dropped. After a parse error the stream position is untrustworthy, so
+    iteration ends: the error is raised once, then StopIteration.
+    """
+    for data in _rust.FrameIter(str(path)):
+        yield _frame_from_data(data)
 
 
 def _frame_from_data(data: _rust.FrameData) -> Frame:
