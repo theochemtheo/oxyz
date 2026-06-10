@@ -7,10 +7,10 @@ Smoke only: uv run pytest benchmarks/ --benchmark-disable
 Results land in .benchmarks/ (gitignored); numbers are only comparable
 across runs on the same machine.
 
-Fairness: output contracts differ. atomflow returns Frame dataclasses
-holding numpy arrays; ASE builds full `Atoms` objects. Each row measures
-what that library's contract costs end to end, not parser vs parser. An
-atomflow-to-Atoms row joins once `to_ase` exists.
+Fairness: output contracts differ. The `atomflow` row returns Frame
+dataclasses holding numpy arrays; the `ase` row builds full `Atoms`
+objects. The `atomflow-to-ase` row is the like-for-like comparison with
+`ase`: same `Atoms` output, via `atomflow.ase.read`.
 """
 
 from __future__ import annotations
@@ -44,6 +44,18 @@ def ase_read_all(path: Path) -> list:
     return frames
 
 
+def atomflow_to_ase_read_all(path: Path) -> list:
+    from atomflow.ase import read
+
+    return read(path, index=":")
+
+
+def atomflow_to_ase_read_first(path: Path) -> object:
+    from atomflow.ase import read
+
+    return read(path, index=0)
+
+
 def ase_read_first(path: Path) -> object:
     from ase.io import read
 
@@ -52,11 +64,13 @@ def ase_read_first(path: Path) -> object:
 
 READ_ALL = [
     pytest.param(atomflow_read_all, id="atomflow"),
+    pytest.param(atomflow_to_ase_read_all, id="atomflow-to-ase", marks=needs_ase),
     pytest.param(ase_read_all, id="ase", marks=needs_ase),
 ]
 
 READ_FIRST = [
     pytest.param(atomflow_read_first, id="atomflow"),
+    pytest.param(atomflow_to_ase_read_first, id="atomflow-to-ase", marks=needs_ase),
     pytest.param(ase_read_first, id="ase", marks=needs_ase),
 ]
 

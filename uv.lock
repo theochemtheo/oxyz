@@ -24,6 +24,11 @@ dependencies = [
     { name = "numpy" },
 ]
 
+[package.optional-dependencies]
+ase = [
+    { name = "ase" },
+]
+
 [package.dev-dependencies]
 bench = [
     { name = "ase" },
@@ -38,11 +43,15 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "numpy", specifier = ">=2" }]
+requires-dist = [
+    { name = "ase", marker = "extra == 'ase'", specifier = ">=3.28,<4" },
+    { name = "numpy", specifier = ">=2" },
+]
+provides-extras = ["ase"]
 
 [package.metadata.requires-dev]
 bench = [
-    { name = "ase", specifier = ">=3.28.0" },
+    { name = "ase", specifier = ">=3.28.0,<4" },
     { name = "pytest-benchmark", specifier = ">=5.2.3" },
 ]
 dev = [

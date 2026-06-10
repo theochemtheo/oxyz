@@ -11,9 +11,13 @@ dependencies = [
     "numpy>=2",
 ]
 
+[project.optional-dependencies]
+# <4: ASEv4 may change the data model; new majors are opted into deliberately.
+ase = ["ase>=3.28,<4"]
+
 [dependency-groups]
 bench = [
-    "ase>=3.28.0",
+    "ase>=3.28.0,<4",
     "pytest-benchmark>=5.2.3",
 ]
 dev = [

@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 import atomflow._rust as _rust
+
+if TYPE_CHECKING:
+    from ase import Atoms
 
 ColumnValues = np.ndarray | list[str] | list[list[str]]
 MetadataValue = float | int | bool | str | np.ndarray | list[str]
@@ -24,6 +28,12 @@ class Frame:
     n_atoms: int
     columns: dict[str, ColumnValues]
     metadata: dict[str, MetadataValue]
+
+    def to_ase(self) -> Atoms:
+        """Convert to `ase.Atoms` (requires the optional `ase` extra)."""
+        from atomflow.ase import to_atoms
+
+        return to_atoms(self)
 
 
 def read_first_frame(path: str | Path) -> Frame:
