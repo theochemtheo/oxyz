@@ -35,3 +35,7 @@ target/
 # agents
 .claude
 .codex
+
+# Benchmarks: generated fixtures and pytest-benchmark saved results
+benchmarks/.cache/
+.benchmarks/
