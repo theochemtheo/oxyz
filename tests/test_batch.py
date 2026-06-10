@@ -1,0 +1,128 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import numpy as np
+import pytest
+from numpy.testing import assert_allclose, assert_array_equal
+
+import atomflow
+
+DATA_DIR = Path(__file__).parent / "data"
+VARYING = DATA_DIR / "varying_atom_counts.xyz"
+
+
+def as_array(value: object) -> np.ndarray:
+    """Same ty-limitation shim as test_extxyz.as_array; delete with the canary."""
+    assert isinstance(value, np.ndarray)
+    return value
+
+
+def test_sequential_batches_chunk_the_file() -> None:
+    batches = list(atomflow.iter_batches(VARYING, frames_per_batch=2))
+
+    assert len(batches) == 2
+    first, last = batches
+    assert first.n_frames == 2
+    assert first.total_atoms == 4
+    assert_array_equal(first.offsets, [0, 3, 4])
+    assert_array_equal(first.frame_indices, [0, 1])
+    assert_array_equal(last.frame_indices, [2])
+
+
+def test_batch_columns_concatenate_frames() -> None:
+    frames = atomflow.read_frames(VARYING)
+    (batch,) = atomflow.iter_batches(VARYING, frames_per_batch=3)
+
+    stacked = np.vstack([as_array(frame.columns["pos"]) for frame in frames])
+    assert_allclose(as_array(batch.columns["pos"]), stacked)
+    assert batch.columns["species"] == [
+        s for frame in frames for s in frame.columns["species"]
+    ]
+    assert_allclose(as_array(batch.metadata["energy"]), [-76.3, -13.6, -31.8])
+
+
+def test_batch_derived_properties() -> None:
+    (batch,) = atomflow.iter_batches(VARYING, frames_per_batch=3)
+
+    assert_array_equal(batch.n_atoms, [3, 1, 2])
+    assert_array_equal(batch.ptr, batch.offsets)
+    assert_array_equal(batch.batch, [0, 0, 0, 1, 2, 2])
+
+
+def test_atom_budget_packs_greedily() -> None:
+    batches = list(atomflow.iter_batches(VARYING, atoms_per_batch=4))
+    assert [list(b.frame_indices) for b in batches] == [[0, 1], [2]]
+
+    # A frame above the budget still gets a batch to itself.
+    batches = list(atomflow.iter_batches(VARYING, atoms_per_batch=2))
+    assert [list(b.frame_indices) for b in batches] == [[0], [1], [2]]
+
+
+def test_shuffled_batches_are_seeded_and_partition_the_file() -> None:
+    def plan(seed: int) -> list[list[int]]:
+        return [
+            list(b.frame_indices)
+            for b in atomflow.iter_batches(
+                VARYING, atoms_per_batch=4, shuffle=True, seed=seed
+            )
+        ]
+
+    assert plan(0) == plan(0)
+
+    flat = sorted(i for batch in plan(0) for i in batch)
+    assert flat == [0, 1, 2]
+
+
+def test_read_batch_gathers_in_requested_order() -> None:
+    frames = atomflow.read_frames(VARYING)
+    batch = atomflow.read_batch(VARYING, [2, 0])
+
+    assert_array_equal(batch.frame_indices, [2, 0])
+    assert_array_equal(batch.offsets, [0, 2, 5])
+    stacked = np.vstack(
+        [as_array(frames[2].columns["pos"]), as_array(frames[0].columns["pos"])]
+    )
+    assert_allclose(as_array(batch.columns["pos"]), stacked)
+    assert_allclose(as_array(batch.metadata["energy"]), [-31.8, -76.3])
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {},
+        {"frames_per_batch": 2, "atoms_per_batch": 4},
+        {"frames_per_batch": 0},
+        {"atoms_per_batch": 0},
+        {"frames_per_batch": 2, "seed": 0},
+    ],
+)
+def test_invalid_batching_arguments(kwargs) -> None:
+    with pytest.raises(ValueError):
+        atomflow.iter_batches(VARYING, **kwargs)
+
+
+def test_int_real_metadata_promotes_to_float(tmp_path: Path) -> None:
+    path = tmp_path / "promote.extxyz"
+    path.write_text(
+        "1\nProperties=species:S:1:pos:R:3 energy=-1\nH 0 0 0\n"
+        "1\nProperties=species:S:1:pos:R:3 energy=-1.5\nH 0 0 0\n"
+    )
+    (batch,) = atomflow.iter_batches(path, frames_per_batch=2)
+
+    energy = as_array(batch.metadata["energy"])
+    assert energy.dtype == np.float64
+    assert_allclose(energy, [-1.0, -1.5])
+
+
+def test_schema_drift_within_a_batch_is_an_error(tmp_path: Path) -> None:
+    path = tmp_path / "drift.extxyz"
+    path.write_text(
+        "1\nProperties=species:S:1:pos:R:3 energy=-1\nH 0 0 0\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+    )
+    with pytest.raises(ValueError, match="missing metadata"):
+        list(atomflow.iter_batches(path, frames_per_batch=2))
+
+    # Batches that never span the drift are still readable.
+    assert len(list(atomflow.iter_batches(path, frames_per_batch=1))) == 2

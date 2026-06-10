@@ -14,6 +14,7 @@ use std::{
 
 use thiserror::Error;
 
+use crate::batch::{Batch, BatchBuilder, BatchError};
 use crate::index::{FrameEntry, FrameIndex};
 use crate::model::{Column, ColumnData, ColumnKind, Frame, Value};
 use crate::schema::Schema;
@@ -71,6 +72,9 @@ pub enum ExtxyzError {
 
     #[error("frame index {frame_index} out of range: file has {n_frames} frames")]
     FrameOutOfRange { frame_index: usize, n_frames: usize },
+
+    #[error(transparent)]
+    Batch(#[from] BatchError),
 }
 
 pub type Result<T> = std::result::Result<T, ExtxyzError>;
@@ -99,6 +103,53 @@ pub fn infer_schema(path: impl AsRef<Path>) -> Result<Schema> {
     }
 
     Ok(schema)
+}
+
+/// Sequential batches of `frames_per_batch` frames each, streamed in
+/// constant memory; the final batch may be smaller.
+pub fn iter_batches(
+    path: impl AsRef<Path>,
+    frames_per_batch: usize,
+) -> Result<BatchIter<BufReader<File>>> {
+    if frames_per_batch == 0 {
+        return Err(BatchError::ZeroFramesPerBatch.into());
+    }
+    Ok(BatchIter {
+        frames: iter_frames(path)?,
+        frames_per_batch,
+    })
+}
+
+/// Chunks a [`FrameIter`] into [`Batch`]es; fused like the frame iterator.
+pub struct BatchIter<R: BufRead> {
+    frames: FrameIter<R>,
+    frames_per_batch: usize,
+}
+
+impl<R: BufRead> Iterator for BatchIter<R> {
+    type Item = Result<Batch>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut builder = BatchBuilder::new();
+        for _ in 0..self.frames_per_batch {
+            match self.frames.next() {
+                None => break,
+                Some(Ok(frame)) => {
+                    if let Err(error) = builder.push(frame) {
+                        return Some(Err(error.into()));
+                    }
+                }
+                Some(Err(error)) => return Some(Err(error)),
+            }
+        }
+
+        match builder.finish() {
+            Ok(batch) => Some(Ok(batch)),
+            // An empty builder just means clean end-of-file.
+            Err(BatchError::Empty) => None,
+            Err(error) => Some(Err(error.into())),
+        }
+    }
 }
 
 /// Structural scan: record each frame's byte offset and declared atom count
@@ -195,7 +246,19 @@ impl IndexedFrames {
                 frame_index,
                 n_frames: self.index.n_frames(),
             })?;
+        self.seek_and_parse(entry, frame_index)
+    }
 
+    /// Gather the given frames, in order (repeats allowed), into one batch.
+    pub fn get_batch(&mut self, indices: &[usize]) -> Result<Batch> {
+        let mut builder = BatchBuilder::new();
+        for &frame_index in indices {
+            builder.push(self.get(frame_index)?)?;
+        }
+        Ok(builder.finish()?)
+    }
+
+    fn seek_and_parse(&mut self, entry: FrameEntry, frame_index: usize) -> Result<Frame> {
         self.file.seek(SeekFrom::Start(entry.offset))?;
         match FrameIter::new(BufReader::new(&mut self.file)).next() {
             Some(Ok(frame)) => Ok(frame),

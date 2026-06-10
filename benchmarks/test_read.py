@@ -126,3 +126,29 @@ READ_LAST = [
 def test_read_last_frame_of_large_file(benchmark, read, large_frames):
     frame = benchmark(read, large_frames)
     assert frame is not None
+
+
+def atomflow_sequential_batches(path: Path) -> int:
+    total = 0
+    for batch in atomflow.iter_batches(path, frames_per_batch=64):
+        total += batch.total_atoms
+    return total
+
+
+def atomflow_shuffled_atom_batches(path: Path) -> int:
+    batches = atomflow.iter_batches(path, atoms_per_batch=2048, shuffle=True, seed=0)
+    return sum(batch.total_atoms for batch in batches)
+
+
+# No ASE rows: ASE has no batch concept. Tracked against read_all[atomflow]
+# (same parse work, per-frame objects) as the informal baseline.
+@pytest.mark.benchmark(group="batches/many_small_frames")
+@pytest.mark.parametrize(
+    "batched_read",
+    [
+        pytest.param(atomflow_sequential_batches, id="sequential-64-frames"),
+        pytest.param(atomflow_shuffled_atom_batches, id="shuffled-2048-atoms"),
+    ],
+)
+def test_batched_read_of_many_small_frames(benchmark, batched_read, many_small_frames):
+    assert benchmark(batched_read, many_small_frames) > 0

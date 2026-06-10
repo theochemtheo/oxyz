@@ -8,7 +8,7 @@ use pyo3::{
     types::{PyDict, PyList},
 };
 
-use atomflow_core::{Column, ColumnData, ExtxyzError, Frame, Value};
+use atomflow_core::{Batch, Column, ColumnData, ExtxyzError, Frame, Value};
 
 /// Streaming iterator: one frame parsed and converted per `__next__`.
 ///
@@ -89,6 +89,46 @@ impl IndexedFrames {
             .map_err(extxyz_error_to_py)?;
         frame_to_pydict(py, frame)
     }
+
+    fn get_batch<'py>(
+        &mut self,
+        py: Python<'py>,
+        indices: Vec<usize>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let batch = py
+            .detach(|| self.inner.get_batch(&indices))
+            .map_err(extxyz_error_to_py)?;
+        batch_to_pydict(py, batch)
+    }
+}
+
+/// Streaming batch iterator: `frames_per_batch` frames assembled per
+/// `__next__`; the final batch may be smaller. Fused after errors.
+#[pyclass]
+struct BatchIter {
+    inner: atomflow_core::BatchIter<BufReader<File>>,
+}
+
+#[pymethods]
+impl BatchIter {
+    #[new]
+    fn new(path: PathBuf, frames_per_batch: usize) -> PyResult<Self> {
+        let inner =
+            atomflow_core::iter_batches(path, frames_per_batch).map_err(extxyz_error_to_py)?;
+        Ok(BatchIter { inner })
+    }
+
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        match py.detach(|| self.inner.next()) {
+            None => Ok(None),
+            Some(Ok(batch)) => batch_to_pydict(py, batch).map(Some),
+            Some(Err(error)) => Err(extxyz_error_to_py(error)),
+        }
+    }
 }
 
 /// Read the first frame as `{"n_atoms": int, "columns": {...}, "metadata": {...}}`.
@@ -128,33 +168,7 @@ fn infer_schema(path: PathBuf) -> PyResult<String> {
 fn frame_to_pydict(py: Python<'_>, frame: Frame) -> PyResult<Bound<'_, PyDict>> {
     let data = PyDict::new(py);
     data.set_item("n_atoms", frame.n_atoms)?;
-
-    let columns = PyDict::new(py);
-    for column in frame.columns {
-        let Column { name, width, data } = column;
-
-        match data {
-            ColumnData::Real(values) => {
-                columns.set_item(name, array_from_flat(py, values, width)?)?;
-            }
-            ColumnData::Int(values) => {
-                columns.set_item(name, array_from_flat(py, values, width)?)?;
-            }
-            ColumnData::Bool(values) => {
-                columns.set_item(name, array_from_flat(py, values, width)?)?;
-            }
-            ColumnData::Str(values) => {
-                if width == 1 {
-                    columns.set_item(name, values)?;
-                } else {
-                    let rows: Vec<Vec<String>> =
-                        values.chunks(width).map(<[String]>::to_vec).collect();
-                    columns.set_item(name, rows)?;
-                }
-            }
-        }
-    }
-    data.set_item("columns", columns)?;
+    data.set_item("columns", columns_to_pydict(py, frame.columns)?)?;
 
     let metadata = PyDict::new(py);
     for (key, value) in frame.metadata {
@@ -172,6 +186,50 @@ fn frame_to_pydict(py: Python<'_>, frame: Frame) -> PyResult<Bound<'_, PyDict>> 
     data.set_item("metadata", metadata)?;
 
     Ok(data)
+}
+
+/// Convert a batch to `{"offsets": ndarray, "columns": {...}, "metadata":
+/// {...}}` — columns atom-major, metadata frame-major, both as dense arrays
+/// (string columns as lists).
+fn batch_to_pydict(py: Python<'_>, batch: Batch) -> PyResult<Bound<'_, PyDict>> {
+    let data = PyDict::new(py);
+    let offsets: Vec<i64> = batch.offsets.iter().map(|&offset| offset as i64).collect();
+    data.set_item("offsets", offsets.into_pyarray(py))?;
+    data.set_item("columns", columns_to_pydict(py, batch.columns)?)?;
+    data.set_item("metadata", columns_to_pydict(py, batch.metadata)?)?;
+    Ok(data)
+}
+
+/// Numeric and boolean columns become numpy arrays (2-D when width > 1);
+/// string columns become `list[str]` (nested when width > 1). Preserves
+/// order.
+fn columns_to_pydict(py: Python<'_>, columns: Vec<Column>) -> PyResult<Bound<'_, PyDict>> {
+    let dict = PyDict::new(py);
+    for column in columns {
+        let Column { name, width, data } = column;
+
+        match data {
+            ColumnData::Real(values) => {
+                dict.set_item(name, array_from_flat(py, values, width)?)?;
+            }
+            ColumnData::Int(values) => {
+                dict.set_item(name, array_from_flat(py, values, width)?)?;
+            }
+            ColumnData::Bool(values) => {
+                dict.set_item(name, array_from_flat(py, values, width)?)?;
+            }
+            ColumnData::Str(values) => {
+                if width == 1 {
+                    dict.set_item(name, values)?;
+                } else {
+                    let rows: Vec<Vec<String>> =
+                        values.chunks(width).map(<[String]>::to_vec).collect();
+                    dict.set_item(name, rows)?;
+                }
+            }
+        }
+    }
+    Ok(dict)
 }
 
 fn extxyz_error_to_py(error: ExtxyzError) -> PyErr {
@@ -227,5 +285,6 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(scan, m)?)?;
     m.add_class::<FrameIter>()?;
     m.add_class::<IndexedFrames>()?;
+    m.add_class::<BatchIter>()?;
     Ok(())
 }
