@@ -5,11 +5,44 @@ build-backend = "maturin"
 [project]
 name = "oxyz"
 version = "0.1.0"
+description = "Fast, schema-aware extxyz reading for atomistic machine-learning workflows"
+readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT OR Apache-2.0"
+license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
+authors = [{ name = "Theo Keane" }]
+keywords = [
+    "extxyz",
+    "xyz",
+    "atomistic",
+    "machine-learning",
+    "materials",
+    "chemistry",
+    "ase",
+    "parser",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
 dependencies = [
     "numpy>=2",
 ]
+
+[project.urls]
+Repository = "https://github.com/theochemtheo/oxyz"
+Issues = "https://github.com/theochemtheo/oxyz/issues"
 
 [project.optional-dependencies]
 # <4: ASEv4 may change the data model; new majors are opted into deliberately.
