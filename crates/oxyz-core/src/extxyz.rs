@@ -770,10 +770,13 @@ fn parse_chunk(path: &Path, chunk: &[(usize, FrameEntry)]) -> Vec<Result<Frame>>
 
 /// Streaming frame reader: one frame is materialised at a time.
 pub struct FrameIter<R: BufRead> {
-    lines: io::Lines<R>,
+    reader: R,
     frame_index: usize,
     /// 1-based file line number of the next unread line, for diagnostics.
     line_number: usize,
+    /// Line buffer reused across the whole stream: one allocation total
+    /// instead of one `String` per line.
+    buffer: Vec<u8>,
     done: bool,
 }
 
@@ -786,31 +789,45 @@ impl<R: BufRead> FrameIter<R> {
     /// though the reader starts mid-file.
     pub(crate) fn starting_at_line(reader: R, line_number: usize) -> Self {
         FrameIter {
-            lines: reader.lines(),
+            reader,
             frame_index: 0,
             line_number,
+            buffer: Vec::new(),
             done: false,
         }
     }
 
-    fn try_next_line(&mut self) -> Result<Option<String>> {
-        let line = self.lines.next().transpose()?;
-        if line.is_some() {
-            self.line_number += 1;
+    /// Read the next line into the reused buffer, stripping the line ending
+    /// (`\n` or `\r\n`, as [`io::Lines`] does). `false` at end-of-file.
+    fn fill_line(&mut self) -> Result<bool> {
+        self.buffer.clear();
+        if self.reader.read_until(b'\n', &mut self.buffer)? == 0 {
+            return Ok(false);
         }
-        Ok(line)
+        self.line_number += 1;
+        if self.buffer.last() == Some(&b'\n') {
+            self.buffer.pop();
+            if self.buffer.last() == Some(&b'\r') {
+                self.buffer.pop();
+            }
+        }
+        Ok(true)
     }
 
-    fn next_line(&mut self, label: &'static str) -> Result<String> {
-        self.try_next_line()?.ok_or(ExtxyzError::MissingLine(label))
+    fn next_line(&mut self, label: &'static str) -> Result<&str> {
+        if !self.fill_line()? {
+            return Err(ExtxyzError::MissingLine(label));
+        }
+        line_str(&self.buffer)
     }
 
     /// Parse one frame, or `None` at clean end-of-file. Anything after a
     /// frame must be a new frame — blank lines in between are an error.
     fn parse_frame(&mut self) -> Result<Option<Frame>> {
-        let Some(atom_count_line) = self.try_next_line()? else {
+        if !self.fill_line()? {
             return Ok(None);
-        };
+        }
+        let atom_count_line = line_str(&self.buffer)?;
 
         // Trimmed in the message so streamed and scanned reads of the same
         // bad line raise the identical error.
@@ -823,7 +840,7 @@ impl<R: BufRead> FrameIter<R> {
                 })?;
 
         let comment = self.next_line("comment")?;
-        let pairs = parse_comment_metadata(&comment)?;
+        let pairs = parse_comment_metadata(comment)?;
 
         // `Properties` is consumed into typed columns; every other pair is
         // typed by shape and kept in file order.
@@ -848,7 +865,10 @@ impl<R: BufRead> FrameIter<R> {
 
         for _ in 0..n_atoms {
             let line_number = self.line_number;
-            let line = self.next_line("atom")?;
+            if !self.fill_line()? {
+                return Err(ExtxyzError::MissingLine("atom"));
+            }
+            let line = line_str(&self.buffer)?;
             let cells: Vec<&str> = line.split_whitespace().collect();
 
             if cells.len() != row_width {
@@ -992,6 +1012,17 @@ fn parse_properties(descriptor: &str) -> Result<Vec<PropertySpec>> {
             })
         })
         .collect()
+}
+
+/// View a line buffer as UTF-8, failing exactly as [`io::Lines`] does so
+/// the buffer-reusing reader raises identical errors.
+fn line_str(buffer: &[u8]) -> Result<&str> {
+    std::str::from_utf8(buffer).map_err(|_| {
+        ExtxyzError::Io(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "stream did not contain valid UTF-8",
+        ))
+    })
 }
 
 /// Append one atom's cells onto the column's buffer.
