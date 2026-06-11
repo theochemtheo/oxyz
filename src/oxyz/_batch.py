@@ -8,7 +8,6 @@ import numpy as np
 
 import oxyz._rust as _rust
 from oxyz._frames import ColumnValues
-from oxyz._scan import scan
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,8 +122,10 @@ def _planned_batches(
     """Index-backed batches over a frame order planned up front.
 
     Planning is serial and happens before any parsing, so `threads` cannot
-    influence which frames land in which batch."""
-    n_atoms = scan(path).n_atoms
+    influence which frames land in which batch. The reader's own index
+    supplies the atom counts, so the file is scanned exactly once."""
+    reader = _rust.IndexedFrames(str(path))
+    n_atoms = reader.n_atoms
     order = np.arange(len(n_atoms), dtype=np.intp)
     if shuffle:
         order = np.random.default_rng(seed).permutation(order)
@@ -138,7 +139,6 @@ def _planned_batches(
         assert atoms_per_batch is not None
         plans = _greedy_atom_plans(order, n_atoms, atoms_per_batch)
 
-    reader = _rust.IndexedFrames(str(path))
     for plan in plans:
         yield _batch_from_data(reader.get_batch(plan, threads), plan)
 

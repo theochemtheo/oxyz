@@ -1,7 +1,7 @@
 use std::{fs::File, io::BufReader, path::PathBuf};
 
 use ndarray::Array2;
-use numpy::{Element, IntoPyArray};
+use numpy::{Element, IntoPyArray, PyArray1};
 use pyo3::{
     exceptions::{PyIndexError, PyOSError, PyValueError},
     prelude::*,
@@ -81,6 +81,20 @@ impl IndexedFrames {
 
     fn __len__(&self) -> usize {
         self.inner.len()
+    }
+
+    /// Declared atom count per frame, from the scan done at construction.
+    /// Batch planning reads this instead of scanning the file again.
+    #[getter]
+    fn n_atoms<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u64>> {
+        let counts: Vec<u64> = self
+            .inner
+            .index()
+            .entries()
+            .iter()
+            .map(|entry| entry.n_atoms as u64)
+            .collect();
+        counts.into_pyarray(py)
     }
 
     fn get<'py>(&mut self, py: Python<'py>, frame_index: usize) -> PyResult<Bound<'py, PyDict>> {
