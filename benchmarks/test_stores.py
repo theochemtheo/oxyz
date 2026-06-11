@@ -33,7 +33,7 @@ from pathlib import Path
 
 import pytest
 from conftest import STORE_ATOMS_PER_FRAME, STORE_N_FRAMES
-from test_read import needs_ase, row, run
+from test_read import THREAD_SWEEP, needs_ase, row, run
 
 import oxyz
 
@@ -96,22 +96,31 @@ def ase_lmdb_env(store_dataset: Path):
 # -- arrays-out rows -------------------------------------------------------
 
 
-@row("Batch", "parallel")
-def oxyz_sequential(path: Path) -> int:
-    total = 0
-    for batch in oxyz.iter_batches(path, frames_per_batch=1024):
-        total += batch.total_atoms
-    return total
+def oxyz_sequential_with(threads: int):
+    @row("Batch", "serial" if threads == 1 else "parallel", threads=threads)
+    def read(path: Path) -> int:
+        total = 0
+        for batch in oxyz.iter_batches(path, frames_per_batch=1024, threads=threads):
+            total += batch.total_atoms
+        return total
+
+    return read
 
 
-@row("Batch", "parallel")
-def oxyz_shuffled(path: Path) -> int:
-    return oxyz.read_batch(path, SHUFFLED_INDICES).total_atoms
+def oxyz_shuffled_with(threads: int):
+    @row("Batch", "serial" if threads == 1 else "parallel", threads=threads)
+    def read(path: Path) -> int:
+        return oxyz.read_batch(path, SHUFFLED_INDICES, threads=threads).total_atoms
+
+    return read
 
 
-@row("Batch", "parallel")
-def oxyz_strided(path: Path) -> int:
-    return oxyz.read_batch(path, STRIDED_INDICES).total_atoms
+def oxyz_strided_with(threads: int):
+    @row("Batch", "serial" if threads == 1 else "parallel", threads=threads)
+    def read(path: Path) -> int:
+        return oxyz.read_batch(path, STRIDED_INDICES, threads=threads).total_atoms
+
+    return read
 
 
 @row("numpy arrays", "serial")
@@ -240,7 +249,10 @@ def ase_lmdb_strided(env) -> int:
 
 
 SEQUENTIAL_ARRAYS = [
-    pytest.param(oxyz_sequential, "store_dataset", id="oxyz-batches"),
+    *(
+        pytest.param(oxyz_sequential_with(t), "store_dataset", id=f"oxyz-batches-{t}t")
+        for t in THREAD_SWEEP
+    ),
     pytest.param(
         atompack_serial_sequential,
         "atompack_db",
@@ -259,7 +271,10 @@ SEQUENTIAL_ARRAYS = [
 ]
 
 SHUFFLED_ARRAYS = [
-    pytest.param(oxyz_shuffled, "store_dataset", id="oxyz-read-batch"),
+    *(
+        pytest.param(oxyz_shuffled_with(t), "store_dataset", id=f"oxyz-read-batch-{t}t")
+        for t in THREAD_SWEEP
+    ),
     pytest.param(
         atompack_serial_shuffled,
         "atompack_db",
@@ -276,7 +291,10 @@ SHUFFLED_ARRAYS = [
 ]
 
 STRIDED_ARRAYS = [
-    pytest.param(oxyz_strided, "store_dataset", id="oxyz-read-batch"),
+    *(
+        pytest.param(oxyz_strided_with(t), "store_dataset", id=f"oxyz-read-batch-{t}t")
+        for t in THREAD_SWEEP
+    ),
     pytest.param(
         atompack_serial_strided,
         "atompack_db",

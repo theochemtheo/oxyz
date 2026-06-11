@@ -25,6 +25,7 @@ comes from the machine the save was recorded on.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -70,15 +71,21 @@ def flatten(data: dict[str, Any]) -> list[dict[str, Any]]:
         group = bench["group"] or "ungrouped"
         scenario, _, workload = group.partition("/")
         info = bench.get("extra_info", {})
-        # Explicit thread counts arrive with the thread sweep; until then
-        # parallel rows use every core the recording machine had.
-        threads = info.get("threads", 1 if info.get("mode") == "serial" else ncores)
+        # Swept rows record their thread count and carry a -Nt id suffix;
+        # stripping it folds them into one reader with a bar per count.
+        # Unswept parallel rows used every core the recording machine had.
+        reader = row_id(bench)
+        threads = info.get("threads")
+        if threads is not None:
+            reader = re.sub(r"-\d+t$", "", reader)
+        else:
+            threads = 1 if info.get("mode") == "serial" else ncores
         rows.append(
             {
                 "group": group,
                 "scenario": scenario,
                 "workload": workload or scenario,
-                "reader": row_id(bench),
+                "reader": reader,
                 "threads": threads,
                 "output": info.get("output", "?"),
                 "mode": info.get("mode", "?"),
@@ -160,26 +167,32 @@ def value_of(row: dict[str, Any], metric: str) -> float:
     return row["n_atoms"] / row["mean"] if metric == "atoms/s" else row["mean"] * 1e3
 
 
-def draw_bar(ax, pos: float, value: float, width: float, color, label: str) -> None:
+def draw_bar(
+    ax, pos: float, value: float, width: float, color, label: str, rotate: bool = False
+) -> None:
     ax.bar(pos, value, width, color=color, edgecolor="#262626", linewidth=0.8)
+    # Sub-bars in a thread sweep are too narrow for horizontal labels.
     ax.annotate(
         label,
         (pos, value),
         ha="center",
         va="bottom",
-        fontsize=7.5,
+        fontsize=7 if rotate else 7.5,
         fontweight="bold",
+        rotation=90 if rotate else 0,
         textcoords="offset points",
         xytext=(0, 2),
     )
 
 
-def finish_log_axis(ax, values: list[float], tick_labels: list[str]) -> None:
+def finish_log_axis(
+    ax, values: list[float], tick_labels: list[str], top: float = 3.0
+) -> None:
     ax.set_yscale("log")
     # Explicit limits: matplotlib otherwise zooms a log axis onto a sliver
     # when bars are close, inflating small differences and cluttering the
     # ticks with off-decade labels.
-    ax.set_ylim(min(values) / 4, max(values) * 3)
+    ax.set_ylim(min(values) / 4, max(values) * top)
     ax.set_xticks(range(len(tick_labels)))
     # rotation_mode="anchor" pivots each label at its right end, keeping it
     # aligned under its tick once rotated.
@@ -204,6 +217,7 @@ def panel(ax, rows: list[dict[str, Any]], metric: str) -> None:
     slot = 0.8  # total width available per reader group
     values = []
     tick_labels = []
+    has_sweep = False
 
     for x, reader in enumerate(readers):
         bars = sorted(
@@ -217,16 +231,26 @@ def panel(ax, rows: list[dict[str, Any]], metric: str) -> None:
         else:
             tick_labels.append(reader)
         width = slot / len(bars)
+        has_sweep = has_sweep or len(bars) > 1
         for i, r in enumerate(bars):
             value = value_of(r, metric)
             values.append(value)
             pos = x - slot / 2 + (i + 0.5) * width
             label = fmt_value(value)
             if len(bars) > 1:
-                label = f"{label}\n{r['threads']}c"
-            draw_bar(ax, pos, value, width * 0.92, reader_color(reader), label)
+                label = f"{r['threads']}c: {label}"
+            draw_bar(
+                ax,
+                pos,
+                value,
+                width * 0.92,
+                reader_color(reader),
+                label,
+                rotate=len(bars) > 1,
+            )
 
-    finish_log_axis(ax, values, tick_labels)
+    # Rotated sweep labels stand tall; give them headroom clear of the title.
+    finish_log_axis(ax, values, tick_labels, top=9.0 if has_sweep else 3.0)
 
 
 def metric_label(metric: str) -> str:

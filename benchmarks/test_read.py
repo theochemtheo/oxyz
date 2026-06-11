@@ -42,11 +42,21 @@ needs_ase_extxyz = pytest.mark.skipif(
 )
 
 
-def row(output: str, mode: str):
-    """Tag a reader with the output/mode columns report.py renders."""
+THREAD_SWEEP = (1, 2, 4, 8)
+
+
+def row(output: str, mode: str, threads: int | None = None):
+    """Tag a reader with the output/mode columns report.py renders.
+
+    Swept rows also record their thread count; plot.py folds rows that
+    differ only in threads into one reader with a bar per count.
+    """
 
     def tag(fn):
-        fn.row_info = {"output": output, "mode": mode}
+        info: dict[str, str | int] = {"output": output, "mode": mode}
+        if threads is not None:
+            info["threads"] = threads
+        fn.row_info = info
         return fn
 
     return tag
@@ -77,14 +87,12 @@ def run(benchmark, read, path: Path, shape: tuple[int, int] | str | None = "file
     return benchmark(read, path)
 
 
-@row("numpy frames", "parallel")
-def oxyz_read_all(path: Path) -> list:
-    return oxyz.read_frames(path)
+def oxyz_read_all_with(threads: int):
+    @row("numpy frames", "serial" if threads == 1 else "parallel", threads=threads)
+    def read(path: Path) -> list:
+        return oxyz.read_frames(path, threads=threads)
 
-
-@row("numpy frames", "serial")
-def oxyz_read_all_serial(path: Path) -> list:
-    return oxyz.read_frames(path, threads=1)
+    return read
 
 
 @row("numpy frames", "serial")
@@ -190,8 +198,7 @@ def cextxyz_to_ase_read_last(path: Path) -> object:
 
 
 READ_ALL = [
-    pytest.param(oxyz_read_all, id="oxyz"),
-    pytest.param(oxyz_read_all_serial, id="oxyz-serial"),
+    *(pytest.param(oxyz_read_all_with(t), id=f"oxyz-{t}t") for t in THREAD_SWEEP),
     pytest.param(oxyz_iter_read_all, id="oxyz-iter"),
     pytest.param(oxyz_to_ase_read_all, id="oxyz-to-ase", marks=needs_ase),
     pytest.param(ase_read_all, id="ase", marks=needs_ase),
@@ -245,9 +252,12 @@ def test_read_first_frame_of_large_file(benchmark, read, large_frames):
     assert frame is not None
 
 
-@row("Batch", "parallel")
-def oxyz_read_batch_strided(path: Path) -> object:
-    return oxyz.read_batch(path, range(0, 2_000, 20))
+def oxyz_read_batch_strided_with(threads: int):
+    @row("Batch", "serial" if threads == 1 else "parallel", threads=threads)
+    def read(path: Path) -> object:
+        return oxyz.read_batch(path, range(0, 2_000, 20), threads=threads)
+
+    return read
 
 
 @row("ase.Atoms", "serial")
@@ -282,7 +292,10 @@ def cextxyz_to_ase_read_strided(path: Path) -> list:
 @pytest.mark.parametrize(
     "read",
     [
-        pytest.param(oxyz_read_batch_strided, id="oxyz-read-batch"),
+        *(
+            pytest.param(oxyz_read_batch_strided_with(t), id=f"oxyz-read-batch-{t}t")
+            for t in THREAD_SWEEP
+        ),
         pytest.param(oxyz_to_ase_read_strided, id="oxyz-to-ase", marks=needs_ase),
         pytest.param(ase_read_strided, id="ase", marks=needs_ase),
         pytest.param(
@@ -347,18 +360,26 @@ def test_scan_large_frames(benchmark, read, large_frames):
     assert index.n_frames == 4
 
 
-@row("Batch", "parallel")
-def oxyz_sequential_batches(path: Path) -> int:
-    total = 0
-    for batch in oxyz.iter_batches(path, frames_per_batch=64):
-        total += batch.total_atoms
-    return total
+def oxyz_sequential_batches_with(threads: int):
+    @row("Batch", "serial" if threads == 1 else "parallel", threads=threads)
+    def batched(path: Path) -> int:
+        total = 0
+        for batch in oxyz.iter_batches(path, frames_per_batch=64, threads=threads):
+            total += batch.total_atoms
+        return total
+
+    return batched
 
 
-@row("Batch", "parallel")
-def oxyz_shuffled_atom_batches(path: Path) -> int:
-    batches = oxyz.iter_batches(path, atoms_per_batch=2048, shuffle=True, seed=0)
-    return sum(batch.total_atoms for batch in batches)
+def oxyz_shuffled_atom_batches_with(threads: int):
+    @row("Batch", "serial" if threads == 1 else "parallel", threads=threads)
+    def batched(path: Path) -> int:
+        batches = oxyz.iter_batches(
+            path, atoms_per_batch=2048, shuffle=True, seed=0, threads=threads
+        )
+        return sum(batch.total_atoms for batch in batches)
+
+    return batched
 
 
 # No ASE rows: ASE has no batch concept. Tracked against read_all[oxyz]
@@ -367,8 +388,18 @@ def oxyz_shuffled_atom_batches(path: Path) -> int:
 @pytest.mark.parametrize(
     "batched_read",
     [
-        pytest.param(oxyz_sequential_batches, id="sequential-64-frames"),
-        pytest.param(oxyz_shuffled_atom_batches, id="shuffled-2048-atoms"),
+        *(
+            pytest.param(
+                oxyz_sequential_batches_with(t), id=f"sequential-64-frames-{t}t"
+            )
+            for t in THREAD_SWEEP
+        ),
+        *(
+            pytest.param(
+                oxyz_shuffled_atom_batches_with(t), id=f"shuffled-2048-atoms-{t}t"
+            )
+            for t in THREAD_SWEEP
+        ),
     ],
 )
 def test_batched_read_of_many_small_frames(benchmark, batched_read, many_small_frames):
