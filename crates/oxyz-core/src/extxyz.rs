@@ -777,6 +777,10 @@ pub struct FrameIter<R: BufRead> {
     /// Line buffer reused across the whole stream: one allocation total
     /// instead of one `String` per line.
     buffer: Vec<u8>,
+    /// Cell boundaries within the current line, reused per atom line.
+    /// `(start, end)` offsets rather than `&str`s, so they can outlive
+    /// refills of `buffer`.
+    cells: Vec<(usize, usize)>,
     done: bool,
 }
 
@@ -793,6 +797,7 @@ impl<R: BufRead> FrameIter<R> {
             frame_index: 0,
             line_number,
             buffer: Vec::new(),
+            cells: Vec::new(),
             done: false,
         }
     }
@@ -869,19 +874,25 @@ impl<R: BufRead> FrameIter<R> {
                 return Err(ExtxyzError::MissingLine("atom"));
             }
             let line = line_str(&self.buffer)?;
-            let cells: Vec<&str> = line.split_whitespace().collect();
 
-            if cells.len() != row_width {
+            self.cells.clear();
+            for token in line.split_whitespace() {
+                let start = token.as_ptr() as usize - line.as_ptr() as usize;
+                self.cells.push((start, start + token.len()));
+            }
+
+            if self.cells.len() != row_width {
                 return Err(ExtxyzError::WrongAtomColumnCount {
                     line_number,
                     expected: row_width,
-                    actual: cells.len(),
+                    actual: self.cells.len(),
                 });
             }
 
             let mut cursor = 0;
             for column in &mut columns {
-                push_cells(column, &cells[cursor..cursor + column.width])?;
+                let spans = &self.cells[cursor..cursor + column.width];
+                push_cells(column, spans.iter().map(|&(start, end)| &line[start..end]))?;
                 cursor += column.width;
             }
         }
@@ -1026,7 +1037,7 @@ fn line_str(buffer: &[u8]) -> Result<&str> {
 }
 
 /// Append one atom's cells onto the column's buffer.
-fn push_cells(column: &mut Column, cells: &[&str]) -> Result<()> {
+fn push_cells<'a>(column: &mut Column, cells: impl Iterator<Item = &'a str>) -> Result<()> {
     match &mut column.data {
         ColumnData::Real(buffer) => {
             for cell in cells {
@@ -1052,7 +1063,7 @@ fn push_cells(column: &mut Column, cells: &[&str]) -> Result<()> {
         }
         ColumnData::Str(buffer) => {
             for cell in cells {
-                buffer.push((*cell).to_owned());
+                buffer.push(cell.to_owned());
             }
         }
     }
