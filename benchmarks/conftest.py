@@ -3,6 +3,12 @@
 Shapes mirror crates/oxyz-core/benches/parse.rs (many small frames vs few
 large frames) so PyO3 binding overhead can be read off against the cargo
 bench numbers for the same workload.
+
+The store-comparison suite adds a much larger dataset (`store_dataset`,
+100k frames of 64 atoms, ~0.4 GB of text): random reads on the 2k-frame
+fixtures measure fixed overheads, not the stores. Each store backend
+ingests it once into benchmarks/.cache/ as well — expect ~2 GB of cache
+and a slow first run.
 """
 
 from __future__ import annotations
@@ -31,7 +37,7 @@ def pytest_benchmark_update_machine_info(config, machine_info) -> None:
     import importlib.metadata as metadata
 
     versions = {}
-    for dist in ("oxyz", "numpy", "ase", "extxyz", "ase-extxyz"):
+    for dist in ("oxyz", "numpy", "ase", "extxyz", "ase-extxyz", "atompack-db", "lmdb"):
         try:
             versions[dist] = metadata.version(dist)
         except metadata.PackageNotFoundError:
@@ -170,6 +176,25 @@ def metadata_heavy() -> Path:
 @pytest.fixture(scope="session")
 def mace_mixed() -> Path:
     return trajectory_files()["mace_mixed"]
+
+
+# The store-comparison dataset. Fixed frame size keeps the maths obvious:
+# every read of k frames is k * 64 atoms.
+STORE_N_FRAMES = 100_000
+STORE_ATOMS_PER_FRAME = 64
+
+
+@pytest.fixture(scope="session")
+def store_dataset() -> Path:
+    return store_dataset_file()
+
+
+def store_dataset_file() -> Path:
+    def write(out, rng: random.Random) -> None:
+        for _ in range(STORE_N_FRAMES):
+            _write_frame(out, rng, STORE_ATOMS_PER_FRAME)
+
+    return _cached_file("store_100k", 0x5EED5, write)
 
 
 def trajectory_files() -> dict[str, Path]:

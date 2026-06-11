@@ -7,6 +7,8 @@
 #     "ase>=3.28,<4",
 #     "extxyz>=0.4",
 #     "ase-extxyz>=0.1",
+#     "atompack-db>=0.4",
+#     "lmdb>=1.4",
 # ]
 #
 # [tool.uv.sources]

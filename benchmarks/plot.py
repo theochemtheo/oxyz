@@ -99,6 +99,7 @@ OXYZ_ORDER = [
     "oxyz",
     "oxyz-serial",
     "oxyz-iter",
+    "oxyz-batches",
     "oxyz-read-batch",
     "oxyz-to-ase",
     "oxyz-scan",
@@ -117,6 +118,11 @@ COMPETITOR_COLORS = {
     "ase": "#7570b3",
     "cextxyz": "#1b9e77",
     "cextxyz-to-ase": "#66a61e",
+    "atompack-serial": "#1f78b4",
+    "atompack-native": "#a6cee3",
+    "lmdb-pickle": "#e377c2",
+    "ase-sqlite": "#7570b3",
+    "ase-lmdb": "#9e9ac8",
 }
 FALLBACK_COLOR = "#999999"
 
