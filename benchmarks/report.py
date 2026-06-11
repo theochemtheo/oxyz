@@ -40,6 +40,9 @@ ase-extxyz plugin), and `Batch` is a single concatenated batch. Rows with
 different outputs do different amounts of work. The mode column says
 whether parsing uses all cores or one.
 
+Throughput columns divide the work a row does (frames and atoms read,
+recorded with the save) by the mean time; rows where a per-frame rate
+means nothing (first/last/scan) leave them blank.
 "rel" is relative to the fastest row in the group. Numbers are only
 comparable within one run on one machine.
 """
@@ -86,6 +89,25 @@ def fmt_ms(ms: float) -> str:
     return f"{ms:.0f}"
 
 
+def fmt_rate(per_s: float) -> str:
+    if per_s >= 1e9:
+        return f"{per_s / 1e9:.2f}G"
+    if per_s >= 1e6:
+        return f"{per_s / 1e6:.2f}M"
+    if per_s >= 1e3:
+        return f"{per_s / 1e3:.1f}k"
+    return f"{per_s:.0f}"
+
+
+def throughput(bench: dict[str, Any], key: str) -> str:
+    """frames/s or atoms/s from the row's recorded workload shape; blank
+    for rows whose cost does not scale with frames read (first/last/scan)."""
+    count = bench.get("extra_info", {}).get(key)
+    if count is None:
+        return ""
+    return fmt_rate(count / bench["stats"]["mean"])
+
+
 def environment(data: dict[str, Any]) -> str:
     machine = data["machine_info"]
     commit = data.get("commit_info", {})
@@ -117,8 +139,8 @@ def group_table(group: str, rows: list[dict[str, Any]]) -> str:
     lines = [
         f"### {group}",
         "",
-        "| reader | output | mode | mean ± std (ms) | rel |",
-        "| --- | --- | --- | ---: | ---: |",
+        "| reader | output | mode | mean ± std (ms) | frames/s | atoms/s | rel |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: |",
     ]
     for bench in rows:
         stats = bench["stats"]
@@ -127,6 +149,7 @@ def group_table(group: str, rows: list[dict[str, Any]]) -> str:
         lines.append(
             f"| {row_id(bench)} | {info.get('output', '?')}"
             f" | {info.get('mode', '?')} | {timing}"
+            f" | {throughput(bench, 'n_frames')} | {throughput(bench, 'n_atoms')}"
             f" | {stats['mean'] / best:.2f} |"
         )
     return "\n".join(lines) + "\n"

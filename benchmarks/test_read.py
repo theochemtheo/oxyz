@@ -18,6 +18,7 @@ where the libraries are missing (they publish no CPython 3.14 wheels).
 
 from __future__ import annotations
 
+import functools
 import importlib.util
 from pathlib import Path
 
@@ -51,9 +52,28 @@ def row(output: str, mode: str):
     return tag
 
 
-def run(benchmark, read, path: Path):
-    """Benchmark `read(path)`, recording its row tags in the save."""
+@functools.cache
+def file_shape(path: Path) -> tuple[int, int]:
+    """(n_frames, n_atoms) for a fixture, from the structural scan."""
+    index = oxyz.scan(path)
+    return index.n_frames, index.total_atoms
+
+
+def run(benchmark, read, path: Path, shape: tuple[int, int] | str | None = "file"):
+    """Benchmark `read(path)`, recording its row tags in the save.
+
+    `shape` is the work the row does, recorded as n_frames/n_atoms so
+    report.py can derive frames/s and atoms/s. The default records the
+    whole file; rows reading a subset pass an explicit (n_frames, n_atoms);
+    rows whose cost does not scale with frames read (first/last/scan) pass
+    None and get no throughput columns.
+    """
     benchmark.extra_info.update(read.row_info)
+    if shape == "file":
+        shape = file_shape(path)
+    if shape is not None:
+        n_frames, n_atoms = shape
+        benchmark.extra_info.update(n_frames=int(n_frames), n_atoms=int(n_atoms))
     return benchmark(read, path)
 
 
@@ -221,7 +241,7 @@ def test_read_all_mace_mixed(benchmark, read, mace_mixed):
 @pytest.mark.benchmark(group="read_first/large_frames")
 @pytest.mark.parametrize("read", READ_FIRST)
 def test_read_first_frame_of_large_file(benchmark, read, large_frames):
-    frame = run(benchmark, read, large_frames)
+    frame = run(benchmark, read, large_frames, shape=None)
     assert frame is not None
 
 
@@ -271,7 +291,12 @@ def cextxyz_to_ase_read_strided(path: Path) -> list:
     ],
 )
 def test_selective_read_of_many_small_frames(benchmark, read, many_small_frames):
-    result = run(benchmark, read, many_small_frames)
+    # Throughput is over the 100 frames actually read, not the whole file.
+    index = oxyz.scan(many_small_frames)
+    selected = index.n_atoms[::20]
+    result = run(
+        benchmark, read, many_small_frames, shape=(len(selected), selected.sum())
+    )
     assert result is not None
 
 
@@ -296,7 +321,7 @@ READ_LAST = [
 @pytest.mark.benchmark(group="read_last/large_frames")
 @pytest.mark.parametrize("read", READ_LAST)
 def test_read_last_frame_of_large_file(benchmark, read, large_frames):
-    frame = run(benchmark, read, large_frames)
+    frame = run(benchmark, read, large_frames, shape=None)
     assert frame is not None
 
 
@@ -311,14 +336,14 @@ def oxyz_scan(path: Path) -> object:
 @pytest.mark.benchmark(group="scan/many_small_frames")
 @pytest.mark.parametrize("read", [pytest.param(oxyz_scan, id="oxyz-scan")])
 def test_scan_many_small_frames(benchmark, read, many_small_frames):
-    index = run(benchmark, read, many_small_frames)
+    index = run(benchmark, read, many_small_frames, shape=None)
     assert index.n_frames == 2_000
 
 
 @pytest.mark.benchmark(group="scan/large_frames")
 @pytest.mark.parametrize("read", [pytest.param(oxyz_scan, id="oxyz-scan")])
 def test_scan_large_frames(benchmark, read, large_frames):
-    index = run(benchmark, read, large_frames)
+    index = run(benchmark, read, large_frames, shape=None)
     assert index.n_frames == 4
 
 
