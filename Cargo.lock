@@ -477,6 +477,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "fast-float2",
+ "memchr",
  "proptest",
  "rayon",
  "thiserror",

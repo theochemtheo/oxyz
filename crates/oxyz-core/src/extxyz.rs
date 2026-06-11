@@ -191,18 +191,15 @@ pub fn scan_frames<R: BufRead>(mut reader: R) -> Result<FrameIndex> {
                 }),
             })?;
 
-        for skipped in 0..=n_atoms {
-            line.clear();
-            let n_read = reader.read_until(b'\n', &mut line)?;
-            if n_read == 0 {
-                let label = if skipped == 0 { "comment" } else { "atom" };
-                return Err(ExtxyzError::InFrame {
-                    frame_index: entries.len(),
-                    source: Box::new(ExtxyzError::MissingLine(label)),
-                });
-            }
-            offset += n_read as u64;
-            line_number += 1;
+        let (n_bytes, skipped) = skip_lines(&mut reader, n_atoms + 1)?;
+        offset += n_bytes;
+        line_number += skipped;
+        if skipped <= n_atoms {
+            let label = if skipped == 0 { "comment" } else { "atom" };
+            return Err(ExtxyzError::InFrame {
+                frame_index: entries.len(),
+                source: Box::new(ExtxyzError::MissingLine(label)),
+            });
         }
 
         entries.push(FrameEntry {
@@ -211,6 +208,44 @@ pub fn scan_frames<R: BufRead>(mut reader: R) -> Result<FrameIndex> {
             n_atoms,
         });
     }
+}
+
+/// Skip up to `n` lines without copying them: newlines are counted straight
+/// off the reader's internal buffer. Returns the bytes consumed and the
+/// lines skipped (fewer than `n` only at end-of-file). Matches the
+/// `read_until` view of lines: an unterminated final line counts.
+fn skip_lines<R: BufRead>(reader: &mut R, n: usize) -> io::Result<(u64, usize)> {
+    let mut bytes: u64 = 0;
+    let mut skipped = 0;
+    // Bytes consumed past the last newline: a line still in progress.
+    let mut partial = false;
+
+    while skipped < n {
+        let buf = reader.fill_buf()?;
+        if buf.is_empty() {
+            if partial {
+                skipped += 1;
+            }
+            return Ok((bytes, skipped));
+        }
+
+        let mut consumed = 0;
+        for position in memchr::memchr_iter(b'\n', buf) {
+            consumed = position + 1;
+            skipped += 1;
+            if skipped == n {
+                break;
+            }
+        }
+        if skipped < n {
+            partial = buf.last() != Some(&b'\n');
+            consumed = buf.len();
+        }
+        reader.consume(consumed);
+        bytes += consumed as u64;
+    }
+
+    Ok((bytes, skipped))
 }
 
 /// One frame's bytes, cut out of the stream by a single-pass scan: the
@@ -235,7 +270,8 @@ struct RawFrames<R: BufRead> {
     selection: Option<Vec<usize>>,
     /// Last frame the scan needs; later bytes are never read.
     stop_after: Option<usize>,
-    /// Line buffer reused while skipping unselected frames.
+    /// Count-line buffer, reused across frames; selected frames take it
+    /// over as the start of their byte buffer.
     scratch: Vec<u8>,
     fused: bool,
 }
@@ -339,21 +375,24 @@ impl<R: BufRead> Iterator for RawFrames<R> {
                 });
             };
 
-            let keep = self.selected(frame_index);
-            let mut bytes = if keep {
-                std::mem::take(&mut self.scratch)
-            } else {
-                Vec::new()
-            };
-
-            for skipped in 0..=n_atoms {
-                let buffer = if keep {
-                    &mut bytes
-                } else {
-                    self.scratch.clear();
-                    &mut self.scratch
+            if !self.selected(frame_index) {
+                // Skip the frame's lines without copying them anywhere.
+                let skipped = match skip_lines(&mut self.reader, n_atoms + 1) {
+                    Ok((_, skipped)) => skipped,
+                    Err(error) => return self.fuse(error.into()),
                 };
-                let n_read = match self.reader.read_until(b'\n', buffer) {
+                self.line_number += skipped;
+                if skipped <= n_atoms {
+                    let label = if skipped == 0 { "comment" } else { "atom" };
+                    return self.fuse(ExtxyzError::MissingLine(label));
+                }
+                self.frame_index += 1;
+                continue;
+            }
+
+            let mut bytes = std::mem::take(&mut self.scratch);
+            for skipped in 0..=n_atoms {
+                let n_read = match self.reader.read_until(b'\n', &mut bytes) {
                     Ok(n_read) => n_read,
                     Err(error) => return self.fuse(error.into()),
                 };
@@ -365,13 +404,11 @@ impl<R: BufRead> Iterator for RawFrames<R> {
             }
 
             self.frame_index += 1;
-            if keep {
-                return Some(Ok(RawFrame {
-                    frame_index,
-                    line,
-                    bytes,
-                }));
-            }
+            return Some(Ok(RawFrame {
+                frame_index,
+                line,
+                bytes,
+            }));
         }
     }
 }
