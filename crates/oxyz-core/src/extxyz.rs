@@ -1041,8 +1041,10 @@ fn push_cells<'a>(column: &mut Column, cells: impl Iterator<Item = &'a str>) -> 
     match &mut column.data {
         ColumnData::Real(buffer) => {
             for cell in cells {
+                // fast-float2 over std's Eisel-Lemire: measurably faster on
+                // the 6-floats-per-atom-line shape, same accepted grammar.
                 buffer.push(
-                    cell.parse::<f64>()
+                    fast_float2::parse::<f64, _>(cell)
                         .map_err(|_| invalid_cell(&column.name, "real", cell))?,
                 );
             }
