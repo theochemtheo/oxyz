@@ -68,6 +68,13 @@ def oxyz_read_all_serial(path: Path) -> list:
 
 
 @row("numpy frames", "serial")
+def oxyz_iter_read_all(path: Path) -> list:
+    # The constant-memory streaming path; collected so every read_all row
+    # does the same total work.
+    return list(oxyz.iter_frames(path))
+
+
+@row("numpy frames", "serial")
 def oxyz_read_first(path: Path) -> object:
     return oxyz.read_first_frame(path)
 
@@ -165,6 +172,7 @@ def cextxyz_to_ase_read_last(path: Path) -> object:
 READ_ALL = [
     pytest.param(oxyz_read_all, id="oxyz"),
     pytest.param(oxyz_read_all_serial, id="oxyz-serial"),
+    pytest.param(oxyz_iter_read_all, id="oxyz-iter"),
     pytest.param(oxyz_to_ase_read_all, id="oxyz-to-ase", marks=needs_ase),
     pytest.param(ase_read_all, id="ase", marks=needs_ase),
     pytest.param(cextxyz_read_all, id="cextxyz", marks=needs_cextxyz),
@@ -267,7 +275,16 @@ def test_selective_read_of_many_small_frames(benchmark, read, many_small_frames)
     assert result is not None
 
 
+@row("Batch", "serial")
+def oxyz_read_batch_last(path: Path) -> object:
+    # The large_frames fixture has 4 frames; read_batch takes absolute
+    # indices, so "last" is spelled 3. One frame requested, so threads
+    # would have nothing to parallelise; serial keeps the row honest.
+    return oxyz.read_batch(path, [3], threads=1)
+
+
 READ_LAST = [
+    pytest.param(oxyz_read_batch_last, id="oxyz-read-batch"),
     pytest.param(oxyz_to_ase_read_last, id="oxyz-to-ase", marks=needs_ase),
     pytest.param(ase_read_last, id="ase", marks=needs_ase),
     pytest.param(cextxyz_to_ase_read_last, id="cextxyz-to-ase", marks=needs_ase_extxyz),
@@ -281,6 +298,28 @@ READ_LAST = [
 def test_read_last_frame_of_large_file(benchmark, read, large_frames):
     frame = run(benchmark, read, large_frames)
     assert frame is not None
+
+
+@row("FrameIndex", "serial")
+def oxyz_scan(path: Path) -> object:
+    return oxyz.scan(path)
+
+
+# The structural scan underlies iter_batches planning, IndexedFrames open,
+# and ASE-style negative/strided indexing; it should sit far above parse
+# throughput to earn its keep.
+@pytest.mark.benchmark(group="scan/many_small_frames")
+@pytest.mark.parametrize("read", [pytest.param(oxyz_scan, id="oxyz-scan")])
+def test_scan_many_small_frames(benchmark, read, many_small_frames):
+    index = run(benchmark, read, many_small_frames)
+    assert index.n_frames == 2_000
+
+
+@pytest.mark.benchmark(group="scan/large_frames")
+@pytest.mark.parametrize("read", [pytest.param(oxyz_scan, id="oxyz-scan")])
+def test_scan_large_frames(benchmark, read, large_frames):
+    index = run(benchmark, read, large_frames)
+    assert index.n_frames == 4
 
 
 @row("Batch", "parallel")
