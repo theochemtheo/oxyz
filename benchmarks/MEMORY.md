@@ -12,18 +12,18 @@ streamed rows discard frames as they go, read-all rows keep them.
 
 | reader | output kept | peak RSS (MiB) | read delta (MiB) |
 | --- | --- | ---: | ---: |
-| oxyz | all frames | 45.7 | 29.2 |
-| oxyz-serial | all frames | 41.0 | 24.8 |
-| oxyz-iter | streamed | 28.6 | 12.1 |
-| ase | all frames | 127.4 | 110.9 |
-| ase-iread | streamed | 73.5 | 57.2 |
+| oxyz | all frames | 44.8 | 28.6 |
+| oxyz-serial | all frames | 41.5 | 24.9 |
+| oxyz-iter | streamed | 28.4 | 11.8 |
+| ase | all frames | 86.5 | 70.0 |
+| ase-iread | streamed | 72.5 | 56.3 |
 
 ## large_frames (22.0 MiB file)
 
 | reader | output kept | peak RSS (MiB) | read delta (MiB) |
 | --- | --- | ---: | ---: |
-| oxyz | all frames | 107.3 | 91.1 |
-| oxyz-serial | all frames | 67.2 | 50.8 |
+| oxyz | all frames | 108.3 | 91.8 |
+| oxyz-serial | all frames | 66.9 | 50.7 |
 | oxyz-iter | streamed | 44.3 | 28.1 |
-| ase | all frames | 154.5 | 138.3 |
-| ase-iread | streamed | 137.3 | 121.1 |
+| ase | all frames | 144.6 | 128.1 |
+| ase-iread | streamed | 154.3 | 137.8 |
