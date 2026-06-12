@@ -1,0 +1,14 @@
+[global]
+exclude = [
+    ".git",
+    ".github",
+    "target",
+    "build",
+    "benchmarks/MEMORY.md",
+    "benchmarks/RESULTS.md",
+]
+respect-gitignore = true
+flavor = "gfm"
+
+[MD013]
+code-blocks = false  # Exclude code blocks from line length check

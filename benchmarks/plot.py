@@ -34,7 +34,7 @@ import matplotlib.pyplot as plt
 
 # Supplied by this script's inline metadata, not the project venv that ty
 # checks under.
-import seaborn as sns  # ty: ignore[unresolved-import]
+import seaborn as sns
 from matplotlib.ticker import LogLocator, NullFormatter
 
 REPO = Path(__file__).resolve().parent.parent

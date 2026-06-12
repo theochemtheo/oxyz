@@ -140,3 +140,21 @@ entry = "uv run pytest"
 pass_filenames = false
 always_run = true
 stages = ["pre-push"]
+
+[[repos.hooks]]
+id = "rumdl-check"
+name = "rumdl check"
+language = "system"
+entry = "uv run rumdl check ."
+pass_filenames = false
+always_run = true
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "rumdl-fmt"
+name = "rumdl fmt"
+language = "system"
+entry = "uv run rumdl fmt ."
+pass_filenames = false
+always_run = true
+stages = ["pre-commit"]

@@ -12,12 +12,12 @@ tells you whether a training file is what you think it is.
 import oxyz
 
 frames = oxyz.read_frames("train.extxyz")        # all cores, one pass
-frames[0].columns["pos"]                          # float64 ndarray, shape (n_atoms, 3)
-frames[0].metadata["energy"]                      # float
+frames[0].columns["pos"]                         # float64 ndarray, shape (n_atoms, 3)
+frames[0].metadata["energy"]                     # float
 
 schema = oxyz.infer_schema("train.extxyz")
-schema.is_consistent                              # False — now you know before training
-print(schema)                                     # which keys drift, and in how many frames
+schema.is_consistent                             # False — now you know before training
+print(schema)                                    # which keys drift, and in how many frames
 ```
 
 `oxyz` exists for the gap between "extxyz is the lingua franca of atomistic
