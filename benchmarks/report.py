@@ -42,9 +42,25 @@ whether parsing uses all cores or one.
 
 Throughput columns divide the work a row does (frames and atoms read,
 recorded with the save) by the mean time; rows where a per-frame rate
-means nothing (first/last/scan) leave them blank.
+means nothing (first/last/scan) leave them blank. Rows suffixed `-Nt`
+are the same reader pinned to N threads.
 "rel" is relative to the fastest row in the group. Numbers are only
 comparable within one run on one machine.
+"""
+
+STORES_INTRO = """\
+## Store comparison
+
+The `stores/...` and `stores-ase/...` groups read the 100k-frame dataset
+through database-style stores it was ingested into once, up front. The
+stores read pre-converted binary through an index; oxyz parses the text
+file and nothing else, so the stores are expected to lead — the margin
+is the result. One reason per baseline: atompack is the specialised
+binary molecule store (mmap-backed, rayon-parallel, float32 by design);
+lmdb-pickle is the LMDB-of-arrays pattern dataloader repositories
+hand-roll; ase-sqlite and ase-lmdb are the common ASE ecosystem paths.
+`stores/...` rows hand back numpy arrays and `stores-ase/...` rows
+ase.Atoms; the two output contracts are never compared in one table.
 """
 
 WORKLOADS = """\
@@ -58,6 +74,7 @@ Deterministic fixtures from `benchmarks/conftest.py`:
 | large_frames | 4 frames × 100 000 atoms |
 | metadata_heavy | 2 000 frames × 16–64 atoms, ~16-key comment lines |
 | mace_mixed | 5 isolated-atom frames + 995 bulk frames (32–96 atoms) |
+| store_100k | 100 000 frames × 64 atoms (store comparison) |
 
 `selective/...` groups read every 20th frame. cextxyz and ase-extxyz
 publish no CPython 3.14 wheels, so `benchmarks/run.py` pins CPython 3.13;
@@ -156,19 +173,33 @@ def group_table(group: str, rows: list[dict[str, Any]]) -> str:
 
 
 def not_led_by_oxyz(groups: dict[str, list[dict[str, Any]]]) -> str:
-    # Competitor rows are `ase`, `cextxyz`, `cextxyz-to-ase`; everything
+    # Competitor rows are the other readers and the stores; everything
     # else (including oxyz-only groups with descriptive ids) is ours.
     def competitor(bench: dict[str, Any]) -> bool:
-        return row_id(bench).startswith(("ase", "cextxyz"))
+        return row_id(bench).startswith(("ase", "cextxyz", "atompack", "lmdb"))
 
     losses = []
     for group, rows in sorted(groups.items()):
         fastest = min(rows, key=lambda bench: bench["stats"]["mean"])
-        if competitor(fastest):
-            losses.append(f"- {group}: fastest row is `{row_id(fastest)}`")
+        if not competitor(fastest):
+            continue
+        ours = [bench for bench in rows if not competitor(bench)]
+        if ours:
+            best = min(ours, key=lambda bench: bench["stats"]["mean"])
+            margin = best["stats"]["mean"] / fastest["stats"]["mean"]
+            losses.append(
+                f"- {group}: `{row_id(fastest)}` leads; oxyz's best row is"
+                f" {margin:.1f}× slower"
+            )
+        else:
+            losses.append(f"- {group}: `{row_id(fastest)}` leads; no oxyz row")
     if not losses:
         return "No groups in this run were led by a non-oxyz row.\n"
-    return "Groups where an oxyz row is not the fastest:\n\n" + "\n".join(losses) + "\n"
+    return (
+        "Groups where an oxyz row is not the fastest. For store groups this"
+        " is the expected outcome — binary stores against a text parser —"
+        " and the margin is the result:\n\n" + "\n".join(losses) + "\n"
+    )
 
 
 def main() -> None:
@@ -179,12 +210,22 @@ def main() -> None:
     for bench in data["benchmarks"]:
         groups.setdefault(bench["group"] or "ungrouped", []).append(bench)
 
+    readers = {g: rows for g, rows in groups.items() if not g.startswith("stores")}
+    stores = {g: rows for g, rows in groups.items() if g.startswith("stores")}
+
     parts = [
         INTRO.format(save=save.name),
         environment(data),
         WORKLOADS,
         "## Results\n",
-        *(group_table(group, rows) for group, rows in sorted(groups.items())),
+        *(group_table(group, rows) for group, rows in sorted(readers.items())),
+    ]
+    if stores:
+        parts += [
+            STORES_INTRO,
+            *(group_table(group, rows) for group, rows in sorted(stores.items())),
+        ]
+    parts += [
         "## Where oxyz is not fastest\n",
         not_led_by_oxyz(groups),
     ]
