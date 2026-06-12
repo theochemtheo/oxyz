@@ -45,8 +45,10 @@ Repository = "https://github.com/theochemtheo/oxyz"
 Issues = "https://github.com/theochemtheo/oxyz/issues"
 
 [project.optional-dependencies]
-# <4: ASEv4 may change the data model; new majors are opted into deliberately.
-ase = ["ase>=3.28,<4"]
+# >=3.23: the first ase with set_calc_and_arrays and numpy 2 support; the
+# oxyz.ase golden tests pass from 3.23 up. <4: ASEv4 may change the data
+# model; new majors are opted into deliberately.
+ase = ["ase>=3.23,<4"]
 
 [dependency-groups]
 # Benchmark dependencies live in benchmarks/run.py (PEP 723), not here:

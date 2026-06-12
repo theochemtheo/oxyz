@@ -468,7 +468,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ase", marker = "extra == 'ase'", specifier = ">=3.28,<4" },
+    { name = "ase", marker = "extra == 'ase'", specifier = ">=3.23,<4" },
     { name = "numpy", specifier = ">=2" },
 ]
 provides-extras = ["ase"]

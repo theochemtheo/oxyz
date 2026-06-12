@@ -1,566 +1,283 @@
-# `oxyz`
+# oxyz
 
-**Schema-aware streaming for atomistic machine-learning datasets.**
+[![test](https://github.com/theochemtheo/oxyz/actions/workflows/test.yml/badge.svg)](https://github.com/theochemtheo/oxyz/actions/workflows/test.yml)
+[![PyPI](https://img.shields.io/pypi/v/oxyz)](https://pypi.org/project/oxyz/)
 
-`oxyz` is an experimental Python/Rust project for reading, validating, and streaming large atomistic datasets into machine-learning workflows.
-
-The initial focus is on the [`extxyz`](https://github.com/libAtoms/extxyz) format, with an emphasis on fast ingestion, low memory use, schema inference, useful diagnostics, and optional interoperability with `ase.Atoms`.
-
-> Project status: planning / early prototype.
-
----
-
-## Motivation
-
-Atomistic machine-learning datasets are often stored in flexible text-based formats such as `extxyz`. These files are convenient, human-readable, and widely supported across the materials modelling ecosystem.
-
-However, flexibility can make large datasets difficult to use reliably in production-style ML pipelines.
-
-Common issues include:
-
-* inconsistent fields across frames;
-* missing properties such as `forces`, `energy`, `stress`, `Lattice`, or `pbc`;
-* unexpected dtype or shape changes;
-* malformed metadata in comment lines;
-* expensive full-file reads when only a few fields are needed;
-* high memory use when working with large trajectory files;
-* overhead from constructing Python objects for every frame;
-* difficulty validating a dataset before using it for training.
-
-`oxyz` aims to make these problems easier to detect and manage.
-
-The project treats atomistic dataset ingestion as a data-engineering problem, not only a file-parsing problem.
-
----
-
-## Project vision
-
-The long-term goal is to provide a fast, reliable ingestion layer for atomistic ML data.
-
-A typical workflow might look like:
+Fast, schema-aware [extxyz](https://github.com/libAtoms/extxyz) reading for
+atomistic machine learning. A Rust parser behind a small, typed Python API:
+numpy arrays out, `ase.Atoms` on request, and a one-pass schema report that
+tells you whether a training file is what you think it is.
 
 ```python
 import oxyz
 
+frames = oxyz.read_frames("train.extxyz")        # all cores, one pass
+frames[0].columns["pos"]                          # float64 ndarray, shape (n_atoms, 3)
+frames[0].metadata["energy"]                      # float
+
 schema = oxyz.infer_schema("train.extxyz")
-schema.report()
-
-for batch in oxyz.iter_batches(
-    "train.extxyz",
-    schema=schema,
-    fields=["numbers", "positions", "forces", "energy", "cell", "pbc"],
-):
-    train(batch)
+schema.is_consistent                              # False — now you know before training
+print(schema)                                     # which keys drift, and in how many frames
 ```
 
-The core idea is:
+`oxyz` exists for the gap between "extxyz is the lingua franca of atomistic
+ML datasets" and "every Python extxyz reader is slow enough to matter".
+Reading a MACE-style training file into numpy is 12–25× faster than
+`ase.io.read` on the benchmarks below; reading it into `ase.Atoms` objects
+is 2.4–3.5× faster. The same single pass can also tell you the dataset's
+schema — which columns and metadata keys appear, with what types and
+shapes, and how consistently — which is the part of dataset ingestion that
+usually goes unchecked.
 
-> Validate the structure of the data once, then stream only what is needed into downstream ML code.
+Pre-1.0: minor versions may change the API.
 
-`oxyz` should support ASE-style workflows where convenient, but should not require every high-throughput workflow to materialize data as `ase.Atoms` objects.
+## Install
 
----
+```sh
+pip install oxyz            # numpy is the only dependency
+pip install "oxyz[ase]"     # adds ASE conversion (ase >=3.23,<4)
+```
 
-## Initial scope
+Wheels cover CPython ≥3.11 on Linux (x86_64, aarch64), macOS (arm64,
+x86_64), and Windows (x64).
 
-The first version of `oxyz` will focus on `extxyz` ingestion.
+## In place of ASE
 
-Initial goals:
-
-* read standard-compliant `extxyz` files;
-* provide a Rust-backed parser with Python bindings;
-* support streaming reads without loading the full file into memory;
-* infer the structure of a dataset as it is read;
-* detect missing, inconsistent, or unexpected fields;
-* support selective reading of requested fields;
-* expose data in Python-friendly array-oriented forms;
-* provide optional conversion to `ase.Atoms`;
-* benchmark against existing `extxyz` readers;
-* keep the public API small and understandable;
-* provide clear diagnostics when files are malformed or inconsistent.
-
----
-
-## What `oxyz` should be good at
-
-### Schema inference
-
-`oxyz` should be able to inspect a dataset and answer questions such as:
-
-* What per-atom properties are present?
-* What per-frame metadata is present?
-* Are fields consistent across frames?
-* Which fields are required?
-* Which fields are optional?
-* Which frames are malformed?
-* Which fields have inconsistent dtype or shape?
-* Can this file be safely used for training?
-
-Example:
+`oxyz.ase.read` and `oxyz.ase.iread` are drop-ins for `ase.io.read` /
+`ase.io.iread` on extxyz files, including ASE's full index grammar
+(`-1`, `"::2"`, slices):
 
 ```python
-schema = oxyz.infer_schema("dataset.extxyz")
-schema.report()
-schema.to_json("schema.json")
+import oxyz.ase
+
+atoms = oxyz.ase.read("train.extxyz")             # last frame, like ase.io.read
+images = oxyz.ase.read("train.extxyz", ":")       # every frame
+for atoms in oxyz.ase.iread("train.extxyz", "::10"):
+    ...
 ```
 
----
+The conversion reuses `ase.io.extxyz`'s own routing tables and
+`set_calc_and_arrays`, so key handling (which results go to the
+calculator, which to `arrays`) agrees with ASE by construction; golden
+tests hold the two readers equal on the test corpus. Reads are lazy:
+`read(path, 3)` parses four frames and stops, and negative or reverse
+selections resolve through a structural scan and seek rather than a full
+parse — `read(path)` on a long trajectory does not parse the whole file
+to return the last frame.
 
-### Dataset validation
+Two deliberate divergences, both stricter or more accepting than ASE
+rather than silently different: 6-component (Voigt) `stress` metadata is
+accepted and routed to the calculator where ASE's comment parser rejects
+the file, and species that are not chemical symbols raise an error rather
+than producing a nonsense `Atoms` object.
 
-Before training a model, it should be possible to validate the dataset against an inferred or user-provided schema.
+## What you get beyond ASE
 
-Example:
+**Array-native frames.** A `Frame` is a frozen dataclass holding the file's
+columns as numpy arrays and its comment-line metadata as typed Python
+values — no per-atom Python objects, no calculator indirection. Names and
+values are kept exactly as written: no `force`/`forces` aliasing, no
+reordering, `Lattice` stays the flat 9-value array from the file.
+Normalisation is the ASE layer's job (or yours).
+
+**Batches in the PyG layout.** `Batch` concatenates frames atom-major,
+CSR-style: every per-atom column is one dense array of `total_atoms` rows,
+frame `i` occupying rows `offsets[i]:offsets[i+1]`; per-frame metadata
+stacks into arrays of `n_frames` rows. `batch.ptr` and `batch.batch` carry
+their PyTorch Geometric names, and `torch.from_numpy(batch.columns["pos"])`
+is zero-copy, so the path into a training loop is short.
 
 ```python
-schema = oxyz.Schema.from_json("schema.json")
-
-report = oxyz.validate(
-    "dataset.extxyz",
-    schema=schema,
-    strictness="warn",
-)
-
-report.print_summary()
+for batch in oxyz.iter_batches("bulk.extxyz", atoms_per_batch=4096,
+                               shuffle=True, seed=0):
+    batch.columns["forces"]        # (total_atoms, 3)
+    batch.metadata["energy"]       # (n_frames,)
+    batch.frame_indices            # which file frames these are — provenance
 ```
 
-Validation should provide useful, actionable diagnostics rather than opaque parser errors.
+`iter_batches` packs by frame count or by a total-atom budget, in file
+order or seeded-shuffled. Batch composition depends only on the file, the
+knobs, and the seed — never on `threads`.
 
-For example:
+**Schema inference.** `infer_schema` folds the whole file into a `Schema`:
+per-column and per-metadata-key observed variants (kind, width or shape,
+and how many frames used each), presence counts, a strict `is_consistent`,
+and per-entry `unified` — the single type an Int/Real drift can be
+promoted to, or `None` when the conflict is genuine. The classic failure
+it catches: a generator script that writes isolated-atom frames with
+integer forces and no `Lattice` into an otherwise uniform bulk dataset.
 
 ```text
-Validated 120000 frames.
+>>> print(oxyz.infer_schema("train.extxyz"))
+1000 frames, 63841 atoms (min 1, max 96)
 
-Warnings:
-- frame 8421: missing metadata key "energy"
-- frame 10592: property "forces" has shape [2], expected [3]
-- frame 88110: unexpected metadata key "config_type"
+per-atom columns:
+  species: S:1 (1000/1000 frames)
+  pos: R:3 (1000/1000 frames)
+  forces: I:3 (5/1000 frames), R:3 (995/1000 frames) (unifies to R:3)
+
+metadata:
+  energy: Real (1000/1000 frames)
+  Lattice: RealArray[9] (995/1000 frames)
 ```
 
----
+**Structural scanning.** `oxyz.scan` reads only the frame skeleton — byte
+offsets and declared atom counts — without parsing any contents. It is the
+cheap first question to ask of an unfamiliar file (5 ms for a 22 MiB file
+below) and the machinery behind random access, shuffled batching, and
+lazy negative indexing.
 
-### Streaming reads
+**Parallelism as a knob, not a mode.** Readers take `threads`: `None`
+parses on every core, `1` is the exact serial streaming path. Results and
+errors are identical either way — the parallel path is held to the serial
+path's behaviour by parity tests, not by intention.
 
-Large datasets should not require full-file reads.
+## Performance
 
-The default high-throughput path should support iterating through frames or batches while keeping memory use low.
+Timings below are means over repeated rounds — each case gets a
+one-second budget, at least five rounds, median 24 in this run — on an
+Apple M3 Pro under CPython 3.13. Full tables with standard deviations,
+the environment, and the fixture definitions are in
+[benchmarks/RESULTS.md](benchmarks/RESULTS.md);
+[benchmarks/run.py](benchmarks/run.py) reproduces them.
 
-Example:
+Whole-file reads to numpy (`oxyz.read_frames` vs [cextxyz], the libAtoms C
+parser, via its `read_dicts`):
+
+| workload | oxyz | oxyz `threads=1` | cextxyz |
+| --- | ---: | ---: | ---: |
+| 2 000 small frames | **9.7 ms** | 20.1 ms | 219 ms |
+| 4 × 100 000 atoms | **37.5 ms** | 72.5 ms | 91.6 ms |
+| 2 000 frames, heavy metadata | **13.8 ms** | 28.8 ms | 363 ms |
+| MACE-style mixed file | **7.0 ms** | 14.8 ms | 126 ms |
+
+Whole-file reads to `ase.Atoms` (`oxyz.ase.read` vs the [ase-extxyz] plugin
+wrapping the same C parser, vs `ase.io.read`):
+
+| workload | oxyz.ase | ase-extxyz | ase |
+| --- | ---: | ---: | ---: |
+| 2 000 small frames | **86 ms** | 106 ms | 206 ms |
+| 4 × 100 000 atoms | 174 ms | **89 ms** | 442 ms |
+| 2 000 frames, heavy metadata | **100 ms** | 246 ms | 349 ms |
+| MACE-style mixed file | **54 ms** | 70 ms | 147 ms |
+
+Losses included: the C parser's Atoms construction wins on dense
+100k-atom frames, where conversion rather than parsing dominates and
+oxyz pays for its untouched-raw-data model. On selective reads (every
+20th frame of the small-frames file) `oxyz.read_batch` takes 1.7 ms
+against 24 ms for ASE; on peak memory, streaming `iter_frames` through
+the small-frames file grows RSS by 12 MiB where `ase.io.iread` grows it
+by 56 MiB ([benchmarks/MEMORY.md](benchmarks/MEMORY.md)). Against
+binary stores (LMDB, SQLite, mmap-backed formats) a text parser is
+predictably slower; See [benchmarks/RESULTS.md](benchmarks/RESULTS.md) for comparisons.
+
+[cextxyz]: https://github.com/libAtoms/extxyz
+[ase-extxyz]: https://pypi.org/project/ase-extxyz/
+
+## API
 
 ```python
-for batch in oxyz.iter_batches(
-    "dataset.extxyz",
-    fields=["numbers", "positions", "forces", "energy"],
-    batch_size=512,
-):
-    ...
+oxyz.read_frames(path, *, threads=None)      -> list[Frame]
+oxyz.iter_frames(path)                       -> Iterator[Frame]   # constant memory
+oxyz.read_first_frame(path)                  -> Frame
+oxyz.read_batch(path, indices, *, threads=None) -> Batch
+oxyz.iter_batches(path, *, frames_per_batch=None, atoms_per_batch=None,
+                  shuffle=False, seed=None, threads=None) -> Iterator[Batch]
+oxyz.scan(path)                              -> FrameIndex
+oxyz.infer_schema(path)                      -> Schema
+
+oxyz.ase.read(path, index=-1)                -> Atoms | list[Atoms]
+oxyz.ase.iread(path, index=":")              -> Iterator[Atoms]
+oxyz.ase.to_atoms(frame)                     -> Atoms              # also Frame.to_ase()
 ```
 
----
-
-### Selective reads
-
-Many ML workflows only need a subset of the available data.
-
-`oxyz` should make it possible to request only the fields needed for a particular task.
-
-Example:
-
-```python
-energies = oxyz.read_arrays(
-    "dataset.extxyz",
-    fields=["energy"],
-)
-```
-
-Where possible, the reader should avoid unnecessary parsing, allocation, and conversion work.
-
----
-
-### ASE interoperability
-
-ASE compatibility is important for inspection, debugging, and integration with existing workflows.
-
-Example:
-
-```python
-atoms = oxyz.read_ase("dataset.extxyz", index=0)
-```
-
-```python
-for atoms in oxyz.iread_ase("dataset.extxyz"):
-    ...
-```
-
-However, ASE objects should not necessarily be the internal or default representation for high-throughput ingestion.
-
-The guiding principle is:
-
-> ASE-compatible when useful, array-native when performance matters.
-
----
-
-## Possible strictness modes
-
-`oxyz` should provide explicit control over how strictly files are interpreted.
-
-Possible modes:
-
-* `strict`: fail on malformed input, missing required fields, or schema drift;
-* `warn`: continue where safe, while collecting diagnostics;
-* `coerce`: allow controlled dtype promotion or missing-value handling.
-
-The exact behavior of these modes should be decided before implementation.
-
-Important questions include:
-
-* Should `warn` be the default for exploration?
-* Should `strict` be the default for training?
-* What coercions are safe?
-* Should missing values be represented, skipped, or treated as errors?
-* Should unexpected fields be ignored, preserved, or reported?
-
----
-
-## Benchmarking goals
-
-`oxyz` should be benchmarked against existing readers on realistic datasets.
-
-Benchmarks should measure more than raw parser speed.
-
-Useful metrics include:
-
-* wall-clock read time;
-* peak memory usage;
-* throughput in frames per second;
-* throughput in atoms per second;
-* cost of schema inference;
-* cost of schema validation;
-* cost of selective reads;
-* cost of ASE object construction;
-* performance on many small frames;
-* performance on large individual frames;
-* performance on files with extensive metadata.
-
-Initial comparisons should include:
-
-* ASE's default `extxyz` reader;
-* `cextxyz` / `ase-extxyz`;
-* `oxyz` array-oriented reads;
-* `oxyz` ASE-compatible reads.
-
-The aim is not only to be faster in every case, but to clearly identify the workloads where `oxyz` provides the most value.
-
----
-
-## Testing philosophy
-
-Correctness matters more than benchmark wins.
-
-The test suite should give confidence that `oxyz` handles both well-formed and malformed data predictably.
-
-Important test categories include:
-
-* parser unit tests;
-* schema inference tests;
-* validation tests;
-* golden-file tests;
-* compatibility tests against existing readers;
-* malformed-file tests;
-* missing-field tests;
-* schema-drift tests;
-* dtype and shape consistency tests;
-* large-file streaming tests;
-* property-based tests;
-* fuzzing for parser robustness.
-
-The aim is high confidence, not a symbolic coverage percentage.
-
----
-
-## Non-goals
-
-`oxyz` is not intended to replace ASE.
-
-ASE is a mature, general-purpose atomistic simulation environment. `oxyz` should complement it by focusing on fast, validated, ML-oriented dataset ingestion.
-
-The project does not initially aim to:
-
-* implement all ASE I/O functionality;
-* support every historical `xyz` variant;
-* become a simulation environment;
-* silently repair malformed datasets;
-* hide schema inconsistencies from the user;
-* provide a large framework before the core reader is reliable.
-
----
-
-## Design decisions to make before starting
-
-Before implementation begins, several design choices should be settled or at least made explicit.
-
-### 1. What is the minimum useful first release?
-
-Possible first-release targets:
-
-* a fast `extxyz` reader only;
-* a schema inference tool;
-* a validator and diagnostic CLI;
-* a Python library for batched array reads;
-* an ASE-compatible reader;
-* some combination of the above.
-
-A good first release should solve a real workflow problem without requiring the whole long-term vision to be complete.
-
----
-
-### 2. What subset of `extxyz` should be supported first?
-
-The full format is flexible. Supporting everything immediately may slow down development.
-
-A practical first subset might include:
-
-* atom count line;
-* comment-line metadata;
-* `Properties`;
-* `Lattice`;
-* `pbc`;
-* species or atomic numbers;
-* positions;
-* forces;
-* energy;
-* stress.
-
-Open questions:
-
-* Which fields are required for the first work use case?
-* How much non-standard syntax should be accepted?
-* Should unsupported-but-valid files fail, warn, or fall back to another reader?
-* Should the parser aim for exact compatibility with existing readers from the beginning?
-
----
-
-### 3. What is the core data model?
-
-The project needs a clear internal representation for parsed frames and batches.
-
-Questions to decide:
-
-* Is the primary representation frame-oriented or column-oriented?
-* Are variable-size structures represented as ragged arrays, lists of arrays, offsets, or another structure?
-* How are per-frame fields represented alongside per-atom fields?
-* How are missing values represented?
-* Are strings preserved as strings, encoded categorically, or converted when possible?
-* How much does the internal model resemble `ase.Atoms`?
-* How much does it resemble ML batch formats?
-
-This decision will strongly affect performance, ergonomics, and future ML integration.
-
----
-
-### 4. What should schema inference produce?
-
-The schema should be useful enough to drive validation and faster reads, but not so complex that it becomes a separate project.
-
-Questions to decide:
-
-* What information belongs in a schema?
-* Should schemas describe one file or a family of files?
-* Should schema inference scan the whole file or support sampling?
-* Should schemas include statistics, such as field frequency or atom-count ranges?
-* Should schemas be serializable to JSON?
-* Should schemas be stable enough to become part of the public API?
-* How should schema versions be handled?
-
----
-
-### 5. How strict should the parser be?
-
-Real datasets often contain quirks. A useful tool needs to balance correctness and practicality.
-
-Questions to decide:
-
-* What counts as malformed input?
-* What counts as schema drift?
-* Which errors are fatal?
-* Which errors can be warnings?
-* Should the parser preserve unknown fields?
-* Should dtype promotion be allowed?
-* Should missing fields be allowed?
-* Should behavior differ between exploration and training modes?
-
----
-
-### 6. What should the Python API feel like?
-
-The Python API should be small, predictable, and easy to use from notebooks and pipelines.
-
-Questions to decide:
-
-* Should the main entry point be `read`, `scan`, `infer_schema`, `iter_frames`, or `iter_batches`?
-* Should functions return plain dictionaries, dataclasses, custom classes, NumPy arrays, or something else?
-* Should ASE support live under a separate namespace?
-* Should the API mirror ASE conventions or deliberately differ?
-* How should errors and warnings be exposed?
-* Should there be a CLI as well as a Python API?
-
----
-
-### 7. What role should Rust play?
-
-Rust should be used where it provides clear value: parsing, validation, indexing, memory safety, and parallelism.
-
-Questions to decide:
-
-* How much logic belongs in Rust versus Python?
-* Should schema inference happen in Rust, Python, or both?
-* Should the Rust core be usable independently of Python?
-* How should Python bindings expose arrays efficiently?
-* How much unsafe code, if any, is acceptable?
-* Which dependencies are justified?
-
----
-
-### 8. Should random access be part of the first version?
-
-Frame indexing could be highly valuable for large datasets, but it may not be necessary for the first prototype.
-
-Questions to decide:
-
-* Should `oxyz` build byte-offset indices?
-* Should indices be stored on disk?
-* Should indexed reads be opt-in?
-* Should random access come before or after streaming reads?
-* Is parallel parsing worth implementing before the core parser is mature?
-
----
-
-### 9. What is the initial ML integration target?
-
-The long-term aim is ML-ready ingestion, but the first target should be chosen carefully.
-
-Possible targets:
-
-* NumPy arrays;
-* PyTorch tensors;
-* PyTorch Geometric-style graph data;
-* TorchSim-compatible structures;
-* JAX arrays;
-* Arrow;
-* Zarr.
-
-A sensible first target may be NumPy, since it is widely supported and avoids coupling the project too early to one ML framework.
-
----
-
-### 10. What is the compatibility policy?
-
-The project should define what compatibility means.
-
-Questions to decide:
-
-* Is compatibility measured against the formal `extxyz` specification?
-* Against ASE behavior?
-* Against `cextxyz` behavior?
-* Against real-world datasets?
-* What happens when these disagree?
-* Should compatibility tests include known edge cases from existing tools?
-
----
-
-## Suggested early milestones
-
-### Milestone 0: Real-file spike
-
-Parse the smallest useful subset of `extxyz` needed for a real work dataset.
-
-The aim is to answer:
-
-* Can Rust parse the relevant files correctly?
-* Can Python receive useful arrays?
-* Is the performance promising?
-* What parts of the format are most annoying in practice?
-
----
-
-### Milestone 1: Schema inference prototype
-
-Infer and report the structure of a dataset.
-
-The aim is to answer:
-
-* Which fields exist?
-* Are they consistent?
-* What breaks on real data?
-* Is the schema representation useful?
-
----
-
-### Milestone 2: Streaming reader
-
-Implement low-memory iteration over frames or batches.
-
-The aim is to answer:
-
-* Can large files be processed without high memory usage?
-* What batch representation is most ergonomic?
-* Which selective reads matter most?
-
----
-
-### Milestone 3: Validation and diagnostics
-
-Turn schema inference into actionable validation.
-
-The aim is to answer:
-
-* Can users understand what is wrong with a dataset?
-* Are errors precise enough to debug bad files?
-* Which strictness modes are actually useful?
-
----
-
-### Milestone 4: ASE compatibility
-
-Add conversion to `ase.Atoms` for interoperability.
-
-The aim is to answer:
-
-* Does `oxyz` agree with ASE on representative files?
-* How much performance is lost when constructing ASE objects?
-* Which ASE conventions should be preserved?
-
----
-
-### Milestone 5: Benchmarks and public release
-
-Benchmark realistic workloads and prepare the first public release.
-
-The aim is to answer:
-
-* Where is `oxyz` faster?
-* Where is it more memory efficient?
-* Where is it more informative?
-* What should be advertised as the core value proposition?
-
----
-
-## Project philosophy
-
-`oxyz` should make atomistic datasets easier to trust.
-
-The ideal user experience is:
-
-```python
-schema = oxyz.infer_schema("dataset.extxyz")
-schema.report()
-
-for batch in oxyz.iter_batches("dataset.extxyz", schema=schema):
-    train(batch)
-```
-
-The easy path should be fast.
-The strict path should be safe.
-The broken path should be obvious.
-
-`oxyz` should grow from a practical solution to a real ETL problem into a reusable open-source tool for materials machine learning.
+`Frame`, `Batch`, `FrameIndex`, `Schema` and its parts (`ColumnSchema`,
+`MetadataSchema`, the variant records, the `Kind` enum) are frozen
+dataclasses; everything ships with type stubs.
+
+### The fine print
+
+Contracts worth knowing before relying on them:
+
+- **Mixed-schema files read per-frame, but do not batch.** `read_frames` and
+  `iter_frames` handle files whose frames disagree (the MACE
+  isolated-atom-plus-bulk pattern) without complaint — each `Frame` stands
+  alone. `Batch` assembly currently requires every gathered frame to share
+  a schema; `infer_schema` tells you in advance whether a file qualifies.
+  A missing-key policy (NaN-fill plus presence mask) is planned.
+- **Duplicate metadata keys collapse.** `Frame.metadata` is a dict; if a
+  comment line repeats a key, the last occurrence wins.
+- **`Batch.batch` is computed per access** (`np.repeat` over the atom
+  counts); hoist it out of a hot loop.
+- **Errors carry frame context.** Malformed input raises `ValueError`
+  with the frame index and the offending line or value in the message;
+  out-of-range frame requests raise `IndexError`; I/O problems raise
+  `OSError`. After a parse error, streaming iterators stop rather than
+  guess at a resynchronisation point.
+- **Partial reads only promise the prefix.** `read_batch` and indexed
+  reads inspect the file no further than the last requested frame; damage
+  past that point goes unreported. Whole-file validation is
+  `infer_schema`'s job.
+
+### Supported extxyz
+
+The parser accepts and preserves; it does not interpret. Accepted: the
+count line; a comment line of `key=value` pairs with bare or
+double-quoted values, `[1, 2.0, 3]`-style or quoted whitespace-separated
+arrays, `T`/`TRUE`/`True`/`true` booleans (a bare `1` stays an integer in
+metadata, but is a boolean in an `L`-kind atom column, following the
+spec); a `Properties` descriptor with `S`/`R`/`I`/`L` columns of any name
+and width; any species strings. Metadata values are typed by shape, and
+anything that fits no narrower type falls back to a string rather than
+rejecting the file. Not supported: writing (reading only, for now),
+compressed input, comment lines that are not key=value metadata, and
+single-quoted values.
+
+## How it is put together
+
+Three layers, with the boundary chosen so that each is testable on its
+own:
+
+- **`crates/oxyz-core`** — the Rust core: parser, the columnar lossless
+  `Frame` model, the structural scanner and byte-offset index, batch
+  assembly, and the schema fold. No Python anywhere in the crate; it
+  builds and tests standalone. Errors are structured (`thiserror`) and
+  wrapped with the frame they occurred in.
+- **`crates/oxyz-py`** — the PyO3 binding, a cdylib named `oxyz._rust`.
+  Parsing runs with the interpreter detached (the GIL released), so
+  threads parse in parallel; conversion to numpy happens once at the
+  boundary, column buffers passing across as whole arrays rather than
+  element-wise. Built as a single abi3 wheel per platform covering
+  CPython ≥3.11.
+- **`src/oxyz`** — thin typed Python: frozen dataclasses over the
+  binding's dicts, batch planning (the pure-Python part of
+  `iter_batches`), and the index grammar. All ASE knowledge lives in
+  `oxyz.ase`, which imports ASE lazily; the core never depends on it.
+
+Testing follows the shape of the promises: Rust unit and corpus tests for
+the parser; parity tests holding parallel reads byte-identical to serial,
+including which error wins when several frames are bad; golden tests
+holding `oxyz.ase.read` equal to `ase.io.read` frame-by-frame; and
+malformed-file tests asserting the frame index in the error message, not
+just that an error occurred.
+
+## Roadmap
+
+In rough order of intent, shaped by what removes the most reasons to fall
+back to other tools:
+
+- **Write support** — lossless `Frame` round-tripping, removing the most
+  common reason to keep ASE in a read → filter → write workflow.
+- **Field selection and a missing-key batching policy** — request only
+  the columns and metadata you need; NaN-fill or error on absent keys, so
+  mixed-schema training files batch directly.
+- **Normalisation accessors** — `positions`, `cell`, `numbers`, `pbc`,
+  `forces`, `energy` as conventional views over the untouched raw data,
+  for training loops that want neither ASE nor the raw spelling.
+- **Additional inputs and outputs** — compressed input (`.xyz.gz`,
+  `.xz`), `torch.Tensor` output, and a public lazy dataset object
+  (`len`, indexing, slicing over an open file).
+
+## Licence
+
+MIT or Apache-2.0, at your option.
