@@ -5,10 +5,11 @@ use numpy::{Element, IntoPyArray, PyArray1};
 use pyo3::{
     exceptions::{PyIndexError, PyOSError, PyValueError},
     prelude::*,
-    types::{PyDict, PyList},
+    types::{PyDict, PyList, PyTuple},
 };
 
-use oxyz_core::{Batch, Column, ColumnData, ExtxyzError, Frame, Value};
+use oxyz_core::schema::{ColumnSchema, MetadataSchema, Schema, ValueType};
+use oxyz_core::{Batch, Column, ColumnData, ColumnKind, ExtxyzError, Frame, Value};
 
 /// Streaming iterator: one frame parsed and converted per `__next__`.
 ///
@@ -206,14 +207,119 @@ fn read_batch<'py>(
     batch_to_pydict(py, batch)
 }
 
-/// Infer the file's schema and return the human-readable report.
-///
-/// Provisional surface: text only, until the schema shape settles enough to
-/// commit to structured Python access.
+/// Infer the file's schema as one nested dict — counts, per-column and
+/// per-key variant lists with unification verdicts, consistency, and the
+/// rendered report — for the Python `Schema` dataclasses to wrap.
 #[pyfunction]
-fn infer_schema(path: PathBuf) -> PyResult<String> {
-    let schema = oxyz_core::infer_schema(path).map_err(extxyz_error_to_py)?;
-    Ok(schema.to_string())
+fn infer_schema<'py>(py: Python<'py>, path: PathBuf) -> PyResult<Bound<'py, PyDict>> {
+    let schema = py
+        .detach(|| oxyz_core::infer_schema(path))
+        .map_err(extxyz_error_to_py)?;
+    schema_to_pydict(py, &schema)
+}
+
+fn kind_name(kind: ColumnKind) -> &'static str {
+    match kind {
+        ColumnKind::Real => "Real",
+        ColumnKind::Int => "Int",
+        ColumnKind::Bool => "Bool",
+        ColumnKind::Str => "Str",
+    }
+}
+
+/// Split a metadata value type into the kind name and a numpy-style shape:
+/// `()` for scalars, `(n,)` for arrays.
+fn value_type_parts(value_type: ValueType) -> (&'static str, Vec<usize>) {
+    match value_type {
+        ValueType::Real => ("Real", vec![]),
+        ValueType::Int => ("Int", vec![]),
+        ValueType::Bool => ("Bool", vec![]),
+        ValueType::Str => ("Str", vec![]),
+        ValueType::RealArray(n) => ("Real", vec![n]),
+        ValueType::IntArray(n) => ("Int", vec![n]),
+        ValueType::BoolArray(n) => ("Bool", vec![n]),
+        ValueType::StrArray(n) => ("Str", vec![n]),
+    }
+}
+
+fn schema_to_pydict<'py>(py: Python<'py>, schema: &Schema) -> PyResult<Bound<'py, PyDict>> {
+    let data = PyDict::new(py);
+    data.set_item("n_frames", schema.n_frames)?;
+    data.set_item("total_atoms", schema.total_atoms)?;
+    data.set_item("min_atoms", schema.min_atoms)?;
+    data.set_item("max_atoms", schema.max_atoms)?;
+    data.set_item("is_consistent", schema.is_consistent())?;
+    data.set_item("report", schema.to_string())?;
+
+    let columns = PyList::empty(py);
+    for column in &schema.columns {
+        columns.append(column_schema_to_pydict(py, column)?)?;
+    }
+    data.set_item("columns", columns)?;
+
+    let metadata = PyList::empty(py);
+    for entry in &schema.metadata {
+        metadata.append(metadata_schema_to_pydict(py, entry)?)?;
+    }
+    data.set_item("metadata", metadata)?;
+
+    Ok(data)
+}
+
+fn column_schema_to_pydict<'py>(
+    py: Python<'py>,
+    column: &ColumnSchema,
+) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new(py);
+    dict.set_item("name", &column.name)?;
+    dict.set_item("frames_present", column.frames_present)?;
+
+    let variants = PyList::empty(py);
+    for variant in &column.variants {
+        let entry = PyDict::new(py);
+        entry.set_item("kind", kind_name(variant.kind))?;
+        entry.set_item("width", variant.width)?;
+        entry.set_item("frames", variant.frames)?;
+        variants.append(entry)?;
+    }
+    dict.set_item("variants", variants)?;
+
+    let unified = column
+        .unified()
+        .map(|(kind, width)| (kind_name(kind), width));
+    dict.set_item("unified", unified)?;
+
+    Ok(dict)
+}
+
+fn metadata_schema_to_pydict<'py>(
+    py: Python<'py>,
+    entry: &MetadataSchema,
+) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new(py);
+    dict.set_item("key", &entry.key)?;
+    dict.set_item("frames_present", entry.frames_present)?;
+
+    let variants = PyList::empty(py);
+    for &(value_type, frames) in &entry.variants {
+        let (kind, shape) = value_type_parts(value_type);
+        let variant = PyDict::new(py);
+        variant.set_item("kind", kind)?;
+        variant.set_item("shape", PyTuple::new(py, shape)?)?;
+        variant.set_item("frames", frames)?;
+        variants.append(variant)?;
+    }
+    dict.set_item("variants", variants)?;
+
+    match entry.unified() {
+        Some(value_type) => {
+            let (kind, shape) = value_type_parts(value_type);
+            dict.set_item("unified", (kind, PyTuple::new(py, shape)?))?;
+        }
+        None => dict.set_item("unified", py.None())?,
+    }
+
+    Ok(dict)
 }
 
 /// Convert one frame to `{"n_atoms": int, "columns": {...}, "metadata": {...}}`.

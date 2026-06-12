@@ -122,7 +122,7 @@ def test_scan_rejects_structural_garbage(tmp_path: Path) -> None:
 
 
 def test_infer_schema_report() -> None:
-    report = oxyz.infer_schema(DATA_DIR / "varying_atom_counts.xyz")
+    report = oxyz.infer_schema(DATA_DIR / "varying_atom_counts.xyz").report()
 
     assert "3 frames, 6 atoms (min 1, max 3)" in report
     assert "pos: R:3 (3/3 frames)" in report

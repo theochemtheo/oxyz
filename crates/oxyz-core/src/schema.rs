@@ -77,12 +77,53 @@ pub struct ColumnSchema {
     pub frames_present: usize,
 }
 
+impl ColumnSchema {
+    /// The single `(kind, width)` every frame's column can be read as: the
+    /// sole observed variant, or the Real that an Int/Real pair of equal
+    /// width promotes to. `None` is a genuine conflict.
+    pub fn unified(&self) -> Option<(ColumnKind, usize)> {
+        match self.variants.as_slice() {
+            [only] => Some((only.kind, only.width)),
+            [a, b] if a.width == b.width => match (a.kind, b.kind) {
+                (ColumnKind::Int, ColumnKind::Real) | (ColumnKind::Real, ColumnKind::Int) => {
+                    Some((ColumnKind::Real, a.width))
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct MetadataSchema {
     pub key: String,
     /// Observed `(type, frame count)` variants in first-seen order.
     pub variants: Vec<(ValueType, usize)>,
     pub frames_present: usize,
+}
+
+impl MetadataSchema {
+    /// The single type every frame's value can be read as; same promotion
+    /// rule as [`ColumnSchema::unified`].
+    pub fn unified(&self) -> Option<ValueType> {
+        match self.variants.as_slice() {
+            [(only, _)] => Some(*only),
+            [(a, _), (b, _)] => match (a, b) {
+                (ValueType::Int, ValueType::Real) | (ValueType::Real, ValueType::Int) => {
+                    Some(ValueType::Real)
+                }
+                (ValueType::IntArray(n), ValueType::RealArray(m))
+                | (ValueType::RealArray(m), ValueType::IntArray(n))
+                    if n == m =>
+                {
+                    Some(ValueType::RealArray(*m))
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
 }
 
 /// Accumulated structure of a dataset; build with repeated [`Schema::observe`].
@@ -175,37 +216,22 @@ impl Schema {
             }
         }
     }
-}
 
-/// Int/Real pairs of equal shape unify to Real; anything else is a genuine
-/// conflict.
-fn unified_column(variants: &[ColumnVariant]) -> Option<(ColumnKind, usize)> {
-    match variants {
-        [a, b] if a.width == b.width => match (a.kind, b.kind) {
-            (ColumnKind::Int, ColumnKind::Real) | (ColumnKind::Real, ColumnKind::Int) => {
-                Some((ColumnKind::Real, a.width))
-            }
-            _ => None,
-        },
-        _ => None,
-    }
-}
+    /// Strict consistency: every column and metadata key has exactly one
+    /// observed variant and appears in every frame. Int/Real promotion does
+    /// not count — a unifiable file is still inconsistent. Vacuously true
+    /// for an empty file.
+    pub fn is_consistent(&self) -> bool {
+        let single_and_everywhere =
+            |variants: usize, present: usize| variants == 1 && present == self.n_frames;
 
-fn unified_value(variants: &[(ValueType, usize)]) -> Option<ValueType> {
-    match variants {
-        [(a, _), (b, _)] => match (a, b) {
-            (ValueType::Int, ValueType::Real) | (ValueType::Real, ValueType::Int) => {
-                Some(ValueType::Real)
-            }
-            (ValueType::IntArray(n), ValueType::RealArray(m))
-            | (ValueType::RealArray(m), ValueType::IntArray(n))
-                if n == m =>
-            {
-                Some(ValueType::RealArray(*m))
-            }
-            _ => None,
-        },
-        _ => None,
+        self.columns
+            .iter()
+            .all(|column| single_and_everywhere(column.variants.len(), column.frames_present))
+            && self
+                .metadata
+                .iter()
+                .all(|entry| single_and_everywhere(entry.variants.len(), entry.frames_present))
     }
 }
 
@@ -231,7 +257,7 @@ impl fmt::Display for Schema {
                 )?;
             }
             if column.variants.len() > 1 {
-                match unified_column(&column.variants) {
+                match column.unified() {
                     Some((kind, width)) => write!(f, " (unifies to {kind}:{width})")?,
                     None => write!(f, " [inconsistent]")?,
                 }
@@ -249,7 +275,7 @@ impl fmt::Display for Schema {
                 write!(f, "{value_type} ({frames}/{} frames)", self.n_frames)?;
             }
             if entry.variants.len() > 1 {
-                match unified_value(&entry.variants) {
+                match entry.unified() {
                     Some(value_type) => write!(f, " (unifies to {value_type})")?,
                     None => write!(f, " [inconsistent]")?,
                 }

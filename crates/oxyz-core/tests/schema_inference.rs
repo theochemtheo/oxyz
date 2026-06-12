@@ -92,6 +92,61 @@ H 0 0 0
 }
 
 #[test]
+fn unified_promotes_int_real_and_flags_conflicts() {
+    // forces drifts Int/Real at equal width (unifiable); stress changes
+    // length (genuine conflict); pos is stable (unifies to itself).
+    let text = "\
+1
+Properties=species:S:1:pos:R:3:forces:I:3 energy=-158 stress=\"1.0 2.0 3.0 4.0 5.0 6.0\"
+H 0 0 0 0 0 0
+1
+Properties=species:S:1:pos:R:3:forces:R:3 energy=-1.5 stress=\"1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0\"
+H 0 0 0 0.1 0.2 0.3
+";
+
+    let mut schema = Schema::default();
+    for frame in FrameIter::new(Cursor::new(text)) {
+        schema.observe(&frame.unwrap());
+    }
+
+    let column = |name: &str| schema.columns.iter().find(|c| c.name == name).unwrap();
+    assert_eq!(column("pos").unified(), Some((ColumnKind::Real, 3)));
+    assert_eq!(column("forces").unified(), Some((ColumnKind::Real, 3)));
+
+    let entry = |key: &str| schema.metadata.iter().find(|m| m.key == key).unwrap();
+    assert_eq!(entry("energy").unified(), Some(ValueType::Real));
+    assert_eq!(entry("stress").unified(), None);
+
+    assert!(!schema.is_consistent());
+}
+
+#[test]
+fn consistency_is_strict() {
+    // Stable file: consistent.
+    let schema = infer_schema(fixture("two_frame_same_schema.xyz")).unwrap();
+    assert!(schema.is_consistent());
+
+    // A key missing from one frame breaks consistency even though every
+    // observed variant is stable.
+    let text = "\
+1
+Properties=species:S:1:pos:R:3 energy=-1.0 tag=reference
+H 0 0 0
+1
+Properties=species:S:1:pos:R:3 energy=-1.5
+H 0 0 0
+";
+    let mut schema = Schema::default();
+    for frame in FrameIter::new(Cursor::new(text)) {
+        schema.observe(&frame.unwrap());
+    }
+    assert!(!schema.is_consistent());
+
+    // Empty file: vacuously consistent.
+    assert!(Schema::default().is_consistent());
+}
+
+#[test]
 fn report_summarises_a_stable_file() {
     let schema = infer_schema(fixture("two_frame_same_schema.xyz")).unwrap();
     let report = schema.to_string();

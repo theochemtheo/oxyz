@@ -23,6 +23,38 @@ class BatchData(TypedDict):
     columns: dict[str, ColumnValues]
     metadata: dict[str, ColumnValues]
 
+class ColumnVariantData(TypedDict):
+    kind: str
+    width: int
+    frames: int
+
+class MetadataVariantData(TypedDict):
+    kind: str
+    shape: tuple[int, ...]
+    frames: int
+
+class ColumnSchemaData(TypedDict):
+    name: str
+    variants: list[ColumnVariantData]
+    frames_present: int
+    unified: tuple[str, int] | None
+
+class MetadataSchemaData(TypedDict):
+    key: str
+    variants: list[MetadataVariantData]
+    frames_present: int
+    unified: tuple[str, tuple[int, ...]] | None
+
+class SchemaData(TypedDict):
+    n_frames: int
+    total_atoms: int
+    min_atoms: int | None
+    max_atoms: int | None
+    columns: list[ColumnSchemaData]
+    metadata: list[MetadataSchemaData]
+    is_consistent: bool
+    report: str
+
 class FrameIter:
     def __init__(self, path: str) -> None: ...
     def __iter__(self) -> FrameIter: ...
@@ -48,5 +80,5 @@ def read_frames(path: str, threads: int | None = None) -> list[FrameData]: ...
 def read_batch(
     path: str, indices: list[int], threads: int | None = None
 ) -> BatchData: ...
-def infer_schema(path: str) -> str: ...
+def infer_schema(path: str) -> SchemaData: ...
 def scan(path: str) -> ScanData: ...
