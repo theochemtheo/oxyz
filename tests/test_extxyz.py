@@ -51,8 +51,71 @@ def test_read_frames_error_carries_frame_index(tmp_path: Path) -> None:
     broken = tmp_path / "broken.xyz"
     broken.write_text(text + "not-a-count\n")
 
-    with pytest.raises(ValueError, match="frame 3"):
+    with pytest.raises(oxyz.ParseError, match="frame 3") as excinfo:
         oxyz.read_frames(broken)
+    assert excinfo.value.frame_index == 3
+
+
+def test_parse_error_is_a_value_error() -> None:
+    assert issubclass(oxyz.ParseError, ValueError)
+
+
+def test_parse_error_locates_a_short_atom_line(tmp_path: Path) -> None:
+    good = "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+    short = "1\nProperties=species:S:1:pos:R:3\nH 0 0\n"
+    path = tmp_path / "short.xyz"
+    path.write_text(good + short)
+
+    with pytest.raises(oxyz.ParseError) as excinfo:
+        oxyz.read_frames(path)
+    error = excinfo.value
+    assert error.frame_index == 1
+    assert error.line_number == 6  # 1-based file line of the short atom row
+    assert error.column is None
+
+
+def test_parse_error_names_the_offending_column(tmp_path: Path) -> None:
+    path = tmp_path / "badvalue.xyz"
+    path.write_text("1\nProperties=species:S:1:pos:R:3\nH 0 zzz 0\n")
+
+    with pytest.raises(oxyz.ParseError) as excinfo:
+        oxyz.read_frames(path)
+    error = excinfo.value
+    assert error.frame_index == 0
+    assert error.column == "pos"
+
+
+def test_parse_error_location_defaults_to_none(tmp_path: Path) -> None:
+    # A count-line error pins the frame but neither line nor column.
+    path = tmp_path / "badcount.xyz"
+    path.write_text("not-a-count\ncomment\n")
+
+    with pytest.raises(oxyz.ParseError) as excinfo:
+        oxyz.read_frames(path)
+    error = excinfo.value
+    assert error.frame_index == 0
+    assert error.line_number is None
+    assert error.column is None
+
+    # And a directly constructed instance carries None on every axis.
+    bare = oxyz.ParseError("boom")
+    assert bare.frame_index is None
+    assert bare.line_number is None
+    assert bare.column is None
+
+
+def test_out_of_range_is_index_error_not_parse_error(tmp_path: Path) -> None:
+    path = tmp_path / "one.xyz"
+    path.write_text("1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n")
+
+    with pytest.raises(IndexError) as excinfo:
+        oxyz.read_batch(path, [5])
+    assert not isinstance(excinfo.value, oxyz.ParseError)
+
+
+def test_missing_file_is_os_error(tmp_path: Path) -> None:
+    with pytest.raises(OSError):
+        oxyz.read_frames(tmp_path / "does-not-exist.xyz")
 
 
 @pytest.mark.parametrize("path", CORPUS, ids=lambda path: path.name)

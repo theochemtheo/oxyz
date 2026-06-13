@@ -6,6 +6,16 @@ import numpy as np
 
 __build_profile__: str
 
+class ParseError(ValueError):
+    """Raised when extxyz content cannot be parsed.
+
+    Location attributes are `None` when the parser cannot pin them down.
+    """
+
+    frame_index: int | None
+    line_number: int | None
+    column: str | None
+
 ColumnValues = np.ndarray | list[str] | list[list[str]]
 MetadataValue = float | int | bool | str | np.ndarray | list[str]
 

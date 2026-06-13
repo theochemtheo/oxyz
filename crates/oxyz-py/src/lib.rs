@@ -3,6 +3,7 @@ use std::{fs::File, io::BufReader, path::PathBuf};
 use ndarray::Array2;
 use numpy::{Element, IntoPyArray, PyArray1};
 use pyo3::{
+    create_exception,
     exceptions::{PyIndexError, PyOSError, PyValueError},
     prelude::*,
     types::{PyDict, PyList, PyTuple},
@@ -393,20 +394,45 @@ fn columns_to_pydict(py: Python<'_>, columns: Vec<Column>) -> PyResult<Bound<'_,
     Ok(dict)
 }
 
-fn extxyz_error_to_py(error: ExtxyzError) -> PyErr {
-    let message = error.to_string();
+create_exception!(
+    _rust,
+    ParseError,
+    PyValueError,
+    "Raised when extxyz content cannot be parsed.\n\n\
+     A `ValueError` subclass. Carries the location of the offending input as\n\
+     attributes — `frame_index`, `line_number`, `column` — each `None` when\n\
+     the parser cannot pin that dimension down, so callers can find the bad\n\
+     frame without parsing the message string."
+);
 
+fn extxyz_error_to_py(error: ExtxyzError) -> PyErr {
     // Unwrap frame context to classify the underlying error.
     let mut inner = &error;
     while let ExtxyzError::InFrame { source, .. } = inner {
         inner = source;
     }
 
+    // I/O and out-of-range keep their natural stdlib exception types; the
+    // rest are content errors the caller may want to locate structurally.
     match inner {
-        ExtxyzError::Io(io_error) => PyOSError::new_err(io_error.to_string()),
-        ExtxyzError::FrameOutOfRange { .. } => PyIndexError::new_err(message),
-        _ => PyValueError::new_err(message),
+        ExtxyzError::Io(io_error) => return PyOSError::new_err(io_error.to_string()),
+        ExtxyzError::FrameOutOfRange { .. } => return PyIndexError::new_err(error.to_string()),
+        _ => {}
     }
+
+    let frame_index = error.frame_index();
+    let line_number = error.line_number();
+    let column = error.column().map(str::to_owned);
+    let err = ParseError::new_err(error.to_string());
+    Python::attach(|py| {
+        // Set every field so access is uniform; instance values shadow the
+        // `None` class-level defaults registered in the module init.
+        let value = err.value(py);
+        let _ = value.setattr("frame_index", frame_index);
+        let _ = value.setattr("line_number", line_number);
+        let _ = value.setattr("column", column);
+    });
+    err
 }
 
 /// Turn a flat width-strided buffer into a 1-D (width == 1) or 2-D numpy
@@ -440,6 +466,14 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
             "release"
         },
     )?;
+    // Class-level `None` defaults so the location attributes always resolve,
+    // even on a `ParseError` a user constructs directly.
+    let parse_error = m.py().get_type::<ParseError>();
+    parse_error.setattr("frame_index", m.py().None())?;
+    parse_error.setattr("line_number", m.py().None())?;
+    parse_error.setattr("column", m.py().None())?;
+    m.add("ParseError", parse_error)?;
+
     m.add_function(wrap_pyfunction!(read_first_frame, m)?)?;
     m.add_function(wrap_pyfunction!(read_frames, m)?)?;
     m.add_function(wrap_pyfunction!(read_batch, m)?)?;

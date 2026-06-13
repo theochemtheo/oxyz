@@ -80,6 +80,42 @@ pub enum ExtxyzError {
 
 pub type Result<T> = std::result::Result<T, ExtxyzError>;
 
+impl ExtxyzError {
+    /// Index of the frame the error occurred in, if it is tied to one.
+    pub fn frame_index(&self) -> Option<usize> {
+        match self {
+            ExtxyzError::InFrame { frame_index, .. }
+            | ExtxyzError::FrameOutOfRange { frame_index, .. } => Some(*frame_index),
+            _ => None,
+        }
+    }
+
+    /// 1-based file line number the error pins down, if any.
+    pub fn line_number(&self) -> Option<usize> {
+        match self.innermost() {
+            ExtxyzError::WrongAtomColumnCount { line_number, .. } => Some(*line_number),
+            _ => None,
+        }
+    }
+
+    /// Name of the column whose value failed to parse, if applicable.
+    pub fn column(&self) -> Option<&str> {
+        match self.innermost() {
+            ExtxyzError::InvalidAtomValue { column, .. } => Some(column),
+            _ => None,
+        }
+    }
+
+    /// The underlying error, peeling off any [`InFrame`](Self::InFrame) framing.
+    fn innermost(&self) -> &ExtxyzError {
+        let mut inner = self;
+        while let ExtxyzError::InFrame { source, .. } = inner {
+            inner = source;
+        }
+        inner
+    }
+}
+
 pub fn read_first_frame(path: impl AsRef<Path>) -> Result<Frame> {
     iter_frames(path)?
         .next()
