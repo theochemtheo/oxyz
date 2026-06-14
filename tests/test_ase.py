@@ -19,10 +19,14 @@ pytestmark = pytest.mark.skipif(
 DATA_DIR = Path(__file__).parent / "data"
 
 # Documented divergences from ase.io.read, each asserted explicitly below:
-# Voigt stress (ASE rejects it) and new-style string arrays (ASE leaves them
-# as one raw string).
+# Voigt stress (ASE rejects it), new-style string arrays (ASE leaves them as
+# one raw string), and single-quoted values (ASE strips the quotes; oxyz keeps
+# them per the grammar). See the "Divergences from ASE" section of the README.
 VOIGT_STRESS = {"simple.extxyz", "nonorthogonal.extxyz", "stress_voigt6.extxyz"}
-DIVERGENT = VOIGT_STRESS | {"newstyle_array_metadata.extxyz"}
+DIVERGENT = VOIGT_STRESS | {
+    "newstyle_array_metadata.extxyz",
+    "singlequote_metadata.extxyz",
+}
 
 GOLDEN = sorted(
     path.name
@@ -132,6 +136,25 @@ def test_newstyle_string_array_diverges_from_ase() -> None:
     assert theirs.info["tags"] == '"slab","relaxed"'
     for key in ("kpoints", "cutoffs"):
         assert_values_equal(ours.info[key], theirs.info[key], f"info[{key!r}]")
+
+
+def test_singlequote_values_diverge_from_ase() -> None:
+    """`"` is the only quote character in the grammar, so single quotes are
+    ordinary bare characters: oxyz keeps them, while ASE treats `'` as a quote,
+    stripping it and reading `it's` as `its`."""
+    import ase.io
+
+    import oxyz.ase
+
+    path = DATA_DIR / "singlequote_metadata.extxyz"
+    ours = oxyz.ase.read(path, index=0)
+    theirs = ase.io.read(path, index=0, format="extxyz")
+    assert not isinstance(theirs, list)
+
+    assert ours.info["label"] == "'hello'"
+    assert theirs.info["label"] == "hello"
+    assert ours.info["note"] == "it's"
+    assert theirs.info["note"] == "its"
 
 
 def test_iread_matches_ase_iread() -> None:

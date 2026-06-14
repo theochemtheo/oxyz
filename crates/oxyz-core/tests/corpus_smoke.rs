@@ -25,6 +25,7 @@ const FIXTURES: &[&str] = &[
     "periodic_pbc_ttf.extxyz",
     "quoted_strings_booleans_scalars.extxyz",
     "simple.extxyz",
+    "singlequote_metadata.extxyz",
     "stress_matrix9.extxyz",
     "stress_voigt6.extxyz",
     "two_frame_same_schema.xyz",

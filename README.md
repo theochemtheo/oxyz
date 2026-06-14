@@ -63,17 +63,35 @@ for atoms in oxyz.ase.iread("train.extxyz", "::10"):
 The conversion reuses `ase.io.extxyz`'s own routing tables and
 `set_calc_and_arrays`, so key handling (which results go to the
 calculator, which to `arrays`) agrees with ASE by construction; golden
-tests hold the two readers equal on the test corpus. Reads are lazy:
+tests hold the two readers equal on the test corpus apart from the
+divergences below. Reads are lazy:
 `read(path, 3)` parses four frames and stops, and negative or reverse
 selections resolve through a structural scan and seek rather than a full
 parse — `read(path)` on a long trajectory does not parse the whole file
 to return the last frame.
 
-Two deliberate divergences, both stricter or more accepting than ASE
-rather than silently different: 6-component (Voigt) `stress` metadata is
-accepted and routed to the calculator where ASE's comment parser rejects
-the file, and species that are not chemical symbols raise an error rather
-than producing a nonsense `Atoms` object.
+## Divergences from ASE
+
+`oxyz.ase.read` matches `ase.io.read` field for field on the test corpus
+except for the cases below — two deliberate, two that follow from
+honouring the extxyz grammar and oxyz's typed model where ASE's parser
+does not.
+
+**Deliberate** — an error or an acceptance, never a silently different
+value:
+
+- **Voigt stress.** 6-component `stress` is accepted and routed to the
+  calculator; ASE's comment parser rejects the file.
+- **Non-symbol species.** A species that is not a chemical symbol raises
+  an error; ASE builds a nonsense `Atoms`.
+
+**Grammar and typing** — a different value, no error:
+
+- **New-style string arrays.** `tags=["a","b"]` is typed as `list[str]`;
+  ASE keeps the one raw string `'"a","b"'`.
+- **Single-quoted values.** The grammar makes `"` the only quote
+  character, so `label='hello'` keeps its quotes and `note=it's` keeps its
+  apostrophe; ASE strips the single quotes (and reads `it's` as `its`).
 
 ## What you get beyond ASE
 

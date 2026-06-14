@@ -12,6 +12,7 @@
 | `id_and_selection.extxyz` | Integer per-atom columns; species not in first column. |
 | `force_singular_alias.extxyz` | Singular `force:R:3` alias for `forces`. |
 | `quoted_strings_booleans_scalars.extxyz` | Comment-line value typing: quoted string with spaces, bare string, `T`/`F` booleans, int, real. |
+| `singlequote_metadata.extxyz` | Single quotes are ordinary bare characters per the grammar (only `"` quotes); oxyz keeps them where ASE strips them. |
 | `newstyle_array_metadata.extxyz` | New-style bracket arrays (`[2,2,1]`, string arrays) in metadata. |
 | `stress_voigt6.extxyz` | Frame-level 6-component (Voigt) `stress`. |
 | `stress_matrix9.extxyz` | Frame-level 9-component `stress` — same key, different shape than Voigt. |
