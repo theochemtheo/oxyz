@@ -197,8 +197,9 @@ Timings below are means over repeated rounds — each case gets a
 one-second budget, at least five rounds, median 24 in this run — on an
 Apple M3 Pro under CPython 3.13. Full tables with standard deviations,
 the environment, and the fixture definitions are in
-[benchmarks/RESULTS.md](benchmarks/RESULTS.md);
-[benchmarks/run.py](benchmarks/run.py) reproduces them.
+[benchmarks/RESULTS.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/RESULTS.md);
+[benchmarks/run.py](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/run.py)
+reproduces them.
 
 Whole-file reads to numpy (`oxyz.read_frames` vs [cextxyz], the libAtoms C
 parser, via its `read_dicts`):
@@ -226,9 +227,11 @@ oxyz pays for its untouched-raw-data model. On selective reads (every
 20th frame of the small-frames file) `oxyz.read_batch` takes 1.7 ms
 against 24 ms for ASE; on peak memory, streaming `iter_frames` through
 the small-frames file grows RSS by 12 MiB where `ase.io.iread` grows it
-by 56 MiB ([benchmarks/MEMORY.md](benchmarks/MEMORY.md)). Against
+by 56 MiB
+([benchmarks/MEMORY.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/MEMORY.md)).
+Against
 binary stores (LMDB, SQLite, mmap-backed formats) a text parser is
-predictably slower; See [benchmarks/RESULTS.md](benchmarks/RESULTS.md) for comparisons.
+predictably slower; See [benchmarks/RESULTS.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/RESULTS.md) for comparisons.
 
 [cextxyz]: https://github.com/libAtoms/extxyz
 [ase-extxyz]: https://pypi.org/project/ase-extxyz/
@@ -245,8 +248,8 @@ oxyz.iter_batches(path, *, frames_per_batch=None, atoms_per_batch=None,
 oxyz.scan(path)                              -> FrameIndex
 oxyz.infer_schema(path)                      -> Schema
 
-oxyz.ase.read(path, index=-1)                -> Atoms | list[Atoms]
-oxyz.ase.iread(path, index=":")              -> Iterator[Atoms]
+oxyz.ase.read(path, index=None, *, format=None)  -> Atoms | list[Atoms]  # index=None: last frame
+oxyz.ase.iread(path, index=":", *, format=None)  -> Iterator[Atoms]
 oxyz.ase.to_atoms(frame)                     -> Atoms              # also Frame.to_ase()
 ```
 
