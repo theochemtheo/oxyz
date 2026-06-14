@@ -195,7 +195,19 @@ impl Schema {
             }
         }
 
+        // Collapse duplicate keys last-wins within the frame, matching the
+        // dict semantics of `Frame`'s Python view, so a repeated key counts
+        // once rather than pushing frames_present past n_frames (which would
+        // wrongly read as inconsistent).
+        let mut deduped: Vec<(&String, &Value)> = Vec::with_capacity(frame.metadata.len());
         for (key, value) in &frame.metadata {
+            match deduped.iter_mut().find(|(existing, _)| *existing == key) {
+                Some(slot) => slot.1 = value,
+                None => deduped.push((key, value)),
+            }
+        }
+
+        for (key, value) in deduped {
             let index = match self.metadata.iter().position(|entry| &entry.key == key) {
                 Some(index) => index,
                 None => {

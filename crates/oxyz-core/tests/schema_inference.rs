@@ -147,6 +147,31 @@ H 0 0 0
 }
 
 #[test]
+fn duplicate_metadata_keys_collapse_last_wins() {
+    // One frame repeating `energy` with a different type each time. The dict
+    // view of `Frame` keeps the last value, so the schema must count one
+    // occurrence of the last type, not two occurrences of two types.
+    let text = "\
+1
+Properties=species:S:1:pos:R:3 energy=-1 energy=-2.5
+H 0 0 0
+";
+    let mut schema = Schema::default();
+    for frame in FrameIter::new(Cursor::new(text)) {
+        schema.observe(&frame.unwrap());
+    }
+
+    let energy = schema
+        .metadata
+        .iter()
+        .find(|entry| entry.key == "energy")
+        .unwrap();
+    assert_eq!(energy.frames_present, 1);
+    assert_eq!(energy.variants, [(ValueType::Real, 1)]);
+    assert!(schema.is_consistent());
+}
+
+#[test]
 fn report_summarises_a_stable_file() {
     let schema = infer_schema(fixture("two_frame_same_schema.xyz")).unwrap();
     let report = schema.to_string();

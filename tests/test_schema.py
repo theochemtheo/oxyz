@@ -167,3 +167,20 @@ def test_stable_file_is_consistent() -> None:
         assert len(column.variants) == 1
         assert column.frames_present == schema.n_frames
         assert column.unified == (column.variants[0].kind, column.variants[0].width)
+
+
+def test_duplicate_metadata_key_counts_once(tmp_path: Path) -> None:
+    # A repeated key collapses last-wins in Frame.metadata; the schema must
+    # match, counting one occurrence of the last value rather than pushing
+    # frames_present past n_frames (which would read as inconsistent).
+    path = tmp_path / "dupe.xyz"
+    path.write_text(
+        "1\nProperties=species:S:1:pos:R:3 energy=-1 energy=-2.5\nH 0 0 0\n"
+    )
+    schema = oxyz.infer_schema(path)
+
+    assert schema.n_frames == 1
+    energy = {entry.key: entry for entry in schema.metadata}["energy"]
+    assert energy.frames_present == 1
+    assert energy.variants == (MetadataVariant(Kind.REAL, (), 1),)
+    assert schema.is_consistent
