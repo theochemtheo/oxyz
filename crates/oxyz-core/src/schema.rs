@@ -133,6 +133,11 @@ pub struct Schema {
     pub total_atoms: usize,
     pub min_atoms: Option<usize>,
     pub max_atoms: Option<usize>,
+    /// Declared atom count per frame, in file order. Kept as the sample the
+    /// distribution statistics (mean/median/std) are derived from, so the
+    /// schema pass alone answers what `scan` answers — `min`/`max`/`total`
+    /// stay accumulated to leave the rest of this type untouched.
+    pub n_atoms: Vec<usize>,
     /// Per-atom columns, in first-seen order.
     pub columns: Vec<ColumnSchema>,
     /// Metadata keys, in first-seen order.
@@ -151,6 +156,7 @@ impl Schema {
             self.max_atoms
                 .map_or(frame.n_atoms, |m| m.max(frame.n_atoms)),
         );
+        self.n_atoms.push(frame.n_atoms);
 
         for column in &frame.columns {
             // Look up by index rather than holding the `find` borrow: the

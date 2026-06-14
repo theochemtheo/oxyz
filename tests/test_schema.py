@@ -41,6 +41,20 @@ def test_schema_counts(mixed_schema: oxyz.Schema) -> None:
     assert not mixed_schema.is_consistent
 
 
+def test_schema_distribution_stats_match_scan(tmp_path: Path) -> None:
+    # The single schema pass keeps the per-frame counts, so its distribution
+    # statistics agree with a separate scan -- no second read needed.
+    path = tmp_path / "mixed.xyz"
+    path.write_text(MIXED)
+    schema = oxyz.infer_schema(path)
+    index = oxyz.scan(path)
+
+    assert list(schema.n_atoms) == list(index.n_atoms)
+    assert schema.mean_atoms == index.mean_atoms
+    assert schema.median_atoms == index.median_atoms
+    assert schema.std_atoms == index.std_atoms
+
+
 def test_column_variants_and_unification(mixed_schema: oxyz.Schema) -> None:
     columns = {column.name: column for column in mixed_schema.columns}
     assert list(columns) == ["species", "pos", "forces"]

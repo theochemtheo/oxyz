@@ -60,6 +60,7 @@ class SchemaData(TypedDict):
     total_atoms: int
     min_atoms: int | None
     max_atoms: int | None
+    n_atoms: np.ndarray
     columns: list[ColumnSchemaData]
     metadata: list[MetadataSchemaData]
     is_consistent: bool

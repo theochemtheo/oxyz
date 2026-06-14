@@ -12,6 +12,10 @@ if TYPE_CHECKING:
     from oxyz._scan import FrameIndex
     from oxyz._schema import Schema
 
+    # scan and infer_schema both report atom-count statistics; the schema adds
+    # the column/metadata detail.
+    StatsSource = FrameIndex | Schema
+
 
 def main(argv: list[str] | None = None) -> int:
     """Entry point for the ``oxyz`` console script."""
@@ -64,46 +68,55 @@ def _add_scan_parser(subparsers: argparse._SubParsersAction) -> None:
 
 
 def _cmd_scan(args: argparse.Namespace) -> int:
-    index = scan(args.path)
-    schema = None if args.no_schema else infer_schema(args.path)
-    if args.json:
-        print(json.dumps(_scan_payload(index, schema), indent=2))
+    # The schema pass keeps the per-frame atom counts, so it yields the same
+    # distribution stats as scan -- run only one. --no-schema wants no parse
+    # at all, so it falls back to the cheap structural scan.
+    if args.no_schema:
+        stats: StatsSource = scan(args.path)
+        schema = None
     else:
-        _print_scan_summary(index, schema)
+        schema = infer_schema(args.path)
+        stats = schema
+    if args.json:
+        print(json.dumps(_scan_payload(stats, schema), indent=2))
+    else:
+        _print_scan_summary(stats, schema)
     return 0
 
 
-def _scan_payload(index: FrameIndex, schema: Schema | None) -> dict:
-    payload: dict = {"stats": _stats_dict(index)}
+def _scan_payload(stats: StatsSource, schema: Schema | None) -> dict:
+    payload: dict = {"stats": _stats_dict(stats)}
     if schema is not None:
         # asdict serialises the nested schema dataclasses; drop the cached
-        # human-readable report -- the text form lives in the non-JSON path.
+        # report (its text form lives in the non-JSON path) and the raw
+        # per-frame counts (the derived stats already stand for them).
         schema_dict = dataclasses.asdict(schema)
         schema_dict.pop("_report", None)
+        schema_dict.pop("n_atoms", None)
         payload["schema"] = schema_dict
     return payload
 
 
-def _stats_dict(index: FrameIndex) -> dict:
+def _stats_dict(stats: StatsSource) -> dict:
     return {
-        "n_frames": index.n_frames,
-        "total_atoms": index.total_atoms,
-        "min_atoms": index.min_atoms,
-        "max_atoms": index.max_atoms,
-        "mean_atoms": index.mean_atoms,
-        "median_atoms": index.median_atoms,
-        "std_atoms": index.std_atoms,
+        "n_frames": stats.n_frames,
+        "total_atoms": stats.total_atoms,
+        "min_atoms": stats.min_atoms,
+        "max_atoms": stats.max_atoms,
+        "mean_atoms": stats.mean_atoms,
+        "median_atoms": stats.median_atoms,
+        "std_atoms": stats.std_atoms,
     }
 
 
-def _print_scan_summary(index: FrameIndex, schema: Schema | None) -> None:
-    print(f"frames:      {index.n_frames}")
-    if index.n_frames:
-        print(f"atoms total: {index.total_atoms}")
+def _print_scan_summary(stats: StatsSource, schema: Schema | None) -> None:
+    print(f"frames:      {stats.n_frames}")
+    if stats.n_frames:
+        print(f"atoms total: {stats.total_atoms}")
         print(
-            f"atoms/frame: min {index.min_atoms}  max {index.max_atoms}  "
-            f"mean {index.mean_atoms:.2f}  median {index.median_atoms:.2f}  "
-            f"std {index.std_atoms:.2f}"
+            f"atoms/frame: min {stats.min_atoms}  max {stats.max_atoms}  "
+            f"mean {stats.mean_atoms:.2f}  median {stats.median_atoms:.2f}  "
+            f"std {stats.std_atoms:.2f}"
         )
     if schema is not None:
         print()

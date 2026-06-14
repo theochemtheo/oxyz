@@ -37,6 +37,8 @@ def test_scan_json_shape(capsys: pytest.CaptureFixture[str]) -> None:
     assert payload["stats"]["n_frames"] == payload["schema"]["n_frames"]
     assert payload["schema"]["columns"]  # full detail present
     assert "variants" in payload["schema"]["columns"][0]
+    # The raw per-frame counts stay out of JSON; the derived stats stand in.
+    assert "n_atoms" not in payload["schema"]
 
 
 def test_scan_json_no_schema(capsys: pytest.CaptureFixture[str]) -> None:

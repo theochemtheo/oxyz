@@ -249,6 +249,8 @@ fn schema_to_pydict<'py>(py: Python<'py>, schema: &Schema) -> PyResult<Bound<'py
     data.set_item("total_atoms", schema.total_atoms)?;
     data.set_item("min_atoms", schema.min_atoms)?;
     data.set_item("max_atoms", schema.max_atoms)?;
+    let n_atoms: Vec<u64> = schema.n_atoms.iter().map(|&n| n as u64).collect();
+    data.set_item("n_atoms", n_atoms.into_pyarray(py))?;
     data.set_item("is_consistent", schema.is_consistent())?;
     data.set_item("report", schema.to_string())?;
 

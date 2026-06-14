@@ -4,7 +4,10 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
+import numpy as np
+
 import oxyz._rust as _rust
+from oxyz._stats import AtomCountStats
 
 
 class Kind(StrEnum):
@@ -74,7 +77,7 @@ class MetadataSchema:
 
 
 @dataclass(frozen=True, slots=True)
-class Schema:
+class Schema(AtomCountStats):
     """Observed structure of a dataset: which columns and metadata keys
     appear, with what types and shapes, and how consistently.
 
@@ -82,13 +85,16 @@ class Schema:
     `is_consistent` is strict: every column and key has a single variant and
     appears in every frame. Int/Real promotion does not count — consult
     each entry's `unified` for that looser reading. `min_atoms`/`max_atoms`
-    are None only for an empty file.
+    are None only for an empty file. The same single pass keeps the per-frame
+    `n_atoms`, so `mean_atoms`/`median_atoms`/`std_atoms` (from
+    `AtomCountStats`) match what a `scan` would report without a second read.
     """
 
     n_frames: int
     total_atoms: int
     min_atoms: int | None
     max_atoms: int | None
+    n_atoms: np.ndarray
     columns: tuple[ColumnSchema, ...]
     metadata: tuple[MetadataSchema, ...]
     is_consistent: bool
@@ -136,6 +142,7 @@ def infer_schema(path: str | Path) -> Schema:
         total_atoms=data["total_atoms"],
         min_atoms=data["min_atoms"],
         max_atoms=data["max_atoms"],
+        n_atoms=data["n_atoms"],
         columns=tuple(_column_schema(entry) for entry in data["columns"]),
         metadata=tuple(_metadata_schema(entry) for entry in data["metadata"]),
         is_consistent=data["is_consistent"],

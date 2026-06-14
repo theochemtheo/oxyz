@@ -110,6 +110,9 @@ and per-entry `unified` — the single type an Int/Real drift can be
 promoted to, or `None` when the conflict is genuine. The classic failure
 it catches: a generator script that writes isolated-atom frames with
 integer forces and no `Lattice` into an otherwise uniform bulk dataset.
+The same pass keeps the per-frame atom counts, so a `Schema` also reports
+the atom-count distribution (`mean_atoms`, `median_atoms`, `std_atoms`,
+alongside the min/max above) without a second read of the file.
 
 ```text
 >>> print(oxyz.infer_schema("train.extxyz"))

@@ -6,16 +6,18 @@ from pathlib import Path
 import numpy as np
 
 import oxyz._rust as _rust
+from oxyz._stats import AtomCountStats
 
 
 @dataclass(frozen=True, slots=True)
-class FrameIndex:
+class FrameIndex(AtomCountStats):
     """Structural facts from a scan: frame offsets and declared atom counts.
 
     Nothing is parsed beyond the count lines, so this is cheap even for files
     where a full read is not. Statistics are derived from the stored counts;
-    `std_atoms` is the population standard deviation. All statistics are
-    None for an empty file.
+    `mean_atoms`/`median_atoms`/`std_atoms` come from `AtomCountStats`, with
+    `std_atoms` the population standard deviation. All statistics are None for
+    an empty file.
     """
 
     offsets: np.ndarray
@@ -36,18 +38,6 @@ class FrameIndex:
     @property
     def max_atoms(self) -> int | None:
         return int(self.n_atoms.max()) if self.n_frames else None
-
-    @property
-    def mean_atoms(self) -> float | None:
-        return float(self.n_atoms.mean()) if self.n_frames else None
-
-    @property
-    def median_atoms(self) -> float | None:
-        return float(np.median(self.n_atoms)) if self.n_frames else None
-
-    @property
-    def std_atoms(self) -> float | None:
-        return float(self.n_atoms.std()) if self.n_frames else None
 
 
 def scan(path: str | Path) -> FrameIndex:
