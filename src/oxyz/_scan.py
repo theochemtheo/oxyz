@@ -41,6 +41,13 @@ class FrameIndex(AtomCountStats):
 
 
 def scan(path: str | Path) -> FrameIndex:
-    """Scan a file's structure without parsing any frame contents."""
+    """Scan a file's structure without parsing any frame contents.
+
+    Returns a `FrameIndex` of per-frame byte offsets and declared atom counts.
+    `n_atoms` is `intp` so arithmetic with it does not promote to float64.
+    The atom-count statistics (`min_atoms`/`max_atoms`/`mean_atoms`/
+    `median_atoms`/`std_atoms`) are `None` for an empty file — the only
+    optionals in the result.
+    """
     data = _rust.scan(str(path))
     return FrameIndex(offsets=data["offsets"], n_atoms=data["n_atoms"])

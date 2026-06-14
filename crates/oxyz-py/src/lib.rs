@@ -52,10 +52,12 @@ fn scan<'py>(py: Python<'py>, path: PathBuf) -> PyResult<Bound<'py, PyDict>> {
         .map_err(extxyz_error_to_py)?;
 
     let offsets: Vec<u64> = index.entries().iter().map(|entry| entry.offset).collect();
-    let n_atoms: Vec<u64> = index
+    // Atom counts as isize (np.intp) so user arithmetic with them does not
+    // promote to float64 the way an unsigned dtype would; byte offsets stay u64.
+    let n_atoms: Vec<isize> = index
         .entries()
         .iter()
-        .map(|entry| entry.n_atoms as u64)
+        .map(|entry| entry.n_atoms as isize)
         .collect();
 
     let data = PyDict::new(py);
@@ -88,13 +90,13 @@ impl IndexedFrames {
     /// Declared atom count per frame, from the scan done at construction.
     /// Batch planning reads this instead of scanning the file again.
     #[getter]
-    fn n_atoms<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u64>> {
-        let counts: Vec<u64> = self
+    fn n_atoms<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<isize>> {
+        let counts: Vec<isize> = self
             .inner
             .index()
             .entries()
             .iter()
-            .map(|entry| entry.n_atoms as u64)
+            .map(|entry| entry.n_atoms as isize)
             .collect();
         counts.into_pyarray(py)
     }
@@ -249,7 +251,8 @@ fn schema_to_pydict<'py>(py: Python<'py>, schema: &Schema) -> PyResult<Bound<'py
     data.set_item("total_atoms", schema.total_atoms)?;
     data.set_item("min_atoms", schema.min_atoms)?;
     data.set_item("max_atoms", schema.max_atoms)?;
-    let n_atoms: Vec<u64> = schema.n_atoms.iter().map(|&n| n as u64).collect();
+    // intp (isize), matching scan()'s FrameIndex.n_atoms — see the note there.
+    let n_atoms: Vec<isize> = schema.n_atoms.iter().map(|&n| n as isize).collect();
     data.set_item("n_atoms", n_atoms.into_pyarray(py))?;
     data.set_item("is_consistent", schema.is_consistent())?;
     data.set_item("report", schema.to_string())?;
