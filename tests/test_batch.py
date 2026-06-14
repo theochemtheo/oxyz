@@ -95,11 +95,20 @@ def test_read_batch_gathers_in_requested_order() -> None:
         {"frames_per_batch": 0},
         {"atoms_per_batch": 0},
         {"frames_per_batch": 2, "seed": 0},
+        {"frames_per_batch": 2, "threads": 0},
     ],
 )
 def test_invalid_batching_arguments(kwargs) -> None:
     with pytest.raises(ValueError):
         oxyz.iter_batches(VARYING, **kwargs)
+
+
+def test_zero_threads_is_rejected() -> None:
+    # threads=0 would read as "all cores" in rayon; require None or >= 1.
+    with pytest.raises(ValueError, match="threads must be"):
+        oxyz.read_batch(VARYING, [0], threads=0)
+    with pytest.raises(ValueError, match="threads must be"):
+        oxyz.read_frames(VARYING, threads=0)
 
 
 def assert_batches_equal(left: oxyz.Batch, right: oxyz.Batch) -> None:

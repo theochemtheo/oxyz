@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 import oxyz._rust as _rust
-from oxyz._frames import ColumnValues
+from oxyz._frames import ColumnValues, _check_threads
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +60,7 @@ def read_batch(
     once and reuses the index. `threads=None` parses on every core,
     `threads=1` serially; the batch is identical either way.
     """
+    _check_threads(threads)
     plan = [int(i) for i in indices]
     for index in plan:
         if index < 0:
@@ -102,6 +103,7 @@ def iter_batches(
         raise ValueError("atoms_per_batch must be at least 1")
     if seed is not None and not shuffle:
         raise ValueError("seed requires shuffle=True")
+    _check_threads(threads)
 
     if frames_per_batch is not None and not shuffle and threads == 1:
         return _sequential_batches(path, frames_per_batch)

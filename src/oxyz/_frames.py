@@ -41,9 +41,17 @@ def read_first_frame(path: str | Path) -> Frame:
     return _frame_from_data(_rust.read_first_frame(str(path)))
 
 
+def _check_threads(threads: int | None) -> None:
+    """`None` parses on all cores, an integer >= 1 sets the count. Reject 0 and
+    negatives rather than letting rayon read `num_threads(0)` as "all cores"."""
+    if threads is not None and threads < 1:
+        raise ValueError(f"threads must be a positive integer or None, got {threads!r}")
+
+
 def read_frames(path: str | Path, *, threads: int | None = None) -> list[Frame]:
     """Read every frame. Parses on all cores by default; `threads=1` streams
     serially. Results and errors are identical regardless of `threads`."""
+    _check_threads(threads)
     data = _rust.read_frames(str(path), threads)
     return [_frame_from_data(frame) for frame in data]
 

@@ -7,8 +7,14 @@ on:
     tags:
       - "v*"
   pull_request:
+    # Build wheels on PRs that can break the build, not only ones that touch
+    # this workflow, so packaging breakage surfaces before the merge to main.
     paths:
       - ".github/workflows/wheels.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**"
+      - "pyproject.toml"
   workflow_dispatch:
 
 permissions:
