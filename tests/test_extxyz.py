@@ -184,6 +184,36 @@ def test_scan_rejects_structural_garbage(tmp_path: Path) -> None:
         oxyz.scan(broken)
 
 
+# A single valid frame; the building block for the blank-line cases below.
+_FRAME = "1\nProperties=species:S:1:pos:R:3\nH 0.0 0.0 0.0\n"
+
+
+def test_trailing_blank_line_is_tolerated(tmp_path: Path) -> None:
+    # ASE tolerates a trailing blank line where a count is expected; oxyz
+    # reads the file's one frame across every entry point rather than raising.
+    for suffix in ("\n", "\n\n", "   \n", "\t\n"):
+        path = tmp_path / "trailing.xyz"
+        path.write_text(_FRAME + suffix)
+        assert len(oxyz.read_frames(path)) == 1, repr(suffix)
+        assert oxyz.scan(path).n_frames == 1, repr(suffix)
+        assert oxyz.infer_schema(path).n_frames == 1, repr(suffix)
+
+
+def test_blank_line_between_frames_stops_the_read(tmp_path: Path) -> None:
+    # ASE truncates at the blank; oxyz matches, reading only the first frame.
+    path = tmp_path / "interspersed.xyz"
+    path.write_text(_FRAME + "\n" + _FRAME)
+    assert len(oxyz.read_frames(path)) == 1
+    assert oxyz.scan(path).n_frames == 1
+
+
+def test_leading_blank_line_yields_no_frames(tmp_path: Path) -> None:
+    path = tmp_path / "leading.xyz"
+    path.write_text("\n" + _FRAME)
+    assert oxyz.read_frames(path) == []
+    assert oxyz.scan(path).n_frames == 0
+
+
 def test_infer_schema_report() -> None:
     report = oxyz.infer_schema(DATA_DIR / "varying_atom_counts.xyz").report()
 

@@ -217,8 +217,14 @@ pub fn scan_frames<R: BufRead>(mut reader: R) -> Result<FrameIndex> {
         offset += n_read as u64;
         line_number += 1;
 
-        let n_atoms = std::str::from_utf8(&line)
-            .ok()
+        let text = std::str::from_utf8(&line).ok();
+        // A blank line where a count is expected ends the file, as ASE's
+        // reader does: trailing blank lines are tolerated and a blank line
+        // between frames stops the read.
+        if text.is_some_and(|text| text.trim().is_empty()) {
+            return Ok(FrameIndex::new(entries));
+        }
+        let n_atoms = text
             .and_then(|text| text.trim().parse::<usize>().ok())
             .ok_or_else(|| ExtxyzError::InFrame {
                 frame_index: entries.len(),
@@ -365,6 +371,20 @@ impl<R: BufRead> RawFrames<R> {
             source: Box::new(source),
         }))
     }
+
+    /// End of input: fuse, and if a selected frame was never reached report
+    /// the first such index as out of range. `frame_index` is the file's true
+    /// frame count here. A blank line where a count is expected counts as end
+    /// of input, as in ASE.
+    fn end_of_input(&mut self) -> Option<Result<RawFrame>> {
+        self.fused = true;
+        self.first_unreached().map(|frame_index| {
+            Err(ExtxyzError::FrameOutOfRange {
+                frame_index,
+                n_frames: self.frame_index,
+            })
+        })
+    }
 }
 
 impl<R: BufRead> Iterator for RawFrames<R> {
@@ -387,15 +407,13 @@ impl<R: BufRead> Iterator for RawFrames<R> {
                 Err(error) => return self.fuse(error.into()),
             };
             if n_read == 0 {
-                self.fused = true;
-                // EOF: any selected frame not reached is out of range, and
-                // `frame_index` is now the file's true frame count.
-                return self.first_unreached().map(|frame_index| {
-                    Err(ExtxyzError::FrameOutOfRange {
-                        frame_index,
-                        n_frames: self.frame_index,
-                    })
-                });
+                return self.end_of_input();
+            }
+            // A blank line where a count is expected ends the file, as ASE's
+            // reader does, so trailing and interspersed blank lines stop the
+            // read rather than erroring. Checked before the int parse.
+            if std::str::from_utf8(&self.scratch).is_ok_and(|text| text.trim().is_empty()) {
+                return self.end_of_input();
             }
 
             let frame_index = self.frame_index;
@@ -906,6 +924,13 @@ impl<R: BufRead> FrameIter<R> {
             return Ok(None);
         }
         let atom_count_line = line_str(&self.buffer)?;
+
+        // A blank line where a count is expected ends the file, as ASE's
+        // reader does: trailing blank lines are tolerated and a blank line
+        // between frames stops the read.
+        if atom_count_line.trim().is_empty() {
+            return Ok(None);
+        }
 
         // Trimmed in the message so streamed and scanned reads of the same
         // bad line raise the identical error.
@@ -1452,5 +1477,78 @@ mod tests {
             parse_properties("pos:R:three"),
             Err(ExtxyzError::InvalidPropertyWidth { .. })
         ));
+    }
+
+    // --- a blank count line is end of input, as in ASE ---
+
+    /// One valid frame; the building block for the blank-line cases.
+    const FRAME: &str = "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n";
+
+    fn scan_count(text: &str) -> Result<usize> {
+        scan_frames(std::io::Cursor::new(text)).map(|index| index.n_frames())
+    }
+
+    fn stream_count(text: &str) -> Result<usize> {
+        let mut frames = 0;
+        for frame in FrameIter::new(std::io::Cursor::new(text)) {
+            frame?;
+            frames += 1;
+        }
+        Ok(frames)
+    }
+
+    #[test]
+    fn trailing_blank_line_is_end_of_input() {
+        // A trailing blank, several blanks, a space-only line, a tab-only
+        // line: all tolerated, and the one real frame is read.
+        for text in [
+            format!("{FRAME}\n"),
+            format!("{FRAME}\n\n"),
+            format!("{FRAME}   \n"),
+            format!("{FRAME}\t\n"),
+        ] {
+            assert_eq!(scan_count(&text).unwrap(), 1, "scan: {text:?}");
+            assert_eq!(stream_count(&text).unwrap(), 1, "stream: {text:?}");
+        }
+    }
+
+    #[test]
+    fn blank_line_between_frames_stops_the_read() {
+        // ASE truncates at the blank: only the frames before it are read.
+        let text = format!("{FRAME}\n{FRAME}");
+        assert_eq!(scan_count(&text).unwrap(), 1);
+        assert_eq!(stream_count(&text).unwrap(), 1);
+    }
+
+    #[test]
+    fn leading_blank_line_yields_no_frames() {
+        let text = format!("\n{FRAME}");
+        assert_eq!(scan_count(&text).unwrap(), 0);
+        assert_eq!(stream_count(&text).unwrap(), 0);
+    }
+
+    #[test]
+    fn non_blank_bad_count_still_errors() {
+        // Only blank lines end the file; junk where a count is expected is an
+        // error, not a silent stop.
+        let text = format!("{FRAME}xyz\n{FRAME}");
+        assert!(scan_count(&text).is_err());
+        assert!(stream_count(&text).is_err());
+    }
+
+    #[test]
+    fn raw_frames_treat_blank_as_end_of_input() {
+        // The batch reader shares the rule: a frame requested after an
+        // interspersed blank is out of range, since the blank ended the file.
+        let text = format!("{FRAME}\n{FRAME}");
+        let mut frames = RawFrames::selecting(std::io::Cursor::new(text), &[0, 1]);
+        assert!(frames.next().unwrap().is_ok(), "frame 0 reads");
+        // `RawFrame` is not `Debug`, so match rather than `unwrap_err`.
+        let error = match frames.next().unwrap() {
+            Err(error) => error,
+            Ok(_) => panic!("frame past the blank should be out of range"),
+        };
+        assert!(error.to_string().contains("out of range"), "{error}");
+        assert!(frames.next().is_none(), "fused after the error");
     }
 }

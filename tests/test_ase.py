@@ -81,6 +81,25 @@ def test_matches_ase_reader(name: str) -> None:
         assert_atoms_match(frame_ours, frame_theirs)
 
 
+def test_trailing_blank_line_matches_ase(tmp_path: Path) -> None:
+    """A trailing blank line is end of input for both readers."""
+    import ase.io
+
+    import oxyz.ase
+
+    # Built at runtime: a committed trailing blank would be stripped by the
+    # end-of-file hook, silently voiding the test (a clean file reads the
+    # same one frame).
+    clean = (DATA_DIR / "minimal_periodic.extxyz").read_text()
+    path = tmp_path / "trailing.extxyz"
+    path.write_text(clean + "\n")
+
+    ours = oxyz.ase.read(path, index=":")
+    theirs = ase.io.read(path, index=":", format="extxyz")
+    assert len(ours) == len(theirs) == 1
+    assert_atoms_match(ours[0], theirs[0])
+
+
 @pytest.mark.parametrize("name", sorted(VOIGT_STRESS))
 def test_voigt_stress_diverges_from_ase(name: str) -> None:
     """ase.io.read rejects 6-component stress; we accept it as already-Voigt."""
