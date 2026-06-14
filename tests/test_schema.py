@@ -115,6 +115,50 @@ def test_report_matches_str(mixed_schema: oxyz.Schema) -> None:
     )
 
 
+# A MACE-style training set's two regimes: a couple of isolated-atom E0 frames
+# carrying config_type, then bulk frames carrying per-config training weights
+# instead. Which keys appear varies between real files; the general pattern is
+# that some metadata rides only one regime, and infer_schema should report each
+# key on exactly the frames that have it.
+MACE_REGIMES = (
+    "1\n"
+    'Lattice="15 0 0 0 15 0 0 0 15" Properties=species:S:1:pos:R:3:forces:R:3'
+    ' energy=-7.44 config_type=IsolatedAtom pbc="T T T"\n'
+    "O 0 0 0 0 0 0\n"
+    "1\n"
+    'Lattice="15 0 0 0 15 0 0 0 15" Properties=species:S:1:pos:R:3:forces:R:3'
+    ' energy=-1.32 config_type=IsolatedAtom pbc="T T T"\n'
+    "H 0 0 0 0 0 0\n"
+    "2\n"
+    'Lattice="3 0 0 0 3 0 0 0 3" Properties=species:S:1:pos:R:3:forces:R:3'
+    " energy=-30.4 config_energy_weight=0.67 config_forces_weight=1.09"
+    ' config_stress_weight=11.7 pbc="T T T"\n'
+    "O 0 0 0 0.1 0.2 0.3\n"
+    "H 1 1 1 -0.1 -0.2 -0.3\n"
+)
+
+
+def test_mace_mixed_schema_presence(tmp_path: Path) -> None:
+    path = tmp_path / "mace.xyz"
+    path.write_text(MACE_REGIMES)
+    schema = oxyz.infer_schema(path)
+
+    assert schema.n_frames == 3
+    assert not schema.is_consistent
+
+    metadata = {entry.key: entry for entry in schema.metadata}
+
+    # Stable across every frame.
+    assert metadata["energy"].frames_present == 3
+
+    # config_type rides only the isolated-atom frames.
+    assert metadata["config_type"].frames_present == 2
+
+    # The training weights ride only the bulk frames.
+    for key in ("config_energy_weight", "config_forces_weight", "config_stress_weight"):
+        assert metadata[key].frames_present == 1
+
+
 def test_stable_file_is_consistent() -> None:
     schema = oxyz.infer_schema(DATA_DIR / "two_frame_same_schema.xyz")
 

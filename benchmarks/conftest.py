@@ -48,7 +48,7 @@ def pytest_benchmark_update_machine_info(config, machine_info) -> None:
 CACHE_DIR = Path(__file__).parent / ".cache"
 
 # Bump to invalidate cached files when the generator changes.
-GENERATOR_VERSION = 1
+GENERATOR_VERSION = 2
 
 SPECIES = ["H", "C", "N", "O", "Si"]
 
@@ -107,15 +107,19 @@ def _write_metadata_heavy_frame(out, rng: random.Random, n_atoms: int) -> None:
 
 
 def _write_mace_mixed(out, rng: random.Random) -> None:
-    """MACE-style training file: isolated-atom E0 frames first (no Lattice,
-    no stress, their own config_type), then bulk frames — deliberate schema
-    drift between the two frame kinds."""
+    """MACE-style training file: a handful of isolated-atom E0 frames first,
+    then the bulk training frames, with deliberate schema drift between the
+    two kinds. ``config_type`` rides only the isolated-atom frames; per-config
+    training weights (``config_*_weight``) and ``stress`` ride only the bulk
+    frames. Real training sets vary in which other keys appear, so this
+    captures the shape of the drift, not any one file's exact columns."""
     for species in SPECIES:
         out.write("1\n")
         out.write(
+            f'Lattice="15.0 0.0 0.0 0.0 15.1 0.0 0.0 0.0 15.2" '
             f"Properties=species:S:1:pos:R:3:forces:R:3 "
             f"energy={-1.0 * rng.random():.8f} config_type=IsolatedAtom "
-            f'pbc="F F F"\n'
+            f'pbc="T T T"\n'
         )
         out.write(f"{species} 0.0 0.0 0.0 0.0 0.0 0.0\n")
 
@@ -123,12 +127,16 @@ def _write_mace_mixed(out, rng: random.Random) -> None:
         n_atoms = rng.randrange(32, 96)
         a = 5.0 + 10.0 * rng.random()
         out.write(f"{n_atoms}\n")
+        # Bulk frame: no config_type, but per-frame training weights instead.
         out.write(
             f'Lattice="{a:.6f} 0.0 0.0 0.0 {a:.6f} 0.0 0.0 0.0 {a:.6f}" '
             f"Properties=species:S:1:pos:R:3:forces:R:3 "
             f"energy={-10.0 * rng.random():.8f} "
             f'stress="{_floats(rng, 9)}" '
-            f'config_type=bulk pbc="T T T"\n'
+            f"config_energy_weight={rng.random():.6f} "
+            f"config_forces_weight={rng.random():.6f} "
+            f"config_stress_weight={10.0 * rng.random():.6f} "
+            f'pbc="T T T"\n'
         )
         _write_atom_lines(out, rng, n_atoms, a)
 
