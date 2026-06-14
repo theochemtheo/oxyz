@@ -233,7 +233,10 @@ pub fn scan_frames<R: BufRead>(mut reader: R) -> Result<FrameIndex> {
                 }),
             })?;
 
-        let (n_bytes, skipped) = skip_lines(&mut reader, n_atoms + 1)?;
+        // Saturating: an untrusted count of usize::MAX must not overflow the
+        // +1 for the comment line. usize::MAX lines never arrive, so the read
+        // hits EOF and reports a missing line rather than wrapping to 0.
+        let (n_bytes, skipped) = skip_lines(&mut reader, n_atoms.saturating_add(1))?;
         offset += n_bytes;
         line_number += skipped;
         if skipped <= n_atoms {
@@ -431,7 +434,9 @@ impl<R: BufRead> Iterator for RawFrames<R> {
 
             if !self.selected(frame_index) {
                 // Skip the frame's lines without copying them anywhere.
-                let skipped = match skip_lines(&mut self.reader, n_atoms + 1) {
+                // Saturating: see scan_frames -- an untrusted usize::MAX count
+                // must not overflow the +1 for the comment line.
+                let skipped = match skip_lines(&mut self.reader, n_atoms.saturating_add(1)) {
                     Ok((_, skipped)) => skipped,
                     Err(error) => return self.fuse(error.into()),
                 };
@@ -1550,5 +1555,47 @@ mod tests {
         };
         assert!(error.to_string().contains("out of range"), "{error}");
         assert!(frames.next().is_none(), "fused after the error");
+    }
+
+    #[test]
+    fn usize_max_count_does_not_overflow() {
+        // The +1 for the comment line must not overflow on usize::MAX. Before
+        // the saturating add this panicked in debug builds (and wrapped to 0
+        // in release); now every reader reports a clean error instead.
+        let text = format!("{}\n", usize::MAX);
+        assert!(scan_frames(std::io::Cursor::new(text.as_bytes())).is_err());
+
+        let mut streamed = FrameIter::new(std::io::Cursor::new(text.as_bytes()));
+        assert!(matches!(streamed.next(), Some(Err(_))));
+
+        let mut batch = RawFrames::selecting(std::io::Cursor::new(text.as_bytes()), &[0]);
+        assert!(matches!(batch.next(), Some(Err(_))));
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// The batch reader reads count lines too: its skip path (unselected
+        /// frames) and read path must never panic on an untrusted count,
+        /// including usize::MAX -- the `n_atoms + 1` overflow site.
+        #[test]
+        fn raw_frames_never_panic_on_declared_counts(
+            count in any::<u64>(),
+            body in "[ -~\n]{0,200}",
+        ) {
+            let input = format!("{count}\nProperties=species:S:1:pos:R:3\n{body}");
+            // Selecting frame 0 drives the read path; selecting frame 1 forces
+            // frame 0 down the skip path.
+            for selection in [&[0usize][..], &[1usize][..]] {
+                let reader = std::io::Cursor::new(input.as_bytes());
+                for item in RawFrames::selecting(reader, selection) {
+                    let _ = item;
+                }
+            }
+        }
     }
 }
