@@ -41,6 +41,10 @@ pip install "oxyz[ase]"     # adds ASE conversion (ase >=3.23,<4)
 Wheels cover CPython ≥3.11 on Linux (x86_64, aarch64), macOS (arm64,
 x86_64), and Windows (x64).
 
+Installing puts an `oxyz` command on the path; `oxyz scan train.extxyz`
+summarises a file without writing any Python. It also runs without
+installing, via `uvx oxyz scan train.extxyz`.
+
 ## In place of ASE
 
 `oxyz.ase.read` and `oxyz.ase.iread` are drop-ins for `ase.io.read` /
@@ -125,12 +129,46 @@ metadata:
 offsets and declared atom counts — without parsing any contents. It is the
 cheap first question to ask of an unfamiliar file (5 ms for a 22 MiB file
 below) and the machinery behind random access, shuffled batching, and
-lazy negative indexing.
+lazy negative indexing. The same statistics, alongside the inferred
+schema, are a terminal away with `oxyz scan` (see [Command line](#command-line)).
 
 **Parallelism as a knob, not a mode.** Readers take `threads`: `None`
 parses on every core, `1` is the exact serial streaming path. Results and
 errors are identical either way — the parallel path is held to the serial
 path's behaviour by parity tests, not by intention.
+
+## Command line
+
+Installing oxyz provides an `oxyz` command for inspecting files from the
+shell; `uvx oxyz` runs it without installing anything.
+
+```sh
+oxyz scan train.extxyz
+```
+
+`scan` prints per-frame atom-count statistics followed by the inferred
+schema. Unlike the `oxyz.scan` primitive, which parses nothing, the command
+reads the whole file to infer the schema; `--no-schema` drops back to the
+cheap structural pass and reports only the statistics. `--json` emits a
+single `{"stats": ..., "schema": ...}` object for piping into other tools.
+
+```text
+$ oxyz scan train.extxyz
+frames:      3
+atoms total: 6
+atoms/frame: min 1  max 3  mean 2.00  median 2.00  std 0.82
+
+3 frames, 6 atoms (min 1, max 3)
+
+per-atom columns:
+  species: S:1 (3/3 frames)
+  pos: R:3 (3/3 frames)
+  forces: R:3 (3/3 frames)
+
+metadata:
+  Lattice: IntArray[9] (3/3 frames)
+  energy: Real (3/3 frames)
+```
 
 ## Performance
 
@@ -194,6 +232,12 @@ oxyz.ase.to_atoms(frame)                     -> Atoms              # also Frame.
 `Frame`, `Batch`, `FrameIndex`, `Schema` and its parts (`ColumnSchema`,
 `MetadataSchema`, the variant records, the `Kind` enum) are frozen
 dataclasses; everything ships with type stubs.
+
+The command line mirrors a subset:
+
+```text
+oxyz scan <path> [--no-schema] [--json]   # stats + inferred schema
+```
 
 ### The fine print
 

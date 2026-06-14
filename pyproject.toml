@@ -44,6 +44,9 @@ dependencies = [
 Repository = "https://github.com/theochemtheo/oxyz"
 Issues = "https://github.com/theochemtheo/oxyz/issues"
 
+[project.scripts]
+oxyz = "oxyz._cli:main"
+
 [project.optional-dependencies]
 # >=3.23: the first ase with set_calc_and_arrays and numpy 2 support; the
 # oxyz.ase golden tests pass from 3.23 up. <4: ASEv4 may change the data
