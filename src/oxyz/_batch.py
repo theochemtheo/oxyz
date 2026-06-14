@@ -61,6 +61,14 @@ def read_batch(
     `threads=1` serially; the batch is identical either way.
     """
     plan = [int(i) for i in indices]
+    for index in plan:
+        if index < 0:
+            # The Rust binding takes unsigned indices; reject negatives here
+            # with the documented out-of-range IndexError rather than leaking
+            # pyo3's OverflowError. Negative indexing is not supported.
+            raise IndexError(
+                f"frame index {index} out of range: indices must be non-negative"
+            )
     return _batch_from_data(_rust.read_batch(str(path), plan, threads), plan)
 
 

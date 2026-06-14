@@ -159,6 +159,13 @@ def test_read_batch_out_of_range_raises_index_error(tmp_path: Path) -> None:
         oxyz.read_batch(path, [0, 3])
 
 
+def test_read_batch_negative_index_raises_index_error() -> None:
+    # Negative indices are not supported; they raise the documented
+    # IndexError rather than leaking pyo3's OverflowError.
+    with pytest.raises(IndexError, match="frame index -1 out of range"):
+        oxyz.read_batch(VARYING, [0, -1])
+
+
 def test_read_batch_threads_are_equivalent() -> None:
     serial = oxyz.read_batch(VARYING, [2, 0, 1], threads=1)
     parallel = oxyz.read_batch(VARYING, [2, 0, 1], threads=4)
