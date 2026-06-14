@@ -2,7 +2,7 @@
 //!
 //! Runtime-typed on purpose: which columns a file has, their types, and
 //! their widths are discovered while parsing, so they cannot be compile-time
-//! type parameters. extxyz's closed set of column kinds (`R`/`I`/`S`/`L`)
+//! type parameters. extxyz's closed set of column kinds (`R`/`I`/`L`/`S`)
 //! maps onto enums instead.
 //!
 //! Parsing lives in [`crate::extxyz`]; a future `Batch` (concatenated
