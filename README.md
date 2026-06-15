@@ -22,12 +22,11 @@ print(schema)                                    # which keys drift, and in how 
 
 `oxyz` exists for the gap between "extxyz is the lingua franca of atomistic
 ML datasets" and "every Python extxyz reader is slow enough to matter".
-Reading a MACE-style training file into numpy is 12–25× faster than
-`ase.io.read` on the benchmarks below; reading it into `ase.Atoms` objects
-is 2.4–3.5× faster. The same single pass can also tell you the dataset's
-schema — which columns and metadata keys appear, with what types and
-shapes, and how consistently — which is the part of dataset ingestion that
-usually goes unchecked.
+Reading a dataset into numpy is 12–25× faster than `ase.io.read` on the
+benchmarks below; reading it into `ase.Atoms` objects is 2.4–3.5× faster.
+The same single pass can also tell you the dataset's schema — which columns
+and metadata keys appear, with what types and shapes, and how consistently
+— which is the part of dataset ingestion that usually goes unchecked.
 
 Pre-1.0: minor versions may change the API.
 
