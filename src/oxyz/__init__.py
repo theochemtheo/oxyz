@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 from oxyz._batch import Batch, iter_batches, read_batch
-from oxyz._frames import Frame, iter_frames, read_first, read_frames
+from oxyz._frames import (
+    ColumnValues,
+    Frame,
+    MetadataValue,
+    iter_frames,
+    read_first,
+    read_frames,
+)
 from oxyz._rust import ParseError
 from oxyz._scan import FrameIndex, scan
 from oxyz._schema import (
@@ -17,11 +24,13 @@ from oxyz._schema import (
 __all__ = [
     "Batch",
     "ColumnSchema",
+    "ColumnValues",
     "ColumnVariant",
     "Frame",
     "FrameIndex",
     "Kind",
     "MetadataSchema",
+    "MetadataValue",
     "MetadataVariant",
     "ParseError",
     "Schema",
