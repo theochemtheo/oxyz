@@ -1221,14 +1221,14 @@ fn parse_comment_metadata(comment: &str) -> Result<Vec<(String, String)>> {
         }
 
         let key = slice_comment(comment, key_start, i)?;
-        i += 1; // skip '='
+        i += 1;
 
         if i >= bytes.len() {
             return Err(ExtxyzError::InvalidMetadata { index: i });
         }
 
         let value = if bytes[i] == b'"' {
-            i += 1; // skip opening quote
+            i += 1;
             let value_start = i;
 
             while i < bytes.len() && bytes[i] != b'"' {
@@ -1242,7 +1242,7 @@ fn parse_comment_metadata(comment: &str) -> Result<Vec<(String, String)>> {
             }
 
             let value = slice_comment(comment, value_start, i)?;
-            i += 1; // skip closing quote
+            i += 1;
             value
         } else {
             let value_start = i;
