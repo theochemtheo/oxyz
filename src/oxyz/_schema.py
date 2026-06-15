@@ -135,7 +135,12 @@ def _metadata_schema(data: _rust.MetadataSchemaData) -> MetadataSchema:
 
 
 def infer_schema(path: str | Path) -> Schema:
-    """Infer the dataset's schema in a single pass over the file."""
+    """Fold the whole file into a `Schema` in a single pass.
+
+    Records, per column and metadata key, the observed variants and how many
+    frames used each, with a strict `is_consistent` and a promoted `unified`.
+    Parses every frame; for the structure alone, use `scan`.
+    """
     data = _rust.infer_schema(str(path))
     return Schema(
         n_frames=data["n_frames"],

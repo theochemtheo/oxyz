@@ -10,6 +10,7 @@ so new majors are opted into deliberately.
 
 Known divergence from `ase.io.read`: 6-component (Voigt) `stress` metadata
 is accepted and routed to the calculator; ASE's comment parser rejects it.
+The README's "Divergences from ASE" section lists the rest.
 """
 
 from __future__ import annotations

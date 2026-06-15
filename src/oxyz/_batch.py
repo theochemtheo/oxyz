@@ -36,6 +36,7 @@ class Batch:
 
     @property
     def n_atoms(self) -> np.ndarray:
+        """Per-frame atom counts, `np.diff(offsets)`."""
         return np.diff(self.offsets)
 
     @property
@@ -45,7 +46,10 @@ class Batch:
 
     @property
     def batch(self) -> np.ndarray:
-        """Per-atom frame id within this batch (PyG's `batch` vector)."""
+        """Per-atom frame id within this batch (PyG's `batch` vector).
+
+        Recomputed on each access; hoist it out of a hot loop.
+        """
         return np.repeat(np.arange(self.n_frames), self.n_atoms)
 
 

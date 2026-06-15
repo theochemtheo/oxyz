@@ -47,7 +47,8 @@ def scan(path: str | Path) -> FrameIndex:
     `n_atoms` is `intp` so arithmetic with it does not promote to float64.
     The atom-count statistics (`min_atoms`/`max_atoms`/`mean_atoms`/
     `median_atoms`/`std_atoms`) are `None` for an empty file — the only
-    optionals in the result.
+    optionals in the result. For column and metadata types too, at the cost of
+    a full parse, use `infer_schema`.
     """
     data = _rust.scan(str(path))
     return FrameIndex(offsets=data["offsets"], n_atoms=data["n_atoms"])

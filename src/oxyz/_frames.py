@@ -21,9 +21,10 @@ class Frame:
     """One parsed extxyz frame: per-atom columns plus comment-line metadata.
 
     Both dicts preserve file order. Column names and metadata values are kept
-    exactly as written in the file; aliasing (``force`` vs ``forces``) and
-    conversions (Fortran-order ``Lattice`` to a 3x3 cell) belong to a later
-    normalisation layer.
+    exactly as written in the file; aliasing (`force` vs `forces`) and
+    conversions (Fortran-order `Lattice` to a 3x3 cell) belong to a later
+    normalisation layer. `metadata` is a dict, so a repeated key keeps only its
+    last value.
     """
 
     n_atoms: int
@@ -38,6 +39,10 @@ class Frame:
 
 
 def read_first(path: str | Path) -> Frame:
+    """Read only the first frame, stopping there.
+
+    Cheaper than `read_frames(path)[0]`, which parses the whole file.
+    """
     return _frame_from_data(_rust.read_first_frame(str(path)))
 
 
@@ -50,7 +55,10 @@ def _check_threads(threads: int | None) -> None:
 
 def read_frames(path: str | Path, *, threads: int | None = None) -> list[Frame]:
     """Read every frame. Parses on all cores by default; `threads=1` streams
-    serially. Results and errors are identical regardless of `threads`."""
+    serially. Results and errors are identical regardless of `threads`.
+
+    For constant memory on a large file, stream with `iter_frames`.
+    """
     _check_threads(threads)
     data = _rust.read_frames(str(path), threads)
     return [_frame_from_data(frame) for frame in data]
@@ -78,7 +86,8 @@ def iter_frames(path: str | Path) -> Iterator[Frame]:
 
     The file stays open while iterating and closes when the iterator is
     dropped. After a parse error the stream position is untrustworthy, so
-    iteration ends: the error is raised once, then StopIteration.
+    iteration ends: the error is raised once, then StopIteration. To
+    materialise every frame at once (and in parallel), use `read_frames`.
     """
     for data in _rust.FrameIter(str(path)):
         yield _frame_from_data(data)

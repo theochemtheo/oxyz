@@ -1,3 +1,13 @@
+"""Fast extxyz reading for atomistic machine learning.
+
+A Rust parser behind a small, typed Python API. `read_frames`/`iter_frames`
+return frames as numpy arrays; `read_batch`/`iter_batches` concatenate frames
+into batches; `scan` and `infer_schema` report a file's structure. ASE
+conversion lives in the optional `oxyz.ase` submodule.
+
+Columns and metadata are kept as written — no aliasing, no normalisation.
+"""
+
 from __future__ import annotations
 
 from oxyz._batch import Batch, iter_batches, read_batch

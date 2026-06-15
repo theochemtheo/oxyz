@@ -9,7 +9,10 @@ __build_profile__: str
 class ParseError(ValueError):
     """Raised when extxyz content cannot be parsed.
 
-    Location attributes are `None` when the parser cannot pin them down.
+    A `ValueError` subclass. Carries the location of the offending input as
+    attributes — `frame_index`, `line_number`, `column` — each `None` when
+    the parser cannot pin that dimension down, so callers can find the bad
+    frame without parsing the message string.
     """
 
     frame_index: int | None
