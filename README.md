@@ -240,7 +240,7 @@ predictably slower; See [benchmarks/RESULTS.md](https://github.com/theochemtheo/
 ```python
 oxyz.read_frames(path, *, threads=None)      -> list[Frame]
 oxyz.iter_frames(path)                       -> Iterator[Frame]   # constant memory
-oxyz.read_first_frame(path)                  -> Frame
+oxyz.read_first(path)                        -> Frame
 oxyz.read_batch(path, indices, *, threads=None) -> Batch
 oxyz.iter_batches(path, *, frames_per_batch=None, atoms_per_batch=None,
                   shuffle=False, seed=None, threads=None) -> Iterator[Batch]

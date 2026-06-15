@@ -28,7 +28,7 @@ def as_array(value: object) -> np.ndarray:
 
 @pytest.mark.parametrize("path", CORPUS, ids=lambda path: path.name)
 def test_every_fixture_converts_to_python(path: Path) -> None:
-    frame = oxyz.read_first_frame(path)
+    frame = oxyz.read_first(path)
 
     assert frame.n_atoms > 0
     assert frame.columns
@@ -222,8 +222,8 @@ def test_infer_schema_report() -> None:
     assert "energy: Real (3/3 frames)" in report
 
 
-def test_read_first_frame_simple_extxyz() -> None:
-    frame = oxyz.read_first_frame(DATA_DIR / "simple.extxyz")
+def test_read_first_simple_extxyz() -> None:
+    frame = oxyz.read_first(DATA_DIR / "simple.extxyz")
 
     assert frame.n_atoms == 1
     assert list(frame.columns) == ["species", "pos", "forces"]
@@ -262,7 +262,7 @@ def test_read_first_frame_simple_extxyz() -> None:
 
 
 def test_nonorthogonal_lattice_preserved_as_written() -> None:
-    frame = oxyz.read_first_frame(DATA_DIR / "nonorthogonal.extxyz")
+    frame = oxyz.read_first(DATA_DIR / "nonorthogonal.extxyz")
 
     lattice = as_array(frame.metadata["Lattice"])
     assert_allclose(lattice, np.array([10.0, 1.0, 2.0, 0.0, 11.0, 3.0, 0.0, 0.0, 12.0]))
@@ -273,7 +273,7 @@ def test_nonorthogonal_lattice_preserved_as_written() -> None:
 
 
 def test_integer_and_string_columns() -> None:
-    frame = oxyz.read_first_frame(DATA_DIR / "id_and_selection.extxyz")
+    frame = oxyz.read_first(DATA_DIR / "id_and_selection.extxyz")
 
     assert list(frame.columns) == ["id", "species", "pos", "selection"]
 
@@ -288,7 +288,7 @@ def test_integer_and_string_columns() -> None:
 
 
 def test_metadata_value_typing() -> None:
-    frame = oxyz.read_first_frame(DATA_DIR / "quoted_strings_booleans_scalars.extxyz")
+    frame = oxyz.read_first(DATA_DIR / "quoted_strings_booleans_scalars.extxyz")
 
     assert frame.metadata["source"] == "generated for parser study"
     assert frame.metadata["split"] == "train"
@@ -304,7 +304,7 @@ def test_metadata_value_typing() -> None:
 
 
 def test_bracket_array_metadata() -> None:
-    frame = oxyz.read_first_frame(DATA_DIR / "newstyle_array_metadata.extxyz")
+    frame = oxyz.read_first(DATA_DIR / "newstyle_array_metadata.extxyz")
 
     kpoints = as_array(frame.metadata["kpoints"])
     assert kpoints.dtype == np.int64
@@ -318,7 +318,7 @@ def test_bracket_array_metadata() -> None:
 
 
 def test_mace_training_schema_names_preserved() -> None:
-    frame = oxyz.read_first_frame(DATA_DIR / "mace_ref_energy_forces_stress.xyz")
+    frame = oxyz.read_first(DATA_DIR / "mace_ref_energy_forces_stress.xyz")
 
     ref_forces = as_array(frame.columns["REF_forces"])
     assert ref_forces.shape == (3, 3)

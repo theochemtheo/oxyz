@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from oxyz._batch import Batch, iter_batches, read_batch
-from oxyz._frames import Frame, iter_frames, read_first_frame, read_frames
+from oxyz._frames import Frame, iter_frames, read_first, read_frames
 from oxyz._rust import ParseError
 from oxyz._scan import FrameIndex, scan
 from oxyz._schema import (
@@ -29,7 +29,7 @@ __all__ = [
     "iter_batches",
     "iter_frames",
     "read_batch",
-    "read_first_frame",
+    "read_first",
     "read_frames",
     "scan",
 ]

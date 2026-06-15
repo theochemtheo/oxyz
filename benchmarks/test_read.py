@@ -104,7 +104,7 @@ def oxyz_iter_read_all(path: Path) -> list:
 
 @row("numpy frames", "serial")
 def oxyz_read_first(path: Path) -> object:
-    return oxyz.read_first_frame(path)
+    return oxyz.read_first(path)
 
 
 @row("ase.Atoms", "serial")
@@ -247,7 +247,7 @@ def test_read_all_mace_mixed(benchmark, read, mace_mixed):
 
 @pytest.mark.benchmark(group="read_first/large_frames")
 @pytest.mark.parametrize("read", READ_FIRST)
-def test_read_first_frame_of_large_file(benchmark, read, large_frames):
+def test_read_first_of_large_file(benchmark, read, large_frames):
     frame = run(benchmark, read, large_frames, shape=None)
     assert frame is not None
 

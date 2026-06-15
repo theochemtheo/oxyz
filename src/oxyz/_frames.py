@@ -37,7 +37,7 @@ class Frame:
         return to_atoms(self)
 
 
-def read_first_frame(path: str | Path) -> Frame:
+def read_first(path: str | Path) -> Frame:
     return _frame_from_data(_rust.read_first_frame(str(path)))
 
 

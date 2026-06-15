@@ -256,7 +256,7 @@ def test_frame_to_ase_method() -> None:
     import oxyz
 
     path = DATA_DIR / "minimal_periodic.extxyz"
-    atoms = oxyz.read_first_frame(path).to_ase()
+    atoms = oxyz.read_first(path).to_ase()
     assert_atoms_match(atoms, ase.io.read(path, index=0, format="extxyz"))
 
 
