@@ -19,6 +19,8 @@ dist/
 .coverage
 .coverage.*
 htmlcov/
+coverage/
+*.profraw
 
 # Rust
 target/
