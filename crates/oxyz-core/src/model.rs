@@ -165,3 +165,52 @@ impl Frame {
             .map(|(_, value)| value)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn column_kind_displays_as_its_extxyz_letter() {
+        assert_eq!(ColumnKind::Real.to_string(), "R");
+        assert_eq!(ColumnKind::Int.to_string(), "I");
+        assert_eq!(ColumnKind::Bool.to_string(), "L");
+        assert_eq!(ColumnKind::Str.to_string(), "S");
+    }
+
+    #[test]
+    fn column_data_reports_kind_len_and_emptiness() {
+        let columns = [
+            (ColumnData::Real(vec![1.0, 2.0]), ColumnKind::Real, 2),
+            (ColumnData::Int(vec![7]), ColumnKind::Int, 1),
+            (
+                ColumnData::Bool(vec![true, false, true]),
+                ColumnKind::Bool,
+                3,
+            ),
+            (ColumnData::Str(vec!["a".to_owned()]), ColumnKind::Str, 1),
+        ];
+        for (data, kind, len) in columns {
+            assert_eq!(data.kind(), kind);
+            assert_eq!(data.len(), len);
+            assert!(!data.is_empty());
+        }
+        assert!(ColumnData::Int(Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn typed_accessors_match_only_their_own_variant() {
+        let real = ColumnData::Real(vec![0.5]);
+        assert_eq!(real.as_real(), Some(&[0.5][..]));
+        assert_eq!(real.as_int(), None);
+        assert_eq!(real.as_bool(), None);
+        assert_eq!(real.as_str(), None);
+
+        assert_eq!(ColumnData::Int(vec![7]).as_int(), Some(&[7][..]));
+        assert_eq!(ColumnData::Bool(vec![true]).as_bool(), Some(&[true][..]));
+
+        let text = ColumnData::Str(vec!["a".to_owned()]);
+        assert_eq!(text.as_str(), Some(&["a".to_owned()][..]));
+        assert_eq!(text.as_real(), None);
+    }
+}

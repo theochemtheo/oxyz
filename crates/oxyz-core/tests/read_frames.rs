@@ -112,6 +112,22 @@ fn reads_integer_columns_with_species_mid_row() {
 }
 
 #[test]
+fn reads_per_atom_boolean_column() {
+    let frame = read_first_frame(fixture("per_atom_boolean.extxyz")).unwrap();
+
+    let names: Vec<&str> = frame
+        .columns
+        .iter()
+        .map(|column| column.name.as_str())
+        .collect();
+    assert_eq!(names, ["species", "pos", "active"]);
+
+    let active = frame.column("active").unwrap();
+    assert_eq!(active.width, 1);
+    assert_eq!(active.data.as_bool().unwrap(), [true, false, true]);
+}
+
+#[test]
 fn reads_per_atom_string_column_and_any_element() {
     let frame = read_first_frame(fixture("molecule_type_labels.extxyz")).unwrap();
 

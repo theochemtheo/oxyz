@@ -62,6 +62,7 @@ dev = [
     "maturin>=1.13.3",
     "prek>=0.4.4",
     "pytest>=9.0.3",
+    "pytest-cov>=6",
     "ruff>=0.15.16",
     "rumdl>=0.2.15",
     "seaborn>=0.13.2",
@@ -95,6 +96,24 @@ select = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["oxyz"]
+branch = true
+omit = ["*/oxyz/__main__.py"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "@(?:typing\\.)?overload",
+]
+
+[tool.coverage.html]
+directory = "htmlcov/python"
+
+[tool.coverage.lcov]
+output = "coverage/python.lcov"
 
 [tool.maturin]
 manifest-path = "crates/oxyz-py/Cargo.toml"

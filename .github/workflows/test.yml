@@ -55,3 +55,37 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: uv sync --extra ase
       - run: uv run pytest
+
+  coverage:
+    needs: [rust, python]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+      - run: uv sync --extra ase
+      - run: bash scripts/coverage.sh
+      - run: cat coverage/summary.md >> "$GITHUB_STEP_SUMMARY"
+        if: always()
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-html
+          path: htmlcov/
+      - name: Comment coverage on PR
+        if: ${{ always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment "${{ github.event.pull_request.number }}" --edit-last --create-if-none --body-file coverage/summary.md

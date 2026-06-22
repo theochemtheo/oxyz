@@ -22,6 +22,7 @@ const FIXTURES: &[&str] = &[
     "newstyle_array_metadata.extxyz",
     "no_lattice_molecule.xyz",
     "nonorthogonal.extxyz",
+    "per_atom_boolean.extxyz",
     "periodic_pbc_ttf.extxyz",
     "quoted_strings_booleans_scalars.extxyz",
     "simple.extxyz",
