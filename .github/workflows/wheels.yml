@@ -123,5 +123,9 @@ jobs:
         with:
           subject-path: "wheels-*/*"
       - uses: astral-sh/setup-uv@v7
+        with:
+          # This job only runs `uv publish`; it installs nothing and does not
+          # check out the repo, so there is nothing to cache against.
+          enable-cache: false
       - name: Publish to PyPI
         run: uv publish --trusted-publishing always 'wheels-*/*'
