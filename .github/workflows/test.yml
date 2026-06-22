@@ -57,6 +57,7 @@ jobs:
       - run: uv run pytest
 
   coverage:
+    needs: [rust, python]
     runs-on: ubuntu-latest
     permissions:
       contents: read

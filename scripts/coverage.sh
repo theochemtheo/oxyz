@@ -17,8 +17,8 @@
 set -euo pipefail
 
 # Minimum line coverage, percent. Override per run via the environment.
-PY_MIN="${COVERAGE_PY_MIN:-90}"
-RS_MIN="${COVERAGE_RS_MIN:-85}"
+PY_MIN="${COVERAGE_PY_MIN:-92}"
+RS_MIN="${COVERAGE_RS_MIN:-90}"
 
 # cargo-llvm-cov needs the rustup toolchain for the profiler runtime; ensure its
 # cargo shadows any system one (e.g. MacPorts/Homebrew) on PATH.
