@@ -9,3 +9,9 @@ resolver = "2"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
+
+# Keep function/line symbols in optimised builds so samply can attribute
+# samples. line-tables-only adds negligible build time and no codegen change;
+# the bench profile inherits it.
+[profile.release]
+debug = "line-tables-only"
