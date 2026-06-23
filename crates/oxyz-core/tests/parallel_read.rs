@@ -87,7 +87,7 @@ fn first_error_in_request_order_wins() {
 
 #[test]
 fn empty_selection_is_an_empty_batch_error() {
-    let indexed = IndexedFrames::open(fixture("varying_atom_counts.xyz")).unwrap();
+    let mut indexed = IndexedFrames::open(fixture("varying_atom_counts.xyz")).unwrap();
     let error = indexed.get_batch_parallel(&[], Some(2)).unwrap_err();
     assert_eq!(error.to_string(), "batch is empty");
 }

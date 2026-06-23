@@ -683,6 +683,12 @@ pub struct IndexedFrames {
     /// Kept so parallel reads can open per-worker handles.
     path: std::path::PathBuf,
     index: FrameIndex,
+    /// Worker pool for parallel `get_batch`, built once and reused across
+    /// calls (one `iter_batches` loop fires `get_batch` per batch). Tagged
+    /// with its thread count so a differing request rebuilds it; `None`
+    /// requests use rayon's global pool and never populate this.
+    #[cfg(feature = "parallel")]
+    pool: Option<(usize, rayon::ThreadPool)>,
 }
 
 impl IndexedFrames {
@@ -694,6 +700,8 @@ impl IndexedFrames {
             file: File::open(path)?,
             path: path.to_owned(),
             index,
+            #[cfg(feature = "parallel")]
+            pool: None,
         })
     }
 
@@ -734,8 +742,17 @@ impl IndexedFrames {
     /// `get_batch` with the frame parses spread over worker threads;
     /// `threads` of `None` uses every core. Output and errors are identical
     /// to the serial version.
+    ///
+    /// Takes `&mut self` to reuse one [`rayon::ThreadPool`] across calls: a
+    /// streamed `iter_batches` loop calls this per batch, and rebuilding a
+    /// pool each time would spawn and park N threads per batch — pure
+    /// overhead that grows with the thread count.
     #[cfg(feature = "parallel")]
-    pub fn get_batch_parallel(&self, indices: &[usize], threads: Option<usize>) -> Result<Batch> {
+    pub fn get_batch_parallel(
+        &mut self,
+        indices: &[usize],
+        threads: Option<usize>,
+    ) -> Result<Batch> {
         let entries = indices
             .iter()
             .map(|&frame_index| {
@@ -749,12 +766,40 @@ impl IndexedFrames {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let frames = parse_entries_parallel(&self.path, &entries, threads)?;
+        if entries.is_empty() {
+            return Err(BatchError::Empty.into());
+        }
+
+        let frames = match threads {
+            // None runs on rayon's global all-core pool: no per-call pool to
+            // build or cache.
+            None => parse_entries_on_pool(&self.path, &entries),
+            Some(n) => {
+                let path = self.path.clone();
+                self.worker_pool(n)?
+                    .install(|| parse_entries_on_pool(&path, &entries))
+            }
+        }?;
+
         let mut builder = BatchBuilder::new();
         for frame in frames {
             builder.push(frame)?;
         }
         Ok(builder.finish()?)
+    }
+
+    /// The cached `threads`-wide worker pool, built on first use and rebuilt
+    /// only when the requested thread count changes.
+    #[cfg(feature = "parallel")]
+    fn worker_pool(&mut self, threads: usize) -> Result<&rayon::ThreadPool> {
+        if self.pool.as_ref().map(|(count, _)| *count) != Some(threads) {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .map_err(|error| ExtxyzError::Io(io::Error::other(error)))?;
+            self.pool = Some((threads, pool));
+        }
+        Ok(&self.pool.as_ref().expect("just ensured present").1)
     }
 
     fn seek_and_parse(&mut self, entry: FrameEntry, frame_index: usize) -> Result<Frame> {
@@ -820,36 +865,28 @@ pub fn read_frames_parallel(path: impl AsRef<Path>, threads: Option<usize>) -> R
 }
 
 /// Parse tagged index entries on rayon workers, each chunk through its own
-/// file handle. Results keep request order; the reported error is the first
-/// in request order, exactly as a serial read would raise it.
+/// file handle. Runs in the current pool context (the caller installs it, so
+/// `rayon::current_num_threads` reports the right width). Results keep request
+/// order; the reported error is the first in request order, exactly as a
+/// serial read would raise it.
 #[cfg(feature = "parallel")]
-fn parse_entries_parallel(
-    path: &Path,
-    entries: &[(usize, FrameEntry)],
-    threads: Option<usize>,
-) -> Result<Vec<Frame>> {
+fn parse_entries_on_pool(path: &Path, entries: &[(usize, FrameEntry)]) -> Result<Vec<Frame>> {
     use rayon::prelude::*;
 
-    if entries.is_empty() {
-        return Err(BatchError::Empty.into());
-    }
+    // A few chunks per thread: amortises the per-chunk open() while leaving
+    // rayon room to balance.
+    let chunk_size = entries
+        .len()
+        .div_ceil(rayon::current_num_threads() * 4)
+        .max(1);
 
-    with_pool(threads, || {
-        // A few chunks per thread: amortises the per-chunk open() while
-        // leaving rayon room to balance.
-        let chunk_size = entries
-            .len()
-            .div_ceil(rayon::current_num_threads() * 4)
-            .max(1);
+    let results: Vec<Result<Frame>> = entries
+        .par_chunks(chunk_size)
+        .map(|chunk| parse_chunk(path, chunk))
+        .flatten_iter()
+        .collect();
 
-        let results: Vec<Result<Frame>> = entries
-            .par_chunks(chunk_size)
-            .map(|chunk| parse_chunk(path, chunk))
-            .flatten_iter()
-            .collect();
-
-        results.into_iter().collect()
-    })?
+    results.into_iter().collect()
 }
 
 #[cfg(feature = "parallel")]
