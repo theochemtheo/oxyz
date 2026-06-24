@@ -1013,12 +1013,24 @@ impl<R: BufRead> FrameIter<R> {
             if !self.fill_line()? {
                 return Err(ExtxyzError::MissingLine("atom"));
             }
-            let line = line_str(&self.buffer)?;
-
+            // Tokenise the raw bytes on ASCII whitespace. Atom rows are numbers
+            // and element symbols, so the per-line UTF-8 check the count and
+            // comment lines pay is needless here -- only string cells are
+            // validated, when pushed.
             self.cells.clear();
-            for token in line.split_whitespace() {
-                let start = token.as_ptr() as usize - line.as_ptr() as usize;
-                self.cells.push((start, start + token.len()));
+            let mut i = 0;
+            while i < self.buffer.len() {
+                while i < self.buffer.len() && self.buffer[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+                if i == self.buffer.len() {
+                    break;
+                }
+                let start = i;
+                while i < self.buffer.len() && !self.buffer[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+                self.cells.push((start, i));
             }
 
             if self.cells.len() != row_width {
@@ -1032,7 +1044,10 @@ impl<R: BufRead> FrameIter<R> {
             let mut cursor = 0;
             for column in &mut columns {
                 let spans = &self.cells[cursor..cursor + column.width];
-                push_cells(column, spans.iter().map(|&(start, end)| &line[start..end]))?;
+                push_cells(
+                    column,
+                    spans.iter().map(|&(start, end)| &self.buffer[start..end]),
+                )?;
                 cursor += column.width;
             }
         }
@@ -1176,13 +1191,15 @@ fn line_str(buffer: &[u8]) -> Result<&str> {
     })
 }
 
-/// Append one atom's cells onto the column's buffer.
-fn push_cells<'a>(column: &mut Column, cells: impl Iterator<Item = &'a str>) -> Result<()> {
+/// Append one atom's cells onto the column's buffer. Cells are raw bytes:
+/// numbers and booleans parse straight from ASCII, and only string columns are
+/// validated as UTF-8.
+fn push_cells<'a>(column: &mut Column, cells: impl Iterator<Item = &'a [u8]>) -> Result<()> {
     match &mut column.data {
         ColumnData::Real(buffer) => {
             for cell in cells {
-                // fast-float2 over std's Eisel-Lemire: measurably faster on
-                // the 6-floats-per-atom-line shape, same accepted grammar.
+                // fast-float2 parses straight from bytes; same accepted grammar
+                // as std, measurably faster on the 6-floats-per-atom-line shape.
                 buffer.push(
                     fast_float2::parse::<f64, _>(cell)
                         .map_err(|_| invalid_cell(&column.name, "real", cell))?,
@@ -1191,10 +1208,8 @@ fn push_cells<'a>(column: &mut Column, cells: impl Iterator<Item = &'a str>) -> 
         }
         ColumnData::Int(buffer) => {
             for cell in cells {
-                buffer.push(
-                    cell.parse::<i64>()
-                        .map_err(|_| invalid_cell(&column.name, "int", cell))?,
-                );
+                buffer
+                    .push(parse_int(cell).ok_or_else(|| invalid_cell(&column.name, "int", cell))?);
             }
         }
         ColumnData::Bool(buffer) => {
@@ -1205,7 +1220,7 @@ fn push_cells<'a>(column: &mut Column, cells: impl Iterator<Item = &'a str>) -> 
         }
         ColumnData::Str(buffer) => {
             for cell in cells {
-                buffer.push(cell.to_owned());
+                buffer.push(line_str(cell)?.to_owned());
             }
         }
     }
@@ -1213,20 +1228,27 @@ fn push_cells<'a>(column: &mut Column, cells: impl Iterator<Item = &'a str>) -> 
     Ok(())
 }
 
-fn invalid_cell(column: &str, kind: &'static str, value: &str) -> ExtxyzError {
+/// Parse an integer cell, preserving std's `i64` grammar. UTF-8 is checked
+/// first (trivial for a short numeric token) so a non-UTF-8 cell is rejected
+/// rather than misread.
+fn parse_int(cell: &[u8]) -> Option<i64> {
+    std::str::from_utf8(cell).ok()?.parse::<i64>().ok()
+}
+
+fn invalid_cell(column: &str, kind: &'static str, value: &[u8]) -> ExtxyzError {
     ExtxyzError::InvalidAtomValue {
         column: column.to_owned(),
         kind,
-        value: value.to_owned(),
+        value: String::from_utf8_lossy(value).into_owned(),
     }
 }
 
 /// `0`/`1` are valid here because the `L` kind removes the ambiguity; on the
 /// comment line a bare `1` must stay an integer (see [`bool_token`]).
-fn bool_cell(cell: &str) -> Option<bool> {
+fn bool_cell(cell: &[u8]) -> Option<bool> {
     match cell {
-        "T" | "TRUE" | "True" | "true" | "1" => Some(true),
-        "F" | "FALSE" | "False" | "false" | "0" => Some(false),
+        b"T" | b"TRUE" | b"True" | b"true" | b"1" => Some(true),
+        b"F" | b"FALSE" | b"False" | b"false" | b"0" => Some(false),
         _ => None,
     }
 }
@@ -1607,6 +1629,27 @@ mod tests {
 
         let mut batch = RawFrames::selecting(std::io::Cursor::new(text.as_bytes()), &[0]);
         assert!(matches!(batch.next(), Some(Err(_))));
+    }
+
+    #[test]
+    fn non_utf8_in_a_string_cell_errors() {
+        // Atom rows are tokenised as bytes, but a string (species) cell is
+        // still validated as UTF-8 when materialised: a stray non-UTF-8 byte
+        // there is a clean error, not a panic and not a silently mangled atom.
+        let mut bytes = b"1\nProperties=species:S:1:pos:R:3\n".to_vec();
+        bytes.extend_from_slice(&[0xFF, b' ', b'0', b' ', b'0', b' ', b'0', b'\n']);
+        let mut frames = FrameIter::new(std::io::Cursor::new(bytes));
+        assert!(matches!(frames.next(), Some(Err(_))));
+    }
+
+    #[test]
+    fn non_utf8_in_a_numeric_cell_errors() {
+        // A non-UTF-8 byte in a numeric cell fails as an invalid value rather
+        // than reaching the parser, since the cell never has to be valid UTF-8.
+        let mut bytes = b"1\nProperties=species:S:1:pos:R:3\nH ".to_vec();
+        bytes.extend_from_slice(&[0xFF, b' ', b'0', b' ', b'0', b'\n']);
+        let mut frames = FrameIter::new(std::io::Cursor::new(bytes));
+        assert!(matches!(frames.next(), Some(Err(_))));
     }
 }
 
