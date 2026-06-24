@@ -15,14 +15,15 @@ The README's "Divergences from ASE" section lists the rest.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import functools
+from collections.abc import Iterable, Iterator
 from itertools import islice
 from pathlib import Path
 from typing import overload
 
 import numpy as np
 
-from oxyz._frames import Frame, IndexedFrames, iter_frames
+from oxyz._frames import Frame, IndexedFrames, iter_frames, read_frames
 
 try:
     from ase import Atoms
@@ -80,15 +81,16 @@ def to_atoms(frame: Frame) -> Atoms:
     numbers = arrays.pop("numbers", None)
     symbols = arrays.pop("symbols", None)
     if symbols is not None:
-        symbols = [str(s).capitalize() for s in symbols]
-        unknown = sorted({s for s in symbols if s not in atomic_numbers})
-        if unknown:
-            raise ToAseError(f"species are not chemical symbols: {unknown}")
-    if numbers is None and symbols is None:
+        # Map the species column to atomic numbers and hand ASE those; a `Z`
+        # column, if also present, still wins (as ASE's reader has it).
+        mapped = _species_to_numbers(symbols)
+        if numbers is None:
+            numbers = mapped
+    if numbers is None:
         raise ToAseError("frame has neither a 'species' nor a 'Z' column")
 
     atoms = Atoms(
-        numbers if numbers is not None else symbols,
+        numbers=numbers,
         positions=arrays.pop("positions", None),
         charges=arrays.pop("initial_charges", None),
         cell=cell,
@@ -111,6 +113,41 @@ def to_atoms(frame: Frame) -> Atoms:
     # ASE's own routing: known results -> SinglePointCalculator, rest -> arrays.
     set_calc_and_arrays(atoms, arrays)
     return atoms
+
+
+@functools.cache
+def _atomic_number(symbol: str) -> int:
+    """Atomic number for a species token, capitalised (so `si` -> `Si`).
+
+    Cached: a file repeats the same handful of species across every atom, so
+    the capitalise and dict lookup happen once per distinct token, not once
+    per atom. Raises `KeyError` for non-symbols, turned into `ToAseError` by
+    the caller.
+    """
+    return atomic_numbers[symbol.capitalize()]
+
+
+def _species_to_numbers(symbols: np.ndarray | list[str]) -> np.ndarray:
+    """Map a species column to atomic numbers via the cached per-token lookup.
+
+    ASE is then handed numbers, so it skips its own per-atom symbol parsing.
+    Faster than vectorising with numpy here: a file's frames are small and
+    many, so the per-call cost of `np.char`/`np.unique` outweighs a cached
+    dict lookup over a plain list.
+    """
+    # tolist() yields plain str, faster to iterate than ndarray's np.str_ scalars.
+    species: list[str] = (
+        symbols.tolist() if isinstance(symbols, np.ndarray) else symbols
+    )
+    try:
+        return np.fromiter(
+            (_atomic_number(s) for s in species), dtype=int, count=len(species)
+        )
+    except KeyError:
+        unknown = sorted(
+            {s.capitalize() for s in species if s.capitalize() not in atomic_numbers}
+        )
+        raise ToAseError(f"species are not chemical symbols: {unknown}") from None
 
 
 @overload
@@ -148,7 +185,7 @@ def read(
     index = _parse_index(-1 if index is None else index)
     if isinstance(index, int):
         return to_atoms(_nth_frame(path, index))
-    return [to_atoms(frame) for frame in _sliced_frames(path, index)]
+    return [to_atoms(frame) for frame in _frames_for_read(path, index)]
 
 
 def iread(
@@ -197,6 +234,23 @@ def _nth_frame(path: str | Path, index: int) -> Frame:
     if frame is None:
         raise IndexError(f"frame {index} out of range")
     return frame
+
+
+def _frames_for_read(path: str | Path, frames: slice) -> Iterable[Frame]:
+    """Frames for the eager list read.
+
+    An unbounded forward slice needs every frame to end of file, so parse the
+    whole file on all cores rather than streaming on one. Bounded or reverse
+    slices keep the streaming/indexed path, which stops early — `read` must
+    not parse past the frames a bounded slice asks for.
+    """
+    start, stop, step = frames.start, frames.stop, frames.step
+    forward = all(bound is None or bound >= 0 for bound in (start, stop)) and (
+        step is None or step > 0
+    )
+    if forward and stop is None:
+        return read_frames(path)[start::step]
+    return _sliced_frames(path, frames)
 
 
 def _sliced_frames(path: str | Path, frames: slice) -> Iterator[Frame]:
