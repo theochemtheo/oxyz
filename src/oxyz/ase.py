@@ -240,6 +240,15 @@ def _nth_frame(path: str | Path, index: int) -> Frame:
     return frame
 
 
+def _is_forward(frames: slice) -> bool:
+    """A slice reads front-to-back iff its bounds are non-negative and its step
+    positive; anything else (negative bound or step) must resolve via the index."""
+    start, stop, step = frames.start, frames.stop, frames.step
+    return all(bound is None or bound >= 0 for bound in (start, stop)) and (
+        step is None or step > 0
+    )
+
+
 def _frames_for_read(path: str | Path, frames: slice) -> Iterable[Frame]:
     """Frames for the eager list read.
 
@@ -248,23 +257,15 @@ def _frames_for_read(path: str | Path, frames: slice) -> Iterable[Frame]:
     slices keep the streaming/indexed path, which stops early — `read` must
     not parse past the frames a bounded slice asks for.
     """
-    start, stop, step = frames.start, frames.stop, frames.step
-    forward = all(bound is None or bound >= 0 for bound in (start, stop)) and (
-        step is None or step > 0
-    )
-    if forward and stop is None:
-        return read_frames(path)[start::step]
+    if _is_forward(frames) and frames.stop is None:
+        return read_frames(path)[frames.start :: frames.step]
     return _sliced_frames(path, frames)
 
 
 def _sliced_frames(path: str | Path, frames: slice) -> Iterator[Frame]:
     """Forward slices stream; negative bounds or steps go via the index."""
-    start, stop, step = frames.start, frames.stop, frames.step
-    forward = all(bound is None or bound >= 0 for bound in (start, stop)) and (
-        step is None or step > 0
-    )
-    if forward:
-        return islice(iter_frames(path), start, stop, step)
+    if _is_forward(frames):
+        return islice(iter_frames(path), frames.start, frames.stop, frames.step)
 
     indexed = IndexedFrames(path)
     selected = range(*frames.indices(len(indexed)))
