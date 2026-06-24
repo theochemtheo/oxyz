@@ -7,21 +7,37 @@ on:
     tags:
       - "v*"
   pull_request:
-    # Build wheels on PRs that can break the build, not only ones that touch
-    # this workflow, so packaging breakage surfaces before the merge to main.
-    paths:
-      - ".github/workflows/wheels.yml"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "crates/**"
-      - "pyproject.toml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  # Does this change touch anything that can alter the built wheel? Non-build
+  # PRs skip the matrix below but still reach `wheels-gate`, the one required
+  # check, so a docs- or Python-only PR is not blocked waiting on builds it
+  # never triggers, while a build-affecting PR must pass them. Runs on every
+  # event; the output is only consulted for pull requests.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.filter.outputs.build }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            build:
+              - ".github/workflows/wheels.yml"
+              - "Cargo.toml"
+              - "Cargo.lock"
+              - "crates/**"
+              - "pyproject.toml"
+
   linux:
+    needs: changes
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.build == 'true' }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false
@@ -47,6 +63,8 @@ jobs:
           path: dist
 
   macos:
+    needs: changes
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.build == 'true' }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false
@@ -71,6 +89,8 @@ jobs:
           path: dist
 
   windows:
+    needs: changes
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.build == 'true' }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
@@ -91,6 +111,8 @@ jobs:
           path: dist
 
   sdist:
+    needs: changes
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.build == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -104,6 +126,29 @@ jobs:
         with:
           name: wheels-sdist
           path: dist
+
+  # Always-running fan-in: the single required status check for the build
+  # matrix. Passes when every build job succeeded or was skipped (a non-build
+  # PR), fails if any did not — so the matrix can stay conditional without the
+  # branch ruleset waiting forever on contexts that never report.
+  wheels-gate:
+    needs: [changes, linux, macos, windows, sdist]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the wheel builds to pass or be skipped
+        run: |
+          results="${{ join(needs.*.result, ' ') }}"
+          echo "build job results: $results"
+          for result in $results; do
+            case "$result" in
+              success | skipped) ;;
+              *)
+                echo "::error::a wheel build did not pass ($result)"
+                exit 1
+                ;;
+            esac
+          done
 
   release:
     name: Release
