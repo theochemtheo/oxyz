@@ -23,7 +23,7 @@ from typing import overload
 
 import numpy as np
 
-from oxyz._frames import Frame, IndexedFrames, iter_frames, read_frames
+from oxyz._frames import Frame, IndexedFrames, iter_frames, read_frames_sliced
 
 try:
     from ase import Atoms
@@ -258,7 +258,7 @@ def _frames_for_read(path: str | Path, frames: slice) -> Iterable[Frame]:
     not parse past the frames a bounded slice asks for.
     """
     if _is_forward(frames) and frames.stop is None:
-        return read_frames(path)[frames.start :: frames.step]
+        return read_frames_sliced(path, slice(frames.start, None, frames.step))
     return _sliced_frames(path, frames)
 
 
