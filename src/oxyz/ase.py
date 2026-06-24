@@ -143,10 +143,14 @@ def _species_to_numbers(symbols: np.ndarray | list[str]) -> np.ndarray:
         return np.fromiter(
             (_atomic_number(s) for s in species), dtype=int, count=len(species)
         )
-    except KeyError:
-        unknown = sorted(
-            {s.capitalize() for s in species if s.capitalize() not in atomic_numbers}
-        )
+    except (KeyError, TypeError):
+        # KeyError: a token that is not a chemical symbol. TypeError: a non-scalar
+        # species cell (a multi-component `species:S:2` column is list[list[str]],
+        # unhashable, so the cached lookup cannot key on it). Either way the column
+        # has no faithful symbol mapping, so report it strictly via `str(...)`
+        # rather than letting the raw exception escape.
+        tokens = (str(s).capitalize() for s in species)
+        unknown = sorted({t for t in tokens if t not in atomic_numbers})
         raise ToAseError(f"species are not chemical symbols: {unknown}") from None
 
 

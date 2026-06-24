@@ -250,6 +250,18 @@ def test_non_chemical_species_is_strict_error(tmp_path: Path) -> None:
         oxyz.ase.read(path, index=0)
 
 
+def test_non_scalar_species_is_strict_error(tmp_path: Path) -> None:
+    # A multi-component `species:S:2` column parses to unhashable per-atom
+    # cells; the symbol mapping must reject it via ToAseError rather than leak
+    # the TypeError the cached lookup raises on an unhashable key.
+    import oxyz.ase
+
+    path = tmp_path / "wide_species.extxyz"
+    path.write_text("1\nProperties=species:S:2:pos:R:3\nSi Ge 0 0 0\n")
+    with pytest.raises(oxyz.ase.ToAseError, match="species are not chemical symbols"):
+        oxyz.ase.read(path, index=0)
+
+
 def test_frame_to_ase_method() -> None:
     import ase.io
 
