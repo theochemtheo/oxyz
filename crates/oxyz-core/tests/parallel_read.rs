@@ -32,6 +32,67 @@ fn write_temp(name: &str, text: &str) -> PathBuf {
     path
 }
 
+/// A frame whose bytes exceed the intra-frame threshold (~2 MiB) so its atom
+/// rows are split across workers. `bad_row`, if set, gets an extra column.
+fn large_frame_text(n_frames: usize, n_atoms: usize, bad_row: Option<usize>) -> String {
+    let mut text = String::new();
+    for _ in 0..n_frames {
+        text.push_str(&format!("{n_atoms}\n"));
+        text.push_str(
+            "Lattice=\"10 0 0 0 10 0 0 0 10\" \
+             Properties=species:S:1:pos:R:3:forces:R:3 energy=-1.5\n",
+        );
+        for row in 0..n_atoms {
+            if bad_row == Some(row) {
+                text.push_str("Si 0.1 0.2 0.3 0.0 0.0 0.0 EXTRA\n");
+            } else {
+                text.push_str("Si 0.1 0.2 0.3 0.0 0.0 0.0\n");
+            }
+        }
+    }
+    text
+}
+
+/// ~2.6 MiB per frame engages the intra-frame parallel parser; the split and
+/// concatenation must reproduce the serial frame exactly, at every thread
+/// count and across a frame boundary.
+#[test]
+fn large_frame_parallel_matches_serial() {
+    let path = write_temp("large_frame.extxyz", &large_frame_text(2, 50_000, None));
+
+    let serial = read_frames(&path).unwrap();
+    assert_eq!(serial.len(), 2);
+    assert_eq!(serial[0].n_atoms, 50_000);
+    for threads in [Some(1), Some(2), Some(8), None] {
+        let parallel = read_frames_parallel(&path, threads).unwrap();
+        assert_eq!(parallel, serial, "threads={threads:?}");
+    }
+
+    std::fs::remove_file(path).ok();
+}
+
+/// A malformed row deep inside a large frame must raise the identical error —
+/// same message and file-absolute line number — as a serial read, regardless
+/// of which worker's range it landed in.
+#[test]
+fn large_frame_error_matches_serial() {
+    let path = write_temp(
+        "large_frame_bad.extxyz",
+        &large_frame_text(1, 50_000, Some(40_000)),
+    );
+
+    let serial = read_frames(&path).unwrap_err().to_string();
+    assert!(serial.contains("atom line"), "{serial}");
+    for threads in [Some(1), Some(2), Some(8), None] {
+        let parallel = read_frames_parallel(&path, threads)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(parallel, serial, "threads={threads:?}");
+    }
+
+    std::fs::remove_file(path).ok();
+}
+
 /// The invariant: parallel reads are observably identical to serial ones.
 #[test]
 fn parallel_reads_match_serial_across_corpus() {

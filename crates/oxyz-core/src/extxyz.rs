@@ -555,7 +555,7 @@ fn run_pipeline<R: BufRead + Send>(
             item.map(|chunk| {
                 chunk
                     .iter()
-                    .map(|raw| (raw.frame_index, parse_raw(raw)))
+                    .map(|raw| (raw.frame_index, parse_raw_dispatch(raw)))
                     .collect()
             })
         })
@@ -840,6 +840,264 @@ fn relabel_frame(item: Option<Result<Frame>>, frame_index: usize) -> Result<Fram
     }
 }
 
+/// A parsed comment line: the `Properties` column specs and the remaining
+/// metadata pairs, in file order.
+type CommentHeader = (Vec<PropertySpec>, Vec<(String, Value)>);
+
+/// Parse a comment line into its `Properties` column specs and the remaining
+/// metadata. `Properties` is consumed into typed columns; every other pair is
+/// typed by shape and kept in file order. Shared by the streaming reader and
+/// the parallel single-frame parser.
+fn parse_comment_line(comment: &str) -> Result<CommentHeader> {
+    let pairs = parse_comment_metadata(comment)?;
+
+    let mut metadata = Vec::with_capacity(pairs.len().saturating_sub(1));
+    let mut specs: Option<Vec<PropertySpec>> = None;
+    for (key, raw) in pairs {
+        if key == "Properties" && specs.is_none() {
+            specs = Some(parse_properties(&raw)?);
+        } else {
+            metadata.push((key, type_metadata_value(&raw)));
+        }
+    }
+
+    let specs = specs.ok_or(ExtxyzError::MissingMetadata { key: "Properties" })?;
+    Ok((specs, metadata))
+}
+
+/// A frame whose byte length reaches this is parsed with its atom rows split
+/// across workers; smaller frames parse on one thread. Set from a sweep of
+/// single-frame parse times: splitting an isolated frame breaks even around
+/// ~100 KB, and finer-grained range tasks improve pool balance even when many
+/// such frames keep every core busy — so the only frames to keep whole are the
+/// small ones, where 8-way overhead would dominate. ~256 KB (~5k atoms) sits
+/// safely past break-even and above typical small-molecule frames.
+#[cfg(feature = "parallel")]
+const INTRA_FRAME_BYTES: usize = 256 << 10;
+
+/// Parse a scanned frame, splitting its atom rows across workers when it is
+/// large enough to be worth it (see [`INTRA_FRAME_BYTES`]).
+#[cfg(feature = "parallel")]
+fn parse_raw_dispatch(raw: &RawFrame) -> Result<Frame> {
+    if raw.bytes.len() >= INTRA_FRAME_BYTES {
+        parse_raw_parallel(raw)
+    } else {
+        parse_raw(raw)
+    }
+}
+
+/// Wrap a parse error with the frame it occurred in, matching the framing the
+/// streaming reader applies via [`relabel_frame`].
+#[cfg(feature = "parallel")]
+fn in_frame(frame_index: usize, source: ExtxyzError) -> ExtxyzError {
+    ExtxyzError::InFrame {
+        frame_index,
+        source: Box::new(source),
+    }
+}
+
+/// Split off the first line of `bytes` — without its `\n` or `\r\n` ending —
+/// from the remainder, mirroring [`FrameIter::fill_line`].
+#[cfg(feature = "parallel")]
+fn split_first_line(bytes: &[u8]) -> (&[u8], &[u8]) {
+    match memchr::memchr(b'\n', bytes) {
+        Some(pos) => (strip_cr(&bytes[..pos]), &bytes[pos + 1..]),
+        None => (strip_cr(bytes), &[]),
+    }
+}
+
+#[cfg(feature = "parallel")]
+fn strip_cr(line: &[u8]) -> &[u8] {
+    match line.last() {
+        Some(&b'\r') => &line[..line.len() - 1],
+        _ => line,
+    }
+}
+
+/// Count the newline-delimited rows in `region`, matching how
+/// [`parse_atom_lines`] iterates: a trailing unterminated line still counts.
+#[cfg(feature = "parallel")]
+fn count_lines(region: &[u8]) -> usize {
+    if region.is_empty() {
+        return 0;
+    }
+    let newlines = memchr::memchr_iter(b'\n', region).count();
+    if region.last() == Some(&b'\n') {
+        newlines
+    } else {
+        newlines + 1
+    }
+}
+
+/// Split `region` into up to `parts` contiguous chunks at newline boundaries,
+/// each tagged with the index of its first row (for file-absolute line
+/// numbers). A row is never split across chunks.
+#[cfg(feature = "parallel")]
+fn split_atom_ranges(region: &[u8], parts: usize) -> Vec<(&[u8], usize)> {
+    if parts <= 1 || region.is_empty() {
+        return vec![(region, 0)];
+    }
+
+    let target = region.len() / parts;
+    let mut ranges = Vec::with_capacity(parts);
+    let mut start = 0;
+    let mut first_row = 0;
+    while ranges.len() < parts - 1 && start < region.len() {
+        let cut = (start + target).min(region.len());
+        // Extend to the end of the line the cut landed in.
+        let end = match memchr::memchr(b'\n', &region[cut..]) {
+            Some(pos) => cut + pos + 1,
+            None => region.len(),
+        };
+        let slice = &region[start..end];
+        ranges.push((slice, first_row));
+        first_row += count_lines(slice);
+        start = end;
+    }
+    if start < region.len() {
+        ranges.push((&region[start..], first_row));
+    }
+    ranges
+}
+
+/// Parse the atom rows in `region` into `columns` (appended), tokenising and
+/// erroring exactly as the streaming reader does. `first_line` is the file
+/// line number of the first row, for diagnostics.
+#[cfg(feature = "parallel")]
+fn parse_atom_lines(
+    region: &[u8],
+    columns: &mut [Column],
+    row_width: usize,
+    first_line: usize,
+) -> Result<()> {
+    let mut cells: Vec<(usize, usize)> = Vec::new();
+    let mut line_number = first_line;
+    let mut start = 0;
+
+    while start < region.len() {
+        let line_end =
+            memchr::memchr(b'\n', &region[start..]).map_or(region.len(), |pos| start + pos);
+        let line = strip_cr(&region[start..line_end]);
+
+        cells.clear();
+        let mut i = 0;
+        while i < line.len() {
+            while i < line.len() && line[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i == line.len() {
+                break;
+            }
+            let token_start = i;
+            while i < line.len() && !line[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            cells.push((token_start, i));
+        }
+
+        if cells.len() != row_width {
+            return Err(ExtxyzError::WrongAtomColumnCount {
+                line_number,
+                expected: row_width,
+                actual: cells.len(),
+            });
+        }
+
+        let mut cursor = 0;
+        for column in columns.iter_mut() {
+            let spans = &cells[cursor..cursor + column.width];
+            push_cells(column, spans.iter().map(|&(s, e)| &line[s..e]))?;
+            cursor += column.width;
+        }
+
+        line_number += 1;
+        start = if line_end < region.len() {
+            line_end + 1
+        } else {
+            region.len()
+        };
+    }
+
+    Ok(())
+}
+
+/// Append `src` onto `dst`. Range columns are built from the same specs, so
+/// their kinds always match — no Int/Real promotion as in cross-frame batches.
+#[cfg(feature = "parallel")]
+fn extend_column_data(dst: &mut ColumnData, src: ColumnData) {
+    use ColumnData::{Bool, Int, Real, Str};
+    match (dst, src) {
+        (Real(a), Real(b)) => a.extend(b),
+        (Int(a), Int(b)) => a.extend(b),
+        (Bool(a), Bool(b)) => a.extend(b),
+        (Str(a), Str(b)) => a.extend(b),
+        _ => unreachable!("range columns share the spec-derived kind"),
+    }
+}
+
+/// Parse one frame with its atom region split into newline-aligned ranges
+/// parsed in parallel, then concatenated in order. Output and errors are
+/// identical to [`parse_raw`]: file-absolute line numbers, the real frame
+/// index, and the first error in frame order.
+#[cfg(feature = "parallel")]
+fn parse_raw_parallel(raw: &RawFrame) -> Result<Frame> {
+    use rayon::prelude::*;
+
+    let frame_index = raw.frame_index;
+
+    // Peel the count and comment lines; the remainder is the atom region.
+    let (count_bytes, rest) = split_first_line(&raw.bytes);
+    let count_line = line_str(count_bytes).map_err(|e| in_frame(frame_index, e))?;
+    let n_atoms = count_line.trim().parse::<usize>().map_err(|_| {
+        in_frame(
+            frame_index,
+            ExtxyzError::InvalidAtomCount {
+                line: count_line.trim().to_owned(),
+            },
+        )
+    })?;
+
+    if rest.is_empty() {
+        return Err(in_frame(frame_index, ExtxyzError::MissingLine("comment")));
+    }
+    let (comment_bytes, atom_region) = split_first_line(rest);
+    let comment = line_str(comment_bytes).map_err(|e| in_frame(frame_index, e))?;
+    let (specs, metadata) = parse_comment_line(comment).map_err(|e| in_frame(frame_index, e))?;
+    let row_width: usize = specs.iter().map(|spec| spec.width).sum();
+
+    // The first atom row sits two lines past the count line.
+    let first_atom_line = raw.line + 2;
+    let ranges = split_atom_ranges(atom_region, rayon::current_num_threads());
+
+    let partials: Vec<Result<Vec<Column>>> = ranges
+        .par_iter()
+        .map(|&(region, first_row)| {
+            let mut columns: Vec<Column> = specs
+                .iter()
+                .map(|spec| spec.column(count_lines(region)))
+                .collect();
+            parse_atom_lines(region, &mut columns, row_width, first_atom_line + first_row)
+                .map_err(|e| in_frame(frame_index, e))?;
+            Ok(columns)
+        })
+        .collect();
+
+    // Concatenate ranges in order; the earliest error is the first in frame
+    // order, so `?` on the ordered results reports exactly what serial would.
+    let mut columns: Vec<Column> = specs.iter().map(|spec| spec.column(n_atoms)).collect();
+    for partial in partials {
+        for (dst, src) in columns.iter_mut().zip(partial?) {
+            extend_column_data(&mut dst.data, src.data);
+        }
+    }
+
+    Ok(Frame {
+        n_atoms,
+        columns,
+        metadata,
+    })
+}
+
 /// `read_frames` parallelised in a single pass over the file: the scan that
 /// finds frame boundaries and the parses share the same `threads` workers
 /// (see [`run_pipeline`]), so every byte is read exactly once. Output and
@@ -985,22 +1243,7 @@ impl<R: BufRead> FrameIter<R> {
                 })?;
 
         let comment = self.next_line("comment")?;
-        let pairs = parse_comment_metadata(comment)?;
-
-        // `Properties` is consumed into typed columns; every other pair is
-        // typed by shape and kept in file order.
-        let mut metadata = Vec::with_capacity(pairs.len().saturating_sub(1));
-        let mut specs: Option<Vec<PropertySpec>> = None;
-
-        for (key, raw) in pairs {
-            if key == "Properties" && specs.is_none() {
-                specs = Some(parse_properties(&raw)?);
-            } else {
-                metadata.push((key, type_metadata_value(&raw)));
-            }
-        }
-
-        let specs = specs.ok_or(ExtxyzError::MissingMetadata { key: "Properties" })?;
+        let (specs, metadata) = parse_comment_line(comment)?;
 
         let mut columns: Vec<Column> = specs
             .into_iter()
@@ -1108,21 +1351,37 @@ const MAX_COLUMN_WIDTH: usize = 1 << 16;
 const MAX_PREALLOC: usize = 1 << 20;
 
 impl PropertySpec {
-    /// Materialise an empty column, pre-sized for the whole frame.
+    /// Materialise an empty column, pre-sized for `n_atoms` rows.
     fn into_column(self, n_atoms: usize) -> Column {
-        let capacity = n_atoms.saturating_mul(self.width).min(MAX_PREALLOC);
-        let data = match self.kind {
-            ColumnKind::Real => ColumnData::Real(Vec::with_capacity(capacity)),
-            ColumnKind::Int => ColumnData::Int(Vec::with_capacity(capacity)),
-            ColumnKind::Bool => ColumnData::Bool(Vec::with_capacity(capacity)),
-            ColumnKind::Str => ColumnData::Str(Vec::with_capacity(capacity)),
-        };
-
+        let data = empty_column_data(self.kind, n_atoms.saturating_mul(self.width));
         Column {
             name: self.name,
             width: self.width,
             data,
         }
+    }
+
+    /// Like [`into_column`](Self::into_column) but borrowing, so one set of
+    /// specs can seed a per-range column buffer in the parallel parser.
+    #[cfg(feature = "parallel")]
+    fn column(&self, atoms: usize) -> Column {
+        Column {
+            name: self.name.clone(),
+            width: self.width,
+            data: empty_column_data(self.kind, atoms.saturating_mul(self.width)),
+        }
+    }
+}
+
+/// An empty column buffer of `kind`, pre-sized to `cells` (capped at
+/// [`MAX_PREALLOC`]: the count derives from an untrusted declared atom count).
+fn empty_column_data(kind: ColumnKind, cells: usize) -> ColumnData {
+    let capacity = cells.min(MAX_PREALLOC);
+    match kind {
+        ColumnKind::Real => ColumnData::Real(Vec::with_capacity(capacity)),
+        ColumnKind::Int => ColumnData::Int(Vec::with_capacity(capacity)),
+        ColumnKind::Bool => ColumnData::Bool(Vec::with_capacity(capacity)),
+        ColumnKind::Str => ColumnData::Str(Vec::with_capacity(capacity)),
     }
 }
 
@@ -1650,6 +1909,36 @@ mod tests {
         bytes.extend_from_slice(&[0xFF, b' ', b'0', b' ', b'0', b'\n']);
         let mut frames = FrameIter::new(std::io::Cursor::new(bytes));
         assert!(matches!(frames.next(), Some(Err(_))));
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn count_lines_counts_an_unterminated_final_row() {
+        assert_eq!(count_lines(b""), 0);
+        assert_eq!(count_lines(b"a\n"), 1);
+        assert_eq!(count_lines(b"a\nb\n"), 2);
+        assert_eq!(count_lines(b"a\nb"), 2); // a trailing line without \n counts
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn split_atom_ranges_covers_the_region_on_line_boundaries() {
+        let region = b"a\nbb\nccc\ndddd\n";
+
+        assert_eq!(split_atom_ranges(region, 1), vec![(&region[..], 0)]);
+
+        let ranges = split_atom_ranges(region, 4);
+        let mut joined = Vec::new();
+        let mut first_row = 0;
+        for (slice, start_row) in &ranges {
+            // Cumulative first-row indices, and no row split across a range.
+            assert_eq!(*start_row, first_row);
+            assert!(slice.last() == Some(&b'\n'), "range must end on a line");
+            first_row += count_lines(slice);
+            joined.extend_from_slice(slice);
+        }
+        assert_eq!(joined, region, "ranges must cover the region exactly");
+        assert_eq!(first_row, 4, "every row accounted for");
     }
 }
 
