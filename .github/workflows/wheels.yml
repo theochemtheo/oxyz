@@ -162,6 +162,7 @@ jobs:
       contents: write
       attestations: write
     steps:
+      - uses: actions/checkout@v6
       - uses: actions/download-artifact@v7
       - name: Generate artifact attestation
         uses: actions/attest@v4
@@ -169,8 +170,20 @@ jobs:
           subject-path: "wheels-*/*"
       - uses: astral-sh/setup-uv@v7
         with:
-          # This job only runs `uv publish`; it installs nothing and does not
-          # check out the repo, so there is nothing to cache against.
+          # This job only runs `uv publish`, which installs nothing, so there
+          # is nothing to cache against.
           enable-cache: false
       - name: Publish to PyPI
         run: uv publish --trusted-publishing always 'wheels-*/*'
+      - name: Create GitHub Release
+        # Notes come from the tag's CHANGELOG section; the built wheels and
+        # sdist are attached. Runs after the PyPI publish, so a release only
+        # appears once the artifacts are live. Tagging is the only manual step.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          scripts/changelog-section.sh "${GITHUB_REF_NAME#v}" > release-notes.md
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file release-notes.md \
+            wheels-*/*

@@ -22,8 +22,8 @@ print(schema)                                    # which keys drift, and in how 
 
 `oxyz` exists for the gap between "extxyz is the lingua franca of atomistic
 ML datasets" and "every Python extxyz reader is slow enough to matter".
-Reading a dataset into numpy is 12–25× faster than `ase.io.read` on the
-benchmarks below; reading it into `ase.Atoms` objects is 2.4–3.5× faster.
+Reading a dataset into numpy is 16–27× faster than `ase.io.read` on the
+benchmarks below; reading it into `ase.Atoms` objects is 3.5–6× faster.
 The same single pass can also tell you the dataset's schema — which columns
 and metadata keys appear, with what types and shapes, and how consistently
 — which is the part of dataset ingestion that usually goes unchecked.
@@ -193,7 +193,7 @@ metadata:
 ## Performance
 
 Timings below are means over repeated rounds — each case gets a
-one-second budget, at least five rounds, median 24 in this run — on an
+one-second budget over at least five rounds — on an
 Apple M3 Pro under CPython 3.13. Full tables with standard deviations,
 the environment, and the fixture definitions are in
 [benchmarks/RESULTS.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/RESULTS.md);
@@ -205,32 +205,30 @@ parser, via its `read_dicts`):
 
 | workload | oxyz | oxyz `threads=1` | cextxyz |
 | --- | ---: | ---: | ---: |
-| 2 000 small frames | **9.7 ms** | 20.1 ms | 219 ms |
-| 4 × 100 000 atoms | **37.5 ms** | 72.5 ms | 91.6 ms |
-| 2 000 frames, heavy metadata | **13.8 ms** | 28.8 ms | 363 ms |
-| MACE-style mixed file | **7.0 ms** | 14.8 ms | 126 ms |
+| 2 000 small frames | **9.2 ms** | 18.6 ms | 215 ms |
+| 4 × 100 000 atoms | **26.6 ms** | 60.2 ms | 92.7 ms |
+| 2 000 frames, heavy metadata | **12.7 ms** | 25.6 ms | 356 ms |
+| MACE-style mixed file | **6.4 ms** | 13.1 ms | 135 ms |
 
 Whole-file reads to `ase.Atoms` (`oxyz.ase.read` vs the [ase-extxyz] plugin
 wrapping the same C parser, vs `ase.io.read`):
 
 | workload | oxyz.ase | ase-extxyz | ase |
 | --- | ---: | ---: | ---: |
-| 2 000 small frames | **86 ms** | 106 ms | 206 ms |
-| 4 × 100 000 atoms | 174 ms | **89 ms** | 442 ms |
-| 2 000 frames, heavy metadata | **100 ms** | 246 ms | 349 ms |
-| MACE-style mixed file | **54 ms** | 70 ms | 147 ms |
+| 2 000 small frames | **60 ms** | 101 ms | 209 ms |
+| 4 × 100 000 atoms | **71 ms** | 90 ms | 426 ms |
+| 2 000 frames, heavy metadata | **74 ms** | 241 ms | 339 ms |
+| MACE-style mixed file | **37 ms** | 75 ms | 152 ms |
 
-Losses included: the C parser's Atoms construction wins on dense
-100k-atom frames, where conversion rather than parsing dominates and
-oxyz pays for its untouched-raw-data model. On selective reads (every
-20th frame of the small-frames file) `oxyz.read_batch` takes 1.7 ms
-against 24 ms for ASE; on peak memory, streaming `iter_frames` through
-the small-frames file grows RSS by 12 MiB where `ase.io.iread` grows it
-by 56 MiB
+Beyond whole-file reads: on selective reads (every 20th frame of the
+small-frames file) `oxyz.read_batch` takes 1.6 ms against 21 ms for ASE;
+on peak memory, streaming `iter_frames` through the small-frames file
+grows RSS by 12 MiB where `ase.io.iread` grows it by 56 MiB
 ([benchmarks/MEMORY.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/MEMORY.md)).
-Against
-binary stores (LMDB, SQLite, mmap-backed formats) a text parser is
-predictably slower; See [benchmarks/RESULTS.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/RESULTS.md) for comparisons.
+The one place a text parser is predictably slower is against binary
+stores (LMDB, SQLite, mmap-backed formats); see
+[benchmarks/RESULTS.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/RESULTS.md)
+for those comparisons.
 
 [cextxyz]: https://github.com/libAtoms/extxyz
 [ase-extxyz]: https://pypi.org/project/ase-extxyz/
