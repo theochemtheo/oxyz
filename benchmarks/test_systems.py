@@ -31,9 +31,9 @@ def oxyz_read_systems_with(threads: int):
     def read(path):
         import torch
 
-        import oxyz.metatomic as om
+        import oxyz.metatomic
 
-        return om.read(path, dtype=torch.float64, threads=threads)
+        return oxyz.metatomic.read(path, dtype=torch.float64, threads=threads)
 
     return read
 
@@ -42,10 +42,10 @@ def oxyz_read_systems_with(threads: int):
 def oxyz_iread_systems(path):
     import torch
 
-    import oxyz.metatomic as om
+    import oxyz.metatomic
 
     # Collected so it does the same total work as the eager rows.
-    return list(om.iread(path, dtype=torch.float64))
+    return list(oxyz.metatomic.iread(path, dtype=torch.float64))
 
 
 @row("ase→System", "serial")
@@ -92,9 +92,9 @@ def test_systems_mace_mixed(benchmark, read, mace_mixed):
 def oxyz_targets(path):
     import torch
 
-    import oxyz.metatomic as om
+    import oxyz.metatomic
 
-    source = om.SystemSource(path)
+    source = oxyz.metatomic.SystemSource(path)
     energy = source.per_config("energy", dtype=torch.float64)
     forces, _ = source.per_atom("forces", dtype=torch.float64)
     stress = source.per_config("stress", dtype=torch.float64)

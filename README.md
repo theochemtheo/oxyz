@@ -104,10 +104,10 @@ pbc-masked zeroing. Needs `pip install "oxyz[metatomic]"`.
 
 ```python
 import torch
-import oxyz.metatomic as om
+import oxyz.metatomic
 
-systems = om.read("train.extxyz", dtype=torch.float64)   # list[System]
-for system in om.iread("train.extxyz"):                  # constant memory
+systems = oxyz.metatomic.read("train.extxyz", dtype=torch.float64)   # list[System]
+for system in oxyz.metatomic.iread("train.extxyz"):                  # constant memory
     ...
 ```
 
@@ -119,7 +119,7 @@ For pipelines that also need targets, `SystemSource` parses a file once and
 serves both the structures and array-native target extraction:
 
 ```python
-source = om.SystemSource("train.extxyz")
+source = oxyz.metatomic.SystemSource("train.extxyz")
 systems = source.systems(dtype=torch.float64)
 energy = source.per_config("energy", dtype=torch.float64)         # (n_frames, ...)
 forces, offsets = source.per_atom("forces", dtype=torch.float64)  # (total_atoms, 3) + offsets
