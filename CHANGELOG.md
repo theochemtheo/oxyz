@@ -8,6 +8,20 @@ While the version is below 1.0 the public API is not yet settled: minor
 releases may make breaking changes, patch releases will not. Such changes are
 recorded here.
 
+## [Unreleased]
+
+### Added
+
+- `oxyz.metatomic` reads extxyz into `metatomic.torch.System`s without an ASE
+  round-trip. `read`/`iread` mirror `oxyz.ase` (the same index grammar, plus
+  `dtype`/`device`/`*_requires_grad` matching `systems_to_torch`); a
+  `SystemSource` handle parses a file once and serves `systems()` alongside
+  array-native `per_config` / `per_atom` tensor extraction for targets. New
+  optional extra `oxyz[metatomic]` (torch >=2, metatomic-torch). Parity tests
+  hold the result equal to `systems_to_torch(ase.io.read(...))`.
+- `oxyz.read_batch(path, indices=None)` reads the whole file into one `Batch` in
+  a single pass; an empty file yields the empty batch.
+
 ## [0.2.0] - 2026-06-25
 
 A performance release: faster reads across the board, no API changes. Numbers

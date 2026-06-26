@@ -37,7 +37,17 @@ def pytest_benchmark_update_machine_info(config, machine_info) -> None:
     import importlib.metadata as metadata
 
     versions = {}
-    for dist in ("oxyz", "numpy", "ase", "extxyz", "ase-extxyz", "atompack-db", "lmdb"):
+    for dist in (
+        "oxyz",
+        "numpy",
+        "ase",
+        "extxyz",
+        "ase-extxyz",
+        "atompack-db",
+        "lmdb",
+        "torch",
+        "metatomic-torch",
+    ):
         try:
             versions[dist] = metadata.version(dist)
         except metadata.PackageNotFoundError:

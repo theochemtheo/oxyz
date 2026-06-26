@@ -54,17 +54,25 @@ class Batch:
 
 
 def read_batch(
-    path: str | Path, indices: Sequence[int], *, threads: int | None = None
+    path: str | Path,
+    indices: Sequence[int] | None = None,
+    *,
+    threads: int | None = None,
 ) -> Batch:
-    """Gather the given frames (in order, repeats allowed) into one batch.
+    """Gather frames into one batch.
 
-    Single pass: the file is read once, and only as far as the last
-    requested frame — structure and contents beyond it are never inspected.
-    For repeated gathers from one file prefer `iter_batches`, which scans
-    once and reuses the index. `threads=None` parses on every core,
-    `threads=1` serially; the batch is identical either way.
+    `indices=None` reads every frame in file order; a sequence gathers those
+    frames (in order, repeats allowed). Single pass: the file is read once, and
+    for a selection only as far as the last requested frame — structure and
+    contents beyond it are never inspected. For repeated gathers from one file
+    prefer `iter_batches`, which scans once and reuses the index. `threads=None`
+    parses on every core, `threads=1` serially; the batch is identical either
+    way.
     """
     _check_threads(threads)
+    if indices is None:
+        data = _rust.read_batch(str(path), None, threads)
+        return _batch_from_data(data, range(len(data["offsets"]) - 1))
     plan = [int(i) for i in indices]
     for index in plan:
         if index < 0:

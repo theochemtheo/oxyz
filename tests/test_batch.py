@@ -87,6 +87,32 @@ def test_read_batch_gathers_in_requested_order() -> None:
     assert_allclose(as_array(batch.metadata["energy"]), [-31.8, -76.3])
 
 
+def test_read_batch_whole_file_concatenates_every_frame() -> None:
+    frames = oxyz.read_frames(VARYING)
+    batch = oxyz.read_batch(VARYING)
+
+    assert batch.n_frames == len(frames)
+    assert_array_equal(batch.frame_indices, range(len(frames)))
+    stacked = np.vstack([as_array(frame.columns["pos"]) for frame in frames])
+    assert_allclose(as_array(batch.columns["pos"]), stacked)
+
+
+def test_read_batch_whole_file_matches_threads() -> None:
+    serial = oxyz.read_batch(VARYING, threads=1)
+    parallel = oxyz.read_batch(VARYING, threads=4)
+    assert_array_equal(serial.offsets, parallel.offsets)
+    assert_allclose(as_array(serial.columns["pos"]), as_array(parallel.columns["pos"]))
+
+
+def test_read_batch_whole_file_empty_is_no_frames(tmp_path: Path) -> None:
+    empty = tmp_path / "empty.xyz"
+    empty.write_text("")
+    batch = oxyz.read_batch(empty)
+    assert batch.n_frames == 0
+    assert_array_equal(batch.offsets, [0])
+    assert batch.columns == {}
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [

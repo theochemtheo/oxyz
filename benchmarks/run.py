@@ -9,10 +9,18 @@
 #     "ase-extxyz>=0.1",
 #     "atompack-db>=0.4",
 #     "lmdb>=1.4",
+#     "torch>=2",
+#     "metatomic-torch",
 # ]
 #
 # [tool.uv.sources]
 # oxyz = { path = ".." }
+# torch = [{ index = "pytorch-cpu", marker = "sys_platform != 'darwin'" }]
+#
+# [[tool.uv.index]]
+# name = "pytorch-cpu"
+# url = "https://download.pytorch.org/whl/cpu"
+# explicit = true
 # ///
 """Run the benchmark suite in its own environment.
 

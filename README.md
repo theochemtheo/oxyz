@@ -33,8 +33,9 @@ Pre-1.0: minor versions may change the API.
 ## Install
 
 ```sh
-pip install oxyz            # numpy is the only dependency
-pip install "oxyz[ase]"     # adds ASE conversion (ase >=3.23,<4)
+pip install oxyz                # numpy is the only dependency
+pip install "oxyz[ase]"         # adds ASE conversion (ase >=3.23,<4)
+pip install "oxyz[metatomic]"   # adds metatomic.torch.System reading (torch >=2)
 ```
 
 Wheels cover CPython ≥3.11 on Linux (x86_64, aarch64), macOS (arm64,
@@ -91,6 +92,46 @@ value:
 - **Single-quoted values.** The grammar makes `"` the only quote
   character, so `label='hello'` keeps its quotes and `note=it's` keeps its
   apostrophe; ASE strips the single quotes (and reads `it's` as `its`).
+
+## To PyTorch (metatomic)
+
+`oxyz.metatomic.read` and `iread` read extxyz straight into
+`metatomic.torch.System`s, reproducing
+`metatomic.torch.systems_to_torch(ase.io.read(...))` without the ASE
+round-trip — species map to atomic numbers through oxyz's own element
+table, and the cell follows the same Fortran-order `Lattice` reshape and
+pbc-masked zeroing. Needs `pip install "oxyz[metatomic]"`.
+
+```python
+import torch
+import oxyz.metatomic as om
+
+systems = om.read("train.extxyz", dtype=torch.float64)   # list[System]
+for system in om.iread("train.extxyz"):                  # constant memory
+    ...
+```
+
+`read`/`iread` mirror `oxyz.ase`: the same index grammar, plus
+`dtype`/`device`/`positions_requires_grad`/`cell_requires_grad` matching
+`systems_to_torch` (`dtype=None` follows `torch.get_default_dtype()`).
+
+For pipelines that also need targets, `SystemSource` parses a file once and
+serves both the structures and array-native target extraction:
+
+```python
+source = om.SystemSource("train.extxyz")
+systems = source.systems(dtype=torch.float64)
+energy = source.per_config("energy", dtype=torch.float64)         # (n_frames, ...)
+forces, offsets = source.per_atom("forces", dtype=torch.float64)  # (total_atoms, 3) + offsets
+```
+
+These are the pieces a downstream reader would build on — for example a
+metatrain `readers/oxyz.py`, where `SystemSource.systems()` backs
+`read_systems` and `per_config`/`per_atom` back the energy/forces/stress
+readers, with the gradient-sign, volume, and `TensorMap` conventions
+staying on the metatrain side. oxyz depends only on torch and
+metatomic-torch, never on metatrain or metatensor; that integration is
+left to metatrain deliberately.
 
 ## What you get beyond ASE
 
@@ -239,7 +280,7 @@ for those comparisons.
 oxyz.read_frames(path, *, threads=None)      -> list[Frame]
 oxyz.iter_frames(path)                       -> Iterator[Frame]   # constant memory
 oxyz.read_first(path)                        -> Frame
-oxyz.read_batch(path, indices, *, threads=None) -> Batch
+oxyz.read_batch(path, indices=None, *, threads=None) -> Batch    # indices=None: whole file
 oxyz.iter_batches(path, *, frames_per_batch=None, atoms_per_batch=None,
                   shuffle=False, seed=None, threads=None) -> Iterator[Batch]
 oxyz.scan(path)                              -> FrameIndex
@@ -248,6 +289,12 @@ oxyz.infer_schema(path)                      -> Schema
 oxyz.ase.read(path, index=None, *, format=None)  -> Atoms | list[Atoms]  # index=None: last frame
 oxyz.ase.iread(path, index=":", *, format=None)  -> Iterator[Atoms]
 oxyz.ase.to_atoms(frame)                     -> Atoms              # also Frame.to_ase()
+
+oxyz.metatomic.read(path, index=":", *, dtype=None, device=None,
+                    positions_requires_grad=False, cell_requires_grad=False,
+                    threads=None)            -> System | list[System]
+oxyz.metatomic.iread(path, index=":", *, dtype=None, ...)  -> Iterator[System]
+oxyz.metatomic.SystemSource(path, *, threads=None)         # .systems() / .per_config() / .per_atom()
 ```
 
 `Frame`, `Batch`, `FrameIndex`, `Schema` and its parts (`ColumnSchema`,
@@ -319,13 +366,17 @@ own:
   CPython ≥3.11.
 - **`src/oxyz`** — thin typed Python: frozen dataclasses over the
   binding's dicts, batch planning (the pure-Python part of
-  `iter_batches`), and the index grammar. All ASE knowledge lives in
-  `oxyz.ase`, which imports ASE lazily; the core never depends on it.
+  `iter_batches`), and the index grammar (shared by the conversion layers
+  via `oxyz._select`). The conversion layers stay last-moment and
+  optional: ASE knowledge lives in `oxyz.ase`, torch/metatomic knowledge in
+  `oxyz.metatomic`, each importing its extra lazily; the core depends on
+  neither.
 
 Testing follows the shape of the promises: Rust unit and corpus tests for
 the parser; parity tests holding parallel reads byte-identical to serial,
 including which error wins when several frames are bad; golden tests
-holding `oxyz.ase.read` equal to `ase.io.read` frame-by-frame; and
+holding `oxyz.ase.read` equal to `ase.io.read` and `oxyz.metatomic.read`
+equal to `systems_to_torch(ase.io.read(...))` frame-by-frame; and
 malformed-file tests asserting the frame index in the error message, not
 just that an error occurred.
 

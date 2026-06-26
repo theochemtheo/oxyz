@@ -52,6 +52,10 @@ oxyz = "oxyz._cli:main"
 # oxyz.ase golden tests pass from 3.23 up. <4: ASEv4 may change the data
 # model; new majors are opted into deliberately.
 ase = ["ase>=3.23,<4"]
+# torch>=2: the metatomic.torch System API and stable torch.from_numpy
+# semantics oxyz.metatomic relies on. CPU wheels are pinned via the uv index
+# below so CI never pulls a CUDA build.
+metatomic = ["torch>=2", "metatomic-torch"]
 
 [dependency-groups]
 # Benchmark dependencies live in benchmarks/run.py (PEP 723), not here:
@@ -60,16 +64,23 @@ dev = [
     "ase>=3.28.0",
     "matplotlib>=3.10.9",
     "maturin>=1.13.3",
+    "metatomic-torch",
     "prek>=0.4.4",
     "pytest>=9.0.3",
     "pytest-cov>=6",
     "ruff>=0.15.16",
     "rumdl>=0.2.15",
     "seaborn>=0.13.2",
+    "torch>=2",
     "ty>=0.0.44",
 ]
 
 [tool.uv]
+# Pull torch from PyPI's CPU index everywhere except macOS, whose PyPI wheels
+# are already CPU-only; this keeps Linux/Windows CI off the default CUDA build.
+sources = { torch = [
+    { index = "pytorch-cpu", marker = "sys_platform != 'darwin'" },
+] }
 # Rebuild the editable extension (release, via maturin PEP517) whenever the
 # Rust sources change, so `uv run` never tests or benchmarks a stale build.
 cache-keys = [
@@ -79,6 +90,11 @@ cache-keys = [
     { file = "crates/**/Cargo.toml" },
     { file = "crates/**/*.rs" },
 ]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.ruff]
 target-version = "py311"
