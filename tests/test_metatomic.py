@@ -232,6 +232,67 @@ def test_scalar_pbc_broadcasts_to_three_axes(tmp_path: Path) -> None:
     assert system.pbc.tolist() == [True, True, True]
 
 
+def test_malformed_pbc_shape_raises(tmp_path: Path) -> None:
+    import oxyz.metatomic as om
+
+    path = _write(tmp_path, '1\npbc="T F" Properties=species:S:1:pos:R:3\nH 0 0 0\n')
+    with pytest.raises(om.ToSystemError, match="pbc must be a scalar or 3"):
+        om.read(path)
+
+
+def test_explicit_pbc_without_lattice_is_honoured(tmp_path: Path) -> None:
+    import oxyz.metatomic as om
+
+    # No Lattice but an explicit pbc: cell stays zero, pbc is taken as given
+    # (systems_to_torch warns on the zero-cell/periodic mismatch, as do we).
+    path = _write(tmp_path, '1\npbc="T T F" Properties=species:S:1:pos:R:3\nH 0 0 0\n')
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        (system,) = om.read(path)
+    assert system.pbc.tolist() == [True, True, False]
+    assert system.cell.abs().sum().item() == 0.0
+
+
+def test_system_source_systems_match_read() -> None:
+    import torch
+
+    import oxyz.metatomic as om
+
+    path = DATA_DIR / "two_frame_same_schema.xyz"
+    from_source = om.SystemSource(path).systems(dtype=torch.float64)
+    from_read = om.read(path, dtype=torch.float64)
+    assert len(from_source) == len(from_read)
+    for a, b in zip(from_source, from_read, strict=True):
+        assert torch.equal(a.types, b.types)
+        assert torch.allclose(a.positions, b.positions)
+        assert torch.allclose(a.cell, b.cell)
+
+
+def test_iread_int_index_yields_one_system() -> None:
+    import oxyz.metatomic as om
+
+    systems = list(om.iread(DATA_DIR / "two_frame_same_schema.xyz", 0))
+    assert len(systems) == 1
+    assert hasattr(systems[0], "positions")
+
+
+def test_float_z_column_rounds_to_int_types(tmp_path: Path) -> None:
+    import oxyz.metatomic as om
+
+    # A `Z` column typed real (26.0): round to int32, never truncate toward 0.
+    path = _write(tmp_path, "1\nProperties=Z:R:1:pos:R:3\n26.0 0 0 0\n")
+    (system,) = om.read(path)
+    assert system.types.tolist() == [26]
+
+
+def test_frame_without_species_or_z_raises(tmp_path: Path) -> None:
+    import oxyz.metatomic as om
+
+    path = _write(tmp_path, "1\nProperties=pos:R:3\n0 0 0\n")
+    with pytest.raises(om.ToSystemError, match="neither a 'species' nor a 'Z'"):
+        om.read(path)
+
+
 def test_non_numeric_column_raises_clear_error(tmp_path: Path) -> None:
     import oxyz.metatomic as om
 

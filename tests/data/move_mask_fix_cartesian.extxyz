@@ -1,0 +1,4 @@
+2
+Lattice="5.0 0.0 0.0 0.0 5.0 0.0 0.0 0.0 5.0" Properties=species:S:1:pos:R:3:move_mask:L:3 pbc="T T T"
+Si 0.0 0.0 0.0 F F T
+Si 1.0 1.0 1.0 T F F

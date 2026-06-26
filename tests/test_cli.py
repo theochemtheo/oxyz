@@ -20,6 +20,18 @@ def test_scan_prints_stats_and_schema(capsys: pytest.CaptureFixture[str]) -> Non
     assert "frames" in out and "species" in out
 
 
+def test_scan_empty_file_reports_zero_frames(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    empty = tmp_path / "empty.xyz"
+    empty.write_text("")
+    code = main(["scan", "--no-schema", str(empty)])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "frames:      0" in out
+    assert "atoms/frame:" not in out
+
+
 def test_scan_no_schema_omits_schema(capsys: pytest.CaptureFixture[str]) -> None:
     code = main(["scan", "--no-schema", str(DATA / "two_frame_same_schema.xyz")])
     out = capsys.readouterr().out

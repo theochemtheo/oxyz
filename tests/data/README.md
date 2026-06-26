@@ -21,5 +21,7 @@
 | `varying_atom_counts.xyz` | Three frames with 3/1/2 atoms — forces the ragged-data decision. |
 | `molecule_type_labels.extxyz` | Per-atom *string* column (`molecule_type:S:1`) — column types beyond numbers. |
 | `per_atom_boolean.extxyz` | Per-atom *boolean* column (`active:L:1`) — the extxyz `L` kind. |
+| `move_mask_fix_cartesian.extxyz` | Per-atom `move_mask:L:3` — ASE writes/reads it as `FixCartesian` constraints. |
+| `move_mask_fix_atoms.extxyz` | Per-atom `move_mask:L:1` — ASE writes/reads it as a `FixAtoms` constraint. |
 | `mace_ref_energy_forces_stress.xyz` | MACE training schema: `REF_energy`, `REF_forces:R:3`, `REF_stress`, `config_type`. |
 | `mace_isolated_atom_and_head.xyz` | MACE isolated-atom frames; per-frame `config_type`/`head` metadata that differs by frame. |

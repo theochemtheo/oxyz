@@ -59,6 +59,12 @@ def test_atom_budget_packs_greedily() -> None:
     assert [list(b.frame_indices) for b in batches] == [[0], [1], [2]]
 
 
+def test_atom_budget_empty_file_yields_no_batches(tmp_path: Path) -> None:
+    empty = tmp_path / "empty.xyz"
+    empty.write_text("")
+    assert list(oxyz.iter_batches(empty, atoms_per_batch=100)) == []
+
+
 def test_shuffled_batches_are_seeded_and_partition_the_file() -> None:
     def plan(seed: int) -> list[list[int]]:
         return [
