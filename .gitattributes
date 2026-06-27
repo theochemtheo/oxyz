@@ -1,0 +1,11 @@
+# Test fixtures are compared byte-for-byte against their compressed twins,
+# which are binary blobs holding LF line endings. Force LF on the plain text
+# fixtures on every platform so a Windows checkout (autocrlf) does not rewrite
+# them to CRLF and break the comparison; keep the compressed fixtures binary so
+# they are never touched.
+*.xyz text eol=lf
+*.extxyz text eol=lf
+*.gz binary
+*.zst binary
+*.zip binary
+*.tar binary
