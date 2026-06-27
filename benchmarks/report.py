@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.12"
 # dependencies = []
 # ///
 """Render benchmarks/RESULTS.md from a saved pytest-benchmark run.
