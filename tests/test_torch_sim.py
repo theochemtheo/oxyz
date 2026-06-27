@@ -186,6 +186,70 @@ def test_no_lattice_molecule_has_zero_cell_and_false_pbc() -> None:
     assert state.pbc.tolist() == [False, False, False]
 
 
+def test_int_index_out_of_range_raises() -> None:
+    import oxyz.torch_sim
+
+    with pytest.raises(IndexError, match="out of range"):
+        oxyz.torch_sim.read(DATA_DIR / "varying_atom_counts.xyz", 99)
+
+
+def test_frame_without_species_or_z_raises(tmp_path: Path) -> None:
+    import oxyz.torch_sim
+
+    # pos but no species/Z column: nothing to derive atomic numbers from.
+    path = _write(tmp_path, "1\nProperties=pos:R:3\n0.0 0.0 0.0\n")
+    with pytest.raises(oxyz.torch_sim.ToSimStateError, match="'species' or 'Z'"):
+        oxyz.torch_sim.read(path)
+
+
+def test_masses_column_of_wrong_width_raises(tmp_path: Path) -> None:
+    import oxyz.torch_sim
+
+    # A width-2 masses column flattens to twice the atom count; masses are scalar.
+    path = _write(
+        tmp_path,
+        "1\nProperties=species:S:1:pos:R:3:masses:R:2\nH 0 0 0 1.0 2.0\n",
+    )
+    with pytest.raises(oxyz.torch_sim.ToSimStateError, match="masses"):
+        oxyz.torch_sim.read(path)
+
+
+def test_malformed_lattice_raises(tmp_path: Path) -> None:
+    import oxyz.torch_sim
+
+    path = _write(
+        tmp_path,
+        '1\nLattice="1 2 3 4 5 6" Properties=species:S:1:pos:R:3\nH 0 0 0\n',
+    )
+    with pytest.raises(oxyz.torch_sim.ToSimStateError, match="9 components"):
+        oxyz.torch_sim.read(path)
+
+
+def test_scalar_pbc_broadcasts_to_three_axes(tmp_path: Path) -> None:
+    import oxyz.torch_sim
+
+    # A scalar pbc=T applies to all three axes, as ASE has it.
+    path = _write(
+        tmp_path,
+        '1\nLattice="1 0 0 0 1 0 0 0 1" pbc=T Properties=species:S:1:pos:R:3\n'
+        "H 0 0 0\n",
+    )
+    state = oxyz.torch_sim.read(path)
+    assert state.pbc.tolist() == [True, True, True]
+
+
+def test_malformed_pbc_shape_raises(tmp_path: Path) -> None:
+    import oxyz.torch_sim
+
+    path = _write(
+        tmp_path,
+        '1\npbc="T F" Lattice="1 0 0 0 1 0 0 0 1" Properties=species:S:1:pos:R:3\n'
+        "H 0 0 0\n",
+    )
+    with pytest.raises(oxyz.torch_sim.ToSimStateError, match="scalar or 3"):
+        oxyz.torch_sim.read(path)
+
+
 def test_extras_pull_metadata_and_columns(tmp_path: Path) -> None:
     import torch
 
