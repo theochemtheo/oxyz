@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 
 import oxyz._rust as _rust
+from oxyz._frames import Compression
 from oxyz._stats import AtomCountStats
 
 
@@ -134,14 +135,22 @@ def _metadata_schema(data: _rust.MetadataSchemaData) -> MetadataSchema:
     )
 
 
-def infer_schema(path: str | Path) -> Schema:
+def infer_schema(
+    path: str | Path,
+    *,
+    compression: Compression = "infer",
+    member: str | None = None,
+) -> Schema:
     """Fold the whole file into a `Schema` in a single pass.
 
     Records, per column and metadata key, the observed variants and how many
     frames used each, with a strict `is_consistent` and a promoted `unified`.
     Parses every frame; for the structure alone, use `scan`.
+
+    A compressed path is decoded while streaming; `compression` and `member`
+    work as in `read_frames`.
     """
-    data = _rust.infer_schema(str(path))
+    data = _rust.infer_schema(str(path), compression, member)
     return Schema(
         n_frames=data["n_frames"],
         total_atoms=data["total_atoms"],

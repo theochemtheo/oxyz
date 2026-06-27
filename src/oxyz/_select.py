@@ -13,7 +13,15 @@ from collections.abc import Iterable, Iterator
 from itertools import islice
 from pathlib import Path
 
-from oxyz._frames import Frame, IndexedFrames, iter_frames, read_frames_sliced
+import oxyz._rust as _rust
+from oxyz._frames import (
+    Compression,
+    Frame,
+    IndexedFrames,
+    iter_frames,
+    read_frames,
+    read_frames_sliced,
+)
 
 
 def parse_index(index: int | str | slice) -> int | slice:
@@ -29,17 +37,37 @@ def parse_index(index: int | str | slice) -> int | slice:
     return slice(start, stop, step)
 
 
-def nth_frame(path: str | Path, index: int) -> Frame:
-    """Frame `index`; negatives resolve via a scan and seek, not a full parse."""
-    if index < 0:
-        frames = IndexedFrames(path)
-        if index + len(frames) < 0:
-            raise IndexError(
-                f"frame {index} out of range: file has {len(frames)} frames"
-            )
-        return frames.get(index + len(frames))
+def nth_frame(
+    path: str | Path,
+    index: int,
+    *,
+    compression: Compression = "infer",
+    member: str | None = None,
+) -> Frame:
+    """Frame `index`; negatives resolve via a scan and seek, not a full parse.
 
-    frame = next(islice(iter_frames(path), index, None), None)
+    A compressed source cannot seek, so a negative index there reads the whole
+    file and indexes in memory (as ASE does), losing the partial-read shortcut.
+    """
+    if index < 0:
+        if _rust.is_compressed(str(path), compression):
+            frames = read_frames(path, compression=compression, member=member)
+            if index + len(frames) < 0:
+                raise IndexError(
+                    f"frame {index} out of range: file has {len(frames)} frames"
+                )
+            return frames[index]
+        indexed = IndexedFrames(path)
+        if index + len(indexed) < 0:
+            raise IndexError(
+                f"frame {index} out of range: file has {len(indexed)} frames"
+            )
+        return indexed.get(index + len(indexed))
+
+    frame = next(
+        islice(iter_frames(path, compression=compression, member=member), index, None),
+        None,
+    )
     if frame is None:
         raise IndexError(f"frame {index} out of range")
     return frame
@@ -55,7 +83,12 @@ def is_forward(frames: slice) -> bool:
 
 
 def frames_for_read(
-    path: str | Path, frames: slice, threads: int | None = None
+    path: str | Path,
+    frames: slice,
+    threads: int | None = None,
+    *,
+    compression: Compression = "infer",
+    member: str | None = None,
 ) -> Iterable[Frame]:
     """Frames for an eager list read.
 
@@ -66,14 +99,36 @@ def frames_for_read(
     does not apply to it.
     """
     if is_forward(frames) and frames.stop is None:
-        return read_frames_sliced(path, slice(frames.start, None, frames.step), threads)
-    return sliced_frames(path, frames)
+        return read_frames_sliced(
+            path,
+            slice(frames.start, None, frames.step),
+            threads,
+            compression=compression,
+            member=member,
+        )
+    return sliced_frames(path, frames, compression=compression, member=member)
 
 
-def sliced_frames(path: str | Path, frames: slice) -> Iterator[Frame]:
-    """Forward slices stream; negative bounds or steps go via the index."""
+def sliced_frames(
+    path: str | Path,
+    frames: slice,
+    *,
+    compression: Compression = "infer",
+    member: str | None = None,
+) -> Iterator[Frame]:
+    """Forward slices stream; negative bounds or steps go via the index (or, on a
+    compressed source, via a full in-memory read)."""
     if is_forward(frames):
-        return islice(iter_frames(path), frames.start, frames.stop, frames.step)
+        return islice(
+            iter_frames(path, compression=compression, member=member),
+            frames.start,
+            frames.stop,
+            frames.step,
+        )
+
+    if _rust.is_compressed(str(path), compression):
+        in_memory = read_frames(path, compression=compression, member=member)
+        return (in_memory[i] for i in range(*frames.indices(len(in_memory))))
 
     indexed = IndexedFrames(path)
     selected = range(*frames.indices(len(indexed)))

@@ -6,7 +6,7 @@ import json
 import sys
 from typing import TYPE_CHECKING
 
-from oxyz import ParseError, infer_schema, scan
+from oxyz import infer_schema, scan
 
 if TYPE_CHECKING:
     from oxyz._scan import FrameIndex
@@ -27,7 +27,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         return func(args)
-    except (ParseError, OSError) as exc:
+    except (ValueError, OSError) as exc:
+        # ValueError covers ParseError and the archive/member selection errors;
+        # OSError covers missing/unreadable files.
         print(f"oxyz: {exc}", file=sys.stderr)
         return 1
 
@@ -55,7 +57,9 @@ def _add_scan_parser(subparsers: argparse._SubParsersAction) -> None:
             "--no-schema is given, the inferred schema. Reads the whole file."
         ),
     )
-    scan_parser.add_argument("path", help="path to an extxyz/xyz file")
+    scan_parser.add_argument(
+        "path", help="path to an extxyz/xyz file (compressed forms are read too)"
+    )
     scan_parser.add_argument(
         "--no-schema",
         action="store_true",
@@ -63,6 +67,17 @@ def _add_scan_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     scan_parser.add_argument(
         "--json", action="store_true", help="emit a JSON object instead of text"
+    )
+    scan_parser.add_argument(
+        "--compression",
+        choices=("infer", "none", "gzip", "zstd", "zip"),
+        default="infer",
+        help="codec to read PATH as (default: infer from the name)",
+    )
+    scan_parser.add_argument(
+        "--member",
+        default=None,
+        help="entry to read from a multi-member archive (.zip/.tar/.tar.gz)",
     )
     scan_parser.set_defaults(func=_cmd_scan)
 
@@ -72,10 +87,14 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     # distribution stats as scan -- run only one. --no-schema wants no parse
     # at all, so it falls back to the cheap structural scan.
     if args.no_schema:
-        stats: StatsSource = scan(args.path)
+        stats: StatsSource = scan(
+            args.path, compression=args.compression, member=args.member
+        )
         schema = None
     else:
-        schema = infer_schema(args.path)
+        schema = infer_schema(
+            args.path, compression=args.compression, member=args.member
+        )
         stats = schema
     if args.json:
         print(json.dumps(_scan_payload(stats, schema), indent=2))

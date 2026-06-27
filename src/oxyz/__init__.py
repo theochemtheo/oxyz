@@ -13,6 +13,7 @@ from __future__ import annotations
 from oxyz._batch import Batch, MemoryScaling, iter_batches, read_batch
 from oxyz._frames import (
     ColumnValues,
+    Compression,
     Frame,
     MetadataValue,
     iter_frames,
@@ -36,6 +37,7 @@ __all__ = [
     "ColumnSchema",
     "ColumnValues",
     "ColumnVariant",
+    "Compression",
     "Frame",
     "FrameIndex",
     "Kind",

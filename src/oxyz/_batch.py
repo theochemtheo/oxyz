@@ -8,7 +8,7 @@ from typing import Literal
 import numpy as np
 
 import oxyz._rust as _rust
-from oxyz._frames import ColumnValues, _check_threads
+from oxyz._frames import ColumnValues, Compression, _check_threads
 
 MemoryScaling = Literal["n_atoms", "n_atoms_x_density"]
 
@@ -61,6 +61,8 @@ def read_batch(
     indices: Sequence[int] | None = None,
     *,
     threads: int | None = None,
+    compression: Compression = "infer",
+    member: str | None = None,
 ) -> Batch:
     """Gather frames into one batch.
 
@@ -71,10 +73,13 @@ def read_batch(
     prefer `iter_batches`, which scans once and reuses the index. `threads=None`
     parses on every core, `threads=1` serially; the batch is identical either
     way.
+
+    Works on a compressed source (the selection still streams in one pass);
+    `compression` and `member` are as in `read_frames`.
     """
     _check_threads(threads)
     if indices is None:
-        data = _rust.read_batch(str(path), None, threads)
+        data = _rust.read_batch(str(path), None, threads, compression, member)
         return _batch_from_data(data, range(len(data["offsets"]) - 1))
     plan = [int(i) for i in indices]
     for index in plan:
@@ -85,7 +90,9 @@ def read_batch(
             raise IndexError(
                 f"frame index {index} out of range: indices must be non-negative"
             )
-    return _batch_from_data(_rust.read_batch(str(path), plan, threads), plan)
+    return _batch_from_data(
+        _rust.read_batch(str(path), plan, threads, compression, member), plan
+    )
 
 
 def iter_batches(
@@ -98,6 +105,8 @@ def iter_batches(
     shuffle: bool = False,
     seed: int | None = None,
     threads: int | None = None,
+    compression: Compression = "infer",
+    member: str | None = None,
 ) -> Iterator[Batch]:
     """Read a file as a sequence of batches.
 
@@ -122,6 +131,13 @@ def iter_batches(
     never on `threads`, which sets parsing parallelism within each batch
     (None: all cores; 1: serial, which for unshuffled `frames_per_batch`
     streams the file without scanning).
+
+    A compressed source (`.gz`, `.zst`, `.zip`, `.tar.gz`, `.tar`) cannot be
+    randomly accessed, so only `frames_per_batch` without `shuffle` is
+    supported there — it streams in constant memory. `shuffle`, `atoms_per_batch`
+    and `memory_scales_with` all need the byte-offset index and raise on a
+    compressed source; decompress the file first. `compression` and `member`
+    are as in `read_frames`.
     """
     strategies = sum(
         knob is not None
@@ -152,8 +168,24 @@ def iter_batches(
         raise ValueError("seed requires shuffle=True")
     _check_threads(threads)
 
-    if frames_per_batch is not None and not shuffle and threads == 1:
-        return _sequential_batches(path, frames_per_batch)
+    compressed = _rust.is_compressed(str(path), compression)
+    if member is not None and not compressed:
+        raise ValueError(
+            "member= is only valid for an archive (.zip/.tar/.tar.gz) source"
+        )
+    if compressed and (
+        shuffle or atoms_per_batch is not None or memory_scales_with is not None
+    ):
+        raise ValueError(
+            "a compressed source cannot be randomly accessed: only "
+            "frames_per_batch without shuffle is supported; decompress the file "
+            "first to use shuffle, atoms_per_batch, or memory_scales_with"
+        )
+
+    # The sequential stream covers unshuffled frames_per_batch; a compressed
+    # source must take it (no index), and otherwise it is the serial fast path.
+    if frames_per_batch is not None and not shuffle and (compressed or threads == 1):
+        return _sequential_batches(path, frames_per_batch, compression, member)
     return _planned_batches(
         path,
         frames_per_batch,
@@ -166,10 +198,15 @@ def iter_batches(
     )
 
 
-def _sequential_batches(path: str | Path, frames_per_batch: int) -> Iterator[Batch]:
+def _sequential_batches(
+    path: str | Path,
+    frames_per_batch: int,
+    compression: Compression = "infer",
+    member: str | None = None,
+) -> Iterator[Batch]:
     """Streamed file-order batches: constant memory, no scan."""
     start = 0
-    for data in _rust.BatchIter(str(path), frames_per_batch):
+    for data in _rust.BatchIter(str(path), frames_per_batch, compression, member):
         n_frames = len(data["offsets"]) - 1
         yield _batch_from_data(data, range(start, start + n_frames))
         start += n_frames

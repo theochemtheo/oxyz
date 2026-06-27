@@ -16,6 +16,7 @@ use std::{
 use thiserror::Error;
 
 use crate::batch::{Batch, BatchBuilder, BatchError};
+use crate::decode::{Compression, DecodedReader, open_decoded};
 use crate::index::{FrameEntry, FrameIndex};
 use crate::model::{Column, ColumnData, ColumnKind, Frame, Value};
 use crate::schema::Schema;
@@ -74,6 +75,26 @@ pub enum ExtxyzError {
     #[error("frame index {frame_index} out of range: file has {n_frames} frames")]
     FrameOutOfRange { frame_index: usize, n_frames: usize },
 
+    #[error("member {member:?} not found in archive; available members: {available:?}")]
+    MemberNotFound {
+        member: String,
+        available: Vec<String>,
+    },
+
+    #[error("archive has multiple extxyz members; pass member= to choose one: {members:?}")]
+    AmbiguousArchive { members: Vec<String> },
+
+    #[error("archive contains no extxyz member; members: {members:?}")]
+    NoExtxyzMember { members: Vec<String> },
+
+    #[error("member= given for a non-archive source")]
+    MemberOnNonArchive,
+
+    #[error(
+        "random access is unsupported on a compressed source; decompress first or use streaming reads"
+    )]
+    RandomAccessUnsupported,
+
     #[error(transparent)]
     Batch(#[from] BatchError),
 }
@@ -126,16 +147,29 @@ pub fn read_frames(path: impl AsRef<Path>) -> Result<Vec<Frame>> {
     iter_frames(path)?.collect()
 }
 
-pub fn iter_frames(path: impl AsRef<Path>) -> Result<FrameIter<BufReader<File>>> {
-    Ok(FrameIter::new(BufReader::new(File::open(path)?)))
+/// Open `path` for streaming, detecting and decompressing per the extension.
+/// For explicit control over the codec or an archive member, build the reader
+/// with [`open_decoded`] and call [`iter_frames_from`].
+pub fn iter_frames(path: impl AsRef<Path>) -> Result<FrameIter<DecodedReader>> {
+    iter_frames_from(open_decoded(path.as_ref(), Compression::Infer, None)?)
+}
+
+/// Stream frames from an already-opened reader (e.g. a decoded source).
+pub fn iter_frames_from<R: BufRead>(reader: R) -> Result<FrameIter<R>> {
+    Ok(FrameIter::new(reader))
 }
 
 /// Infer the whole file's schema. Full-parse fold for now: every frame is
 /// parsed and validated, so this doubles as a structural check of the file.
 pub fn infer_schema(path: impl AsRef<Path>) -> Result<Schema> {
+    infer_schema_from(open_decoded(path.as_ref(), Compression::Infer, None)?)
+}
+
+/// [`infer_schema`] over an already-opened reader.
+pub fn infer_schema_from<R: BufRead>(reader: R) -> Result<Schema> {
     let mut schema = Schema::default();
 
-    for frame in iter_frames(path)? {
+    for frame in FrameIter::new(reader) {
         schema.observe(&frame?);
     }
 
@@ -147,12 +181,20 @@ pub fn infer_schema(path: impl AsRef<Path>) -> Result<Schema> {
 pub fn iter_batches(
     path: impl AsRef<Path>,
     frames_per_batch: usize,
-) -> Result<BatchIter<BufReader<File>>> {
+) -> Result<BatchIter<DecodedReader>> {
+    iter_batches_from(
+        open_decoded(path.as_ref(), Compression::Infer, None)?,
+        frames_per_batch,
+    )
+}
+
+/// [`iter_batches`] over an already-opened reader.
+pub fn iter_batches_from<R: BufRead>(reader: R, frames_per_batch: usize) -> Result<BatchIter<R>> {
     if frames_per_batch == 0 {
         return Err(BatchError::ZeroFramesPerBatch.into());
     }
     Ok(BatchIter {
-        frames: iter_frames(path)?,
+        frames: FrameIter::new(reader),
         frames_per_batch,
     })
 }
@@ -192,7 +234,7 @@ impl<R: BufRead> Iterator for BatchIter<R> {
 /// Structural scan: record each frame's byte offset and declared atom count
 /// without parsing comment or atom lines.
 pub fn scan_index(path: impl AsRef<Path>) -> Result<FrameIndex> {
-    scan_frames(BufReader::new(File::open(path)?))
+    scan_frames(open_decoded(path.as_ref(), Compression::Infer, None)?)
 }
 
 /// [`scan_index`] that also records each frame's cell volume `|det(Lattice)|`,
@@ -200,7 +242,7 @@ pub fn scan_index(path: impl AsRef<Path>) -> Result<FrameIndex> {
 /// `torch_sim` reader's density-aware binning; off by default so the structural
 /// scan stays count-lines-only.
 pub fn scan_index_with_volume(path: impl AsRef<Path>) -> Result<FrameIndex> {
-    scan_frames_with_volume(BufReader::new(File::open(path)?))
+    scan_frames_with_volume(open_decoded(path.as_ref(), Compression::Infer, None)?)
 }
 
 /// Scan any reader. The count line is trusted, per the format spec: atom
@@ -687,8 +729,18 @@ pub fn read_batch(path: impl AsRef<Path>, indices: &[usize]) -> Result<Batch> {
     if indices.is_empty() {
         return Err(BatchError::Empty.into());
     }
+    read_batch_from(
+        open_decoded(path.as_ref(), Compression::Infer, None)?,
+        indices,
+    )
+}
 
-    let reader = BufReader::new(File::open(path)?);
+/// [`read_batch`] over an already-opened reader.
+pub fn read_batch_from<R: BufRead>(reader: R, indices: &[usize]) -> Result<Batch> {
+    if indices.is_empty() {
+        return Err(BatchError::Empty.into());
+    }
+
     let mut parsed = Vec::new();
     let mut scan_error = None;
     for item in RawFrames::selecting(reader, indices) {
@@ -711,8 +763,24 @@ pub fn read_batch_parallel(
     if indices.is_empty() {
         return Err(BatchError::Empty.into());
     }
+    read_batch_parallel_from(
+        open_decoded(path.as_ref(), Compression::Infer, None)?,
+        indices,
+        threads,
+    )
+}
 
-    let reader = BufReader::new(File::open(path)?);
+/// [`read_batch_parallel`] over an already-opened reader.
+#[cfg(feature = "parallel")]
+pub fn read_batch_parallel_from<R: BufRead + Send>(
+    reader: R,
+    indices: &[usize],
+    threads: Option<usize>,
+) -> Result<Batch> {
+    if indices.is_empty() {
+        return Err(BatchError::Empty.into());
+    }
+
     let (parsed, scan_error) = run_pipeline(RawFrames::selecting(reader, indices), threads)?;
     assemble_batch(indices, parsed, scan_error)
 }
@@ -770,8 +838,13 @@ fn assemble_batch(
 /// this concatenates the lot. An empty file yields the empty batch (no frames,
 /// no columns), not an error — callers treat it as "no frames".
 pub fn read_all_batch(path: impl AsRef<Path>) -> Result<Batch> {
+    read_all_batch_from(open_decoded(path.as_ref(), Compression::Infer, None)?)
+}
+
+/// [`read_all_batch`] over an already-opened reader.
+pub fn read_all_batch_from<R: BufRead>(reader: R) -> Result<Batch> {
     let mut builder = BatchBuilder::new();
-    for frame in iter_frames(path)? {
+    for frame in FrameIter::new(reader) {
         builder.push(frame?)?;
     }
     finish_or_empty(builder)
@@ -783,8 +856,20 @@ pub fn read_all_batch(path: impl AsRef<Path>) -> Result<Batch> {
 /// front, where the serial path stops at the first bad frame.
 #[cfg(feature = "parallel")]
 pub fn read_all_batch_parallel(path: impl AsRef<Path>, threads: Option<usize>) -> Result<Batch> {
+    read_all_batch_parallel_from(
+        open_decoded(path.as_ref(), Compression::Infer, None)?,
+        threads,
+    )
+}
+
+/// [`read_all_batch_parallel`] over an already-opened reader.
+#[cfg(feature = "parallel")]
+pub fn read_all_batch_parallel_from<R: BufRead + Send>(
+    reader: R,
+    threads: Option<usize>,
+) -> Result<Batch> {
     let mut builder = BatchBuilder::new();
-    for frame in read_frames_parallel(path, threads)? {
+    for frame in read_frames_parallel_from(reader, threads)? {
         builder.push(frame)?;
     }
     finish_or_empty(builder)
@@ -831,6 +916,11 @@ impl IndexedFrames {
     }
 
     fn open_inner(path: &Path, with_volume: bool) -> Result<Self> {
+        // Random access seeks into the file, so a non-seekable compressed
+        // source is refused here rather than silently reading wrong bytes.
+        if crate::decode::is_compressed(path, Compression::Infer)? {
+            return Err(ExtxyzError::RandomAccessUnsupported);
+        }
         let index = if with_volume {
             scan_index_with_volume(path)?
         } else {
@@ -1246,7 +1336,18 @@ fn parse_raw_parallel(raw: &RawFrame) -> Result<Frame> {
 /// anywhere in the file preempted parse errors in earlier frames.)
 #[cfg(feature = "parallel")]
 pub fn read_frames_parallel(path: impl AsRef<Path>, threads: Option<usize>) -> Result<Vec<Frame>> {
-    let reader = BufReader::new(File::open(path)?);
+    read_frames_parallel_from(
+        open_decoded(path.as_ref(), Compression::Infer, None)?,
+        threads,
+    )
+}
+
+/// [`read_frames_parallel`] over an already-opened reader.
+#[cfg(feature = "parallel")]
+pub fn read_frames_parallel_from<R: BufRead + Send>(
+    reader: R,
+    threads: Option<usize>,
+) -> Result<Vec<Frame>> {
     let (mut parsed, scan_error) = run_pipeline(RawFrames::all(reader), threads)?;
 
     parsed.sort_unstable_by_key(|&(frame_index, _)| frame_index);

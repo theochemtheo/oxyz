@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 
 import oxyz._rust as _rust
+from oxyz._frames import Compression
 from oxyz._stats import AtomCountStats
 
 
@@ -43,7 +44,13 @@ class FrameIndex(AtomCountStats):
         return int(self.n_atoms.max()) if self.n_frames else None
 
 
-def scan(path: str | Path, *, with_volume: bool = False) -> FrameIndex:
+def scan(
+    path: str | Path,
+    *,
+    with_volume: bool = False,
+    compression: Compression = "infer",
+    member: str | None = None,
+) -> FrameIndex:
     """Scan a file's structure without parsing any frame contents.
 
     Returns a `FrameIndex` of per-frame byte offsets and declared atom counts.
@@ -57,8 +64,13 @@ def scan(path: str | Path, *, with_volume: bool = False) -> FrameIndex:
     record each frame's cell volume `|det(Lattice)|` in `volumes`; a frame with
     no `Lattice` gets `NaN`. It backs density-aware batch binning
     (`iter_batches(memory_scales_with="n_atoms_x_density")`).
+
+    A compressed path is scanned by streaming through the decoder; the recorded
+    offsets are into the decompressed stream, so they give no random-access
+    speedup on a re-read (which decompresses afresh). `compression` and `member`
+    work as in `read_frames`.
     """
-    data = _rust.scan(str(path), with_volume)
+    data = _rust.scan(str(path), with_volume, compression, member)
     return FrameIndex(
         offsets=data["offsets"],
         n_atoms=data["n_atoms"],

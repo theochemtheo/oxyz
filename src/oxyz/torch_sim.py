@@ -33,6 +33,7 @@ import numpy as np
 
 from oxyz._batch import Batch, MemoryScaling, iter_batches, read_batch
 from oxyz._convert import UnknownSpeciesError, numbers_to_masses
+from oxyz._frames import Compression
 from oxyz._scan import scan
 from oxyz._select import parse_index
 
@@ -66,6 +67,8 @@ def read(
     system_extras: ExtrasMap | None = None,
     atom_extras: ExtrasMap | None = None,
     threads: int | None = None,
+    compression: Compression = "infer",
+    member: str | None = None,
 ) -> SimState:
     """Read selected frames into one batched `SimState`; default reads the file.
 
@@ -77,9 +80,14 @@ def read(
     / `atom_extras` are `{simstate_key: oxyz_key}` maps pulling frame metadata
     into `_system_extras` and per-atom columns into `_atom_extras`. `threads`
     sets the parallel parse (`None`: all cores).
+
+    Compressed paths are read too (any index: the scan and the selecting read
+    both stream); `compression` and `member` are as in `oxyz.read_frames`.
     """
-    indices = _plan_indices(path, index)
-    batch = read_batch(path, indices, threads=threads)
+    indices = _plan_indices(path, index, compression=compression, member=member)
+    batch = read_batch(
+        path, indices, threads=threads, compression=compression, member=member
+    )
     return _to_state(
         batch, dtype, device, positions_requires_grad, system_extras, atom_extras
     )
@@ -100,6 +108,8 @@ def iread(
     system_extras: ExtrasMap | None = None,
     atom_extras: ExtrasMap | None = None,
     threads: int | None = None,
+    compression: Compression = "infer",
+    member: str | None = None,
 ) -> Iterator[SimState]:
     """Stream the file as `SimState` batches, one per step.
 
@@ -107,6 +117,10 @@ def iread(
     `frames_per_batch`, a greedy `atoms_per_batch`, or balanced memory-aware
     bins (`memory_scales_with` + `max_scaler`). For a model-aware split prefer
     `read` plus `torch_sim`'s `BinningAutoBatcher`, which probes the model.
+
+    A compressed source supports only `frames_per_batch` without `shuffle`
+    (it cannot be randomly accessed); see `oxyz.iter_batches`. `compression` and
+    `member` are as in `oxyz.read_frames`.
     """
     for batch in iter_batches(
         path,
@@ -117,6 +131,8 @@ def iread(
         shuffle=shuffle,
         seed=seed,
         threads=threads,
+        compression=compression,
+        member=member,
     ):
         yield _to_state(
             batch, dtype, device, positions_requires_grad, system_extras, atom_extras
@@ -133,8 +149,17 @@ class SimStateSource:
     form one batch.
     """
 
-    def __init__(self, path: str | Path, *, threads: int | None = None) -> None:
-        self._batch: Batch = read_batch(path, threads=threads)
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        threads: int | None = None,
+        compression: Compression = "infer",
+        member: str | None = None,
+    ) -> None:
+        self._batch: Batch = read_batch(
+            path, threads=threads, compression=compression, member=member
+        )
 
     def __len__(self) -> int:
         return self._batch.n_frames
@@ -189,13 +214,19 @@ class SimStateSource:
         return to_tensor(np.asarray(value), key, dtype, device), self._batch.offsets
 
 
-def _plan_indices(path: str | Path, index: int | str | slice) -> list[int] | None:
+def _plan_indices(
+    path: str | Path,
+    index: int | str | slice,
+    *,
+    compression: Compression = "infer",
+    member: str | None = None,
+) -> list[int] | None:
     """Resolve an ASE-style index to a list of frame indices, or `None` for the
     whole file (read in a single pass)."""
     selection = parse_index(index)
     if isinstance(selection, slice) and selection == slice(None, None, None):
         return None
-    universe = range(scan(path).n_frames)
+    universe = range(scan(path, compression=compression, member=member).n_frames)
     if isinstance(selection, int):
         try:
             return [universe[selection]]
