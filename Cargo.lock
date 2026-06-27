@@ -473,7 +473,7 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
 name = "oxyz-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "criterion",
  "fast-float2",
@@ -485,7 +485,7 @@ dependencies = [
 
 [[package]]
 name = "oxyz-py"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ndarray",
  "numpy",
