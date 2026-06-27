@@ -1,0 +1,80 @@
+"""Frame selection by ASE-style index, shared across conversion layers.
+
+The index grammar (an int, an int string, or a slice string) and the
+forward-streaming vs index-backed resolution live here so every conversion
+layer — `oxyz.ase`, and `oxyz.metatomic` next — selects the same frames the
+same way. Selection is frame-type agnostic: it yields oxyz `Frame`s, and the
+caller converts to its own target.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable, Iterator
+from itertools import islice
+from pathlib import Path
+
+from oxyz._frames import Frame, IndexedFrames, iter_frames, read_frames_sliced
+
+
+def parse_index(index: int | str | slice) -> int | slice:
+    """ASE's index grammar: an int, an int string, or a slice string."""
+    if not isinstance(index, str):
+        return index
+    if ":" not in index:
+        return int(index)
+    parts = index.split(":")
+    if len(parts) > 3:
+        raise ValueError(f"invalid slice string: {index!r}")
+    start, stop, step = (int(part) if part else None for part in (*parts, "", "")[:3])
+    return slice(start, stop, step)
+
+
+def nth_frame(path: str | Path, index: int) -> Frame:
+    """Frame `index`; negatives resolve via a scan and seek, not a full parse."""
+    if index < 0:
+        frames = IndexedFrames(path)
+        if index + len(frames) < 0:
+            raise IndexError(
+                f"frame {index} out of range: file has {len(frames)} frames"
+            )
+        return frames.get(index + len(frames))
+
+    frame = next(islice(iter_frames(path), index, None), None)
+    if frame is None:
+        raise IndexError(f"frame {index} out of range")
+    return frame
+
+
+def is_forward(frames: slice) -> bool:
+    """A slice reads front-to-back iff its bounds are non-negative and its step
+    positive; anything else (negative bound or step) must resolve via the index."""
+    start, stop, step = frames.start, frames.stop, frames.step
+    return all(bound is None or bound >= 0 for bound in (start, stop)) and (
+        step is None or step > 0
+    )
+
+
+def frames_for_read(
+    path: str | Path, frames: slice, threads: int | None = None
+) -> Iterable[Frame]:
+    """Frames for an eager list read.
+
+    An unbounded forward slice needs every frame to end of file, so parse the
+    whole file on all cores (`threads`) rather than streaming on one. Bounded or
+    reverse slices keep the streaming/indexed path, which stops early — an eager
+    read must not parse past the frames a bounded slice asks for, and `threads`
+    does not apply to it.
+    """
+    if is_forward(frames) and frames.stop is None:
+        return read_frames_sliced(path, slice(frames.start, None, frames.step), threads)
+    return sliced_frames(path, frames)
+
+
+def sliced_frames(path: str | Path, frames: slice) -> Iterator[Frame]:
+    """Forward slices stream; negative bounds or steps go via the index."""
+    if is_forward(frames):
+        return islice(iter_frames(path), frames.start, frames.stop, frames.step)
+
+    indexed = IndexedFrames(path)
+    selected = range(*frames.indices(len(indexed)))
+    return (indexed.get(i) for i in selected)

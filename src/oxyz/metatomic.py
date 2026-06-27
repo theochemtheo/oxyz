@@ -1,0 +1,340 @@
+"""metatomic conversion layer: extxyz frames to `metatomic.torch.System`.
+
+`read`/`iread` mirror `oxyz.ase`'s entry points but yield `System`s; the
+conversion reproduces `metatomic.torch.systems_to_torch(ase.io.read(...))`
+without an ASE round-trip — species map to atomic numbers via this package's
+own element table (`oxyz._convert`), and the cell follows the same Fortran-order
+`Lattice` reshape and pbc-masked zeroing `systems_to_torch` applies.
+
+`SystemSource` is the read-once handle: it parses a file once and serves both
+`systems()` and array-native `per_config`/`per_atom` extraction of arbitrary
+metadata/columns as torch tensors. It is built on per-frame `Frame`s rather than
+a single concatenated `Batch`, so files whose metadata keys drift between frames
+(common in training sets) still convert — each frame stands alone.
+
+Optional dependencies `torch` and `metatomic-torch`, installed with
+`pip install oxyz[metatomic]`.
+"""
+
+from __future__ import annotations
+
+import warnings
+from collections.abc import Iterator
+from pathlib import Path
+from typing import overload
+
+import numpy as np
+
+from oxyz._convert import UnknownSpeciesError, species_to_numbers
+from oxyz._frames import Frame, read_frames
+from oxyz._select import frames_for_read, nth_frame, parse_index, sliced_frames
+
+try:
+    import torch
+    from metatomic.torch import System
+except ImportError as error:
+    raise ImportError(
+        "oxyz.metatomic requires the optional dependencies 'torch' and "
+        "'metatomic-torch'; install them with: pip install oxyz[metatomic]"
+    ) from error
+
+__all__ = ["SystemSource", "ToSystemError", "iread", "read"]
+
+# systems_to_torch's warning, on the same condition, with "a frame" in place of
+# its "an `ase.Atoms` object" — oxyz has no Atoms object to name. The shared
+# "non-zero cell vectors" phrasing is what the parity test matches on.
+_PBC_CELL_MISMATCH = (
+    "A conversion to `System` was requested for a frame with one or more "
+    "non-zero cell vectors but where the corresponding boundary conditions are "
+    "set to `False`. The corresponding cell vectors will be set to zero."
+)
+
+
+class ToSystemError(ValueError):
+    """The frame has no faithful `System` representation (strict: no repair)."""
+
+
+@overload
+def read(
+    path: str | Path,
+    index: int,
+    *,
+    dtype: torch.dtype | None = ...,
+    device: torch.device | None = ...,
+    positions_requires_grad: bool = ...,
+    cell_requires_grad: bool = ...,
+    threads: int | None = ...,
+) -> System: ...
+
+
+@overload
+def read(
+    path: str | Path,
+    index: slice = ...,
+    *,
+    dtype: torch.dtype | None = ...,
+    device: torch.device | None = ...,
+    positions_requires_grad: bool = ...,
+    cell_requires_grad: bool = ...,
+    threads: int | None = ...,
+) -> list[System]: ...
+
+
+@overload
+def read(
+    path: str | Path,
+    index: str,
+    *,
+    dtype: torch.dtype | None = ...,
+    device: torch.device | None = ...,
+    positions_requires_grad: bool = ...,
+    cell_requires_grad: bool = ...,
+    threads: int | None = ...,
+) -> System | list[System]: ...
+
+
+def read(
+    path: str | Path,
+    index: int | str | slice = ":",
+    *,
+    dtype: torch.dtype | None = None,
+    device: torch.device | None = None,
+    positions_requires_grad: bool = False,
+    cell_requires_grad: bool = False,
+    threads: int | None = None,
+) -> System | list[System]:
+    """Read frames into `System`s; default `index=":"` reads the whole file.
+
+    An int selects one frame (returned bare); a slice or slice-string returns a
+    list. `dtype=None` follows `torch.get_default_dtype()`, as `systems_to_torch`
+    does. `threads` sets the parallel parse for the whole-file read (`None`: all
+    cores); it has no effect on bounded or reverse selections, which stream or
+    seek.
+    """
+    options = (dtype, device, positions_requires_grad, cell_requires_grad)
+    selection = parse_index(index)
+    if isinstance(selection, int):
+        return _to_system(nth_frame(path, selection), *options)
+    return [
+        _to_system(frame, *options)
+        for frame in frames_for_read(path, selection, threads)
+    ]
+
+
+def iread(
+    path: str | Path,
+    index: int | str | slice = ":",
+    *,
+    dtype: torch.dtype | None = None,
+    device: torch.device | None = None,
+    positions_requires_grad: bool = False,
+    cell_requires_grad: bool = False,
+) -> Iterator[System]:
+    """Stream `System`s one at a time, in constant memory (serial parse)."""
+    options = (dtype, device, positions_requires_grad, cell_requires_grad)
+    selection = parse_index(index)
+    if isinstance(selection, int):
+        return iter((_to_system(nth_frame(path, selection), *options),))
+    return (_to_system(frame, *options) for frame in sliced_frames(path, selection))
+
+
+class SystemSource:
+    """Read a file once; serve `System`s and per-key tensors from the result.
+
+    Built for the case where a caller needs both the structures and several
+    target arrays from one file (e.g. energy, forces, stress): one parse backs
+    every accessor, so the file is never re-read.
+    """
+
+    def __init__(self, path: str | Path, *, threads: int | None = None) -> None:
+        self._frames: list[Frame] = read_frames(path, threads=threads)
+
+    def __len__(self) -> int:
+        return len(self._frames)
+
+    def systems(
+        self,
+        *,
+        dtype: torch.dtype | None = None,
+        device: torch.device | None = None,
+        positions_requires_grad: bool = False,
+        cell_requires_grad: bool = False,
+    ) -> list[System]:
+        """Convert every frame to a `System`."""
+        return [
+            _to_system(
+                frame, dtype, device, positions_requires_grad, cell_requires_grad
+            )
+            for frame in self._frames
+        ]
+
+    def per_config(
+        self,
+        key: str,
+        *,
+        dtype: torch.dtype | None = None,
+        device: torch.device | None = None,
+    ) -> torch.Tensor:
+        """Stack one metadata value across frames: `(n_frames, *value_shape)`.
+
+        Scalars give a 1-D tensor; arrays keep their width. Raises if the source
+        has no frames, the key is absent from any frame, or its shape drifts
+        between frames.
+        """
+        self._require_frames(key)
+        values = [
+            _require(frame.metadata, key, "metadata", i)
+            for i, frame in enumerate(self._frames)
+        ]
+        try:
+            stacked = np.array(values)
+        except ValueError:
+            # numpy 2 raises on ragged input rather than building an object
+            # array; surface the same message either way.
+            raise ValueError(
+                f"metadata {key!r} has inconsistent shapes across frames"
+            ) from None
+        if stacked.dtype == object:
+            raise ValueError(f"metadata {key!r} has inconsistent shapes across frames")
+        return _to_tensor(stacked, key, dtype, device)
+
+    def per_atom(
+        self,
+        key: str,
+        *,
+        dtype: torch.dtype | None = None,
+        device: torch.device | None = None,
+    ) -> tuple[torch.Tensor, np.ndarray]:
+        """Concatenate one per-atom column across frames, with frame offsets.
+
+        Returns `(values, offsets)` where `values` is `(total_atoms, *width)` and
+        `offsets` (length `n_frames + 1`) marks each frame's rows, so frame `i`
+        is `values[offsets[i]:offsets[i + 1]]`. Raises if the source has no
+        frames or the key is absent from any frame.
+        """
+        self._require_frames(key)
+        columns = [
+            np.asarray(_require(frame.columns, key, "column", i))
+            for i, frame in enumerate(self._frames)
+        ]
+        offsets = np.zeros(len(self._frames) + 1, dtype=np.intp)
+        offsets[1:] = np.cumsum([frame.n_atoms for frame in self._frames])
+        values = np.concatenate(columns, axis=0)
+        return _to_tensor(values, key, dtype, device), offsets
+
+    def _require_frames(self, key: str) -> None:
+        if not self._frames:
+            raise ValueError(f"cannot extract {key!r}: the source has no frames")
+
+
+def _require(mapping: dict, key: str, kind: str, frame_index: int) -> object:
+    if key not in mapping:
+        raise ValueError(f"{kind} {key!r} missing from frame {frame_index}")
+    return mapping[key]
+
+
+def _resolve_dtype(dtype: torch.dtype | None) -> torch.dtype:
+    return torch.get_default_dtype() if dtype is None else dtype
+
+
+def _to_tensor(
+    array: np.ndarray,
+    key: str,
+    dtype: torch.dtype | None,
+    device: torch.device | None,
+) -> torch.Tensor:
+    """Tensor from a numeric/bool array, or a clear error naming the key.
+
+    `torch.tensor` on a string or object array raises a cryptic TypeError, so
+    reject non-numeric columns up front — a per-atom `species` column or a
+    string metadata value is not a target.
+    """
+    if array.dtype.kind not in "biuf":
+        raise ValueError(
+            f"{key!r} is not numeric (dtype {array.dtype}); cannot make a tensor"
+        )
+    return torch.tensor(array, dtype=_resolve_dtype(dtype), device=device)
+
+
+def _to_system(
+    frame: Frame,
+    dtype: torch.dtype | None,
+    device: torch.device | None,
+    positions_requires_grad: bool,
+    cell_requires_grad: bool,
+) -> System:
+    """Convert one frame, reproducing `systems_to_torch`'s cell/pbc handling."""
+    resolved = _resolve_dtype(dtype)
+
+    pos = frame.columns.get("pos")
+    if pos is None:
+        raise ToSystemError("frame has no 'pos' column to use as positions")
+    positions = torch.tensor(
+        np.asarray(pos),
+        dtype=resolved,
+        device=device,
+        requires_grad=positions_requires_grad,
+    )
+
+    types = torch.tensor(_numbers(frame), dtype=torch.int32, device=device)
+
+    cell, pbc = _cell_and_pbc(frame)
+    if not np.all(np.any(cell != 0, axis=1) == pbc):
+        # stacklevel=3 (as systems_to_torch uses): point past _to_system and the
+        # read/systems comprehension at the user's call.
+        warnings.warn(_PBC_CELL_MISMATCH, stacklevel=3)
+    pbc_tensor = torch.tensor(pbc, dtype=torch.bool, device=device)
+    cell_tensor = torch.zeros((3, 3), dtype=resolved, device=device)
+    # Mirror systems_to_torch: keep only the periodic cell vectors. (Like it, we
+    # accept cell_requires_grad for signature parity but do not apply it.)
+    cell_tensor[pbc_tensor] = torch.tensor(cell[pbc], dtype=resolved, device=device)
+
+    return System(types=types, positions=positions, cell=cell_tensor, pbc=pbc_tensor)
+
+
+def _numbers(frame: Frame) -> np.ndarray:
+    """Atomic numbers: an explicit `Z`/`numbers` column wins, else map species."""
+    for name in ("Z", "numbers"):
+        column = frame.columns.get(name)
+        if column is not None:
+            values = np.asarray(column)
+            if np.issubdtype(values.dtype, np.floating):
+                values = np.rint(values)  # a float Z column: round, don't truncate
+            return values.astype(np.int32, copy=False)
+
+    species = frame.columns.get("species")
+    if species is None:
+        raise ToSystemError("frame has neither a 'species' nor a 'Z' column")
+    try:
+        return species_to_numbers(species)
+    except UnknownSpeciesError as error:
+        raise ToSystemError(str(error)) from None
+
+
+def _cell_and_pbc(frame: Frame) -> tuple[np.ndarray, np.ndarray]:
+    """Reconstruct ASE's `(cell, pbc)`: Fortran-order `Lattice`, pbc inferred
+    from `Lattice` presence when not given explicitly."""
+    pbc = frame.metadata.get("pbc")
+    lattice = frame.metadata.get("Lattice")
+    if lattice is not None:
+        flat = np.asarray(lattice)
+        if flat.shape != (9,):
+            raise ToSystemError(
+                f"Lattice must have 9 components, got shape {flat.shape}"
+            )
+        cell = flat.reshape((3, 3), order="F").T
+        if pbc is None:
+            pbc = np.array([True, True, True])
+    else:
+        cell = np.zeros((3, 3))
+        if pbc is None:
+            pbc = np.array([False, False, False])
+    pbc_array = np.asarray(pbc, dtype=bool)
+    if pbc_array.ndim == 0:
+        # A scalar pbc (e.g. `pbc=T`) broadcasts to all three axes, as ASE does.
+        pbc_array = np.full(3, bool(pbc_array))
+    elif pbc_array.shape != (3,):
+        raise ToSystemError(
+            f"pbc must be a scalar or 3 booleans, got shape {pbc_array.shape}"
+        )
+    return np.ascontiguousarray(cell, dtype=float), pbc_array

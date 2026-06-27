@@ -677,6 +677,46 @@ fn assemble_batch(
     Ok(builder.finish()?)
 }
 
+/// Read every frame into one [`Batch`], in file order, single pass.
+///
+/// The whole-file analogue of [`read_batch`]: where that gathers a selection,
+/// this concatenates the lot. An empty file yields the empty batch (no frames,
+/// no columns), not an error — callers treat it as "no frames".
+pub fn read_all_batch(path: impl AsRef<Path>) -> Result<Batch> {
+    let mut builder = BatchBuilder::new();
+    for frame in iter_frames(path)? {
+        builder.push(frame?)?;
+    }
+    finish_or_empty(builder)
+}
+
+/// [`read_all_batch`] with the parses spread over `threads` workers (`None`:
+/// every core). Output is identical to the serial version; on a malformed file
+/// the two may surface different frames' errors — this parses every frame up
+/// front, where the serial path stops at the first bad frame.
+#[cfg(feature = "parallel")]
+pub fn read_all_batch_parallel(path: impl AsRef<Path>, threads: Option<usize>) -> Result<Batch> {
+    let mut builder = BatchBuilder::new();
+    for frame in read_frames_parallel(path, threads)? {
+        builder.push(frame)?;
+    }
+    finish_or_empty(builder)
+}
+
+/// Finish a whole-file builder, mapping the empty-file case to an empty batch
+/// rather than [`BatchError::Empty`] (which `BatchIter` uses to mean EOF).
+fn finish_or_empty(builder: BatchBuilder) -> Result<Batch> {
+    match builder.finish() {
+        Ok(batch) => Ok(batch),
+        Err(BatchError::Empty) => Ok(Batch {
+            offsets: vec![0],
+            columns: Vec::new(),
+            metadata: Vec::new(),
+        }),
+        Err(error) => Err(error.into()),
+    }
+}
+
 /// Random-access reader: a scanned [`FrameIndex`] plus the open file.
 pub struct IndexedFrames {
     file: File,

@@ -1,6 +1,8 @@
 use std::{io::Cursor, path::PathBuf};
 
-use oxyz_core::{BatchBuilder, ColumnData, FrameIter, IndexedFrames, iter_batches, read_frames};
+use oxyz_core::{
+    BatchBuilder, ColumnData, FrameIter, IndexedFrames, iter_batches, read_all_batch, read_frames,
+};
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -123,6 +125,39 @@ H 0 0 0
     assert!(
         error.to_string().contains("expected I:6, found I:9"),
         "{error}"
+    );
+}
+
+#[test]
+fn read_all_batch_matches_manual_concatenation() {
+    let path = fixture("varying_atom_counts.xyz");
+    let mut builder = BatchBuilder::new();
+    for frame in read_frames(&path).unwrap() {
+        builder.push(frame).unwrap();
+    }
+    assert_eq!(read_all_batch(&path).unwrap(), builder.finish().unwrap());
+}
+
+#[test]
+fn read_all_batch_of_empty_file_is_the_empty_batch() {
+    let path = std::env::temp_dir().join("oxyz_read_all_batch_empty.xyz");
+    std::fs::write(&path, "").unwrap();
+    let batch = read_all_batch(&path).unwrap();
+    let _ = std::fs::remove_file(&path);
+
+    assert_eq!(batch.offsets, [0]);
+    assert_eq!(batch.n_frames(), 0);
+    assert!(batch.columns.is_empty());
+    assert!(batch.metadata.is_empty());
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn read_all_batch_parallel_matches_serial() {
+    let path = fixture("varying_atom_counts.xyz");
+    assert_eq!(
+        oxyz_core::read_all_batch_parallel(&path, None).unwrap(),
+        read_all_batch(&path).unwrap()
     );
 }
 

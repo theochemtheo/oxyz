@@ -64,15 +64,18 @@ def read_frames(path: str | Path, *, threads: int | None = None) -> list[Frame]:
     return [_frame_from_data(frame) for frame in data]
 
 
-def read_frames_sliced(path: str | Path, frames: slice) -> list[Frame]:
-    """`read_frames`, but apply `frames` before wrapping: parse every frame on
-    all cores, then build `Frame` objects only for those the slice keeps.
+def read_frames_sliced(
+    path: str | Path, frames: slice, threads: int | None = None
+) -> list[Frame]:
+    """`read_frames`, but apply `frames` before wrapping: parse every frame
+    (`threads=None`: all cores), then build `Frame` objects only for those the
+    slice keeps.
 
     The parallel parse still touches the whole file, but a slice that drops a
     prefix or steps (`read(path, "1000:")`, `"::2"`) no longer pays to wrap the
     frames it immediately discards.
     """
-    data = _rust.read_frames(str(path), None)
+    data = _rust.read_frames(str(path), threads)
     return [_frame_from_data(frame) for frame in data[frames]]
 
 

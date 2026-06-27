@@ -187,24 +187,28 @@ fn read_frames<'py>(
     PyList::new(py, dicts)
 }
 
-/// Gather the given frames (request order, repeats allowed) into one batch.
+/// Gather frames into one batch. `indices=None` reads the whole file in file
+/// order; a list gathers those frames (request order, repeats allowed).
 ///
-/// Single pass: the file is read once, and only as far as the last
-/// requested frame — bytes past it are never inspected. `threads=None`
-/// parses on every core; `threads=1` is fully serial. The batch and any
-/// errors are identical either way.
+/// Single pass: the file is read once, and (for a selection) only as far as
+/// the last requested frame — bytes past it are never inspected. `threads=None`
+/// parses on every core; `threads=1` is fully serial. The resulting batch is
+/// identical either way (on a malformed whole-file read the two may report
+/// different frames' errors).
 #[pyfunction]
-#[pyo3(signature = (path, indices, threads=None))]
+#[pyo3(signature = (path, indices=None, threads=None))]
 fn read_batch<'py>(
     py: Python<'py>,
     path: PathBuf,
-    indices: Vec<usize>,
+    indices: Option<Vec<usize>>,
     threads: Option<usize>,
 ) -> PyResult<Bound<'py, PyDict>> {
     let batch = py
-        .detach(|| match threads {
-            Some(1) => oxyz_core::read_batch(&path, &indices),
-            _ => oxyz_core::read_batch_parallel(&path, &indices, threads),
+        .detach(|| match (indices, threads) {
+            (None, Some(1)) => oxyz_core::read_all_batch(&path),
+            (None, _) => oxyz_core::read_all_batch_parallel(&path, threads),
+            (Some(indices), Some(1)) => oxyz_core::read_batch(&path, &indices),
+            (Some(indices), _) => oxyz_core::read_batch_parallel(&path, &indices, threads),
         })
         .map_err(extxyz_error_to_py)?;
     batch_to_pydict(py, batch)

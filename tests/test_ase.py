@@ -277,3 +277,57 @@ def test_read_rejects_other_formats() -> None:
 
     with pytest.raises(ValueError, match="extxyz"):
         oxyz.ase.read(DATA_DIR / "simple.extxyz", format="vasp")
+
+
+def test_explicit_z_wins_over_species(tmp_path: Path) -> None:
+    # A `Z` column present alongside `species` takes precedence, as ASE's
+    # reader has it: H mapped to 1 is overridden by Z=26.
+    import oxyz.ase
+
+    path = tmp_path / "species_and_z.extxyz"
+    path.write_text("1\nProperties=species:S:1:Z:I:1:pos:R:3\nH 26 0 0 0\n")
+    atoms = oxyz.ase.read(path, index=0)
+    assert atoms.numbers.tolist() == [26]
+
+
+def test_frame_without_species_or_z_is_error(tmp_path: Path) -> None:
+    import oxyz.ase
+
+    path = tmp_path / "no_species.extxyz"
+    path.write_text("1\nProperties=pos:R:3\n0 0 0\n")
+    with pytest.raises(oxyz.ase.ToAseError, match="neither a 'species' nor a 'Z'"):
+        oxyz.ase.read(path, index=0)
+
+
+def test_malformed_lattice_is_error(tmp_path: Path) -> None:
+    import oxyz.ase
+
+    path = tmp_path / "bad_lattice.extxyz"
+    path.write_text(
+        '1\nLattice="1 2 3 4 5 6" Properties=species:S:1:pos:R:3\nH 0 0 0\n'
+    )
+    with pytest.raises(oxyz.ase.ToAseError, match="9 components"):
+        oxyz.ase.read(path, index=0)
+
+
+def test_move_mask_bad_width_is_error(tmp_path: Path) -> None:
+    import oxyz.ase
+
+    path = tmp_path / "bad_move_mask.extxyz"
+    path.write_text("1\nProperties=species:S:1:pos:R:3:move_mask:L:2\nH 0 0 0 T F\n")
+    with pytest.raises(oxyz.ase.ToAseError, match="move_mask must have width 1 or 3"):
+        oxyz.ase.read(path, index=0)
+
+
+def test_iread_int_index_yields_one() -> None:
+    import oxyz.ase
+
+    atoms = list(oxyz.ase.iread(DATA_DIR / "two_frame_same_schema.xyz", 0))
+    assert len(atoms) == 1
+
+
+def test_too_many_colons_in_index_is_error() -> None:
+    import oxyz.ase
+
+    with pytest.raises(ValueError, match="invalid slice string"):
+        oxyz.ase.read(DATA_DIR / "two_frame_same_schema.xyz", "1:2:3:4")

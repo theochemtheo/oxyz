@@ -19,6 +19,8 @@ const FIXTURES: &[&str] = &[
     "mass_and_charge.extxyz",
     "minimal_periodic.extxyz",
     "molecule_type_labels.extxyz",
+    "move_mask_fix_atoms.extxyz",
+    "move_mask_fix_cartesian.extxyz",
     "newstyle_array_metadata.extxyz",
     "no_lattice_molecule.xyz",
     "nonorthogonal.extxyz",

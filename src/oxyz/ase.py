@@ -15,20 +15,19 @@ The README's "Divergences from ASE" section lists the rest.
 
 from __future__ import annotations
 
-import functools
-from collections.abc import Iterable, Iterator
-from itertools import islice
+from collections.abc import Iterator
 from pathlib import Path
 from typing import overload
 
 import numpy as np
 
-from oxyz._frames import Frame, IndexedFrames, iter_frames, read_frames_sliced
+from oxyz._convert import UnknownSpeciesError, species_to_numbers
+from oxyz._frames import Frame
+from oxyz._select import frames_for_read, nth_frame, parse_index, sliced_frames
 
 try:
     from ase import Atoms
     from ase.constraints import FixAtoms, FixCartesian
-    from ase.data import atomic_numbers
 
     # Internal-but-stable pieces of ase.io.extxyz, reused deliberately so the
     # key routing cannot drift from ASE's own reader. Revisit at ASEv4.
@@ -82,8 +81,12 @@ def to_atoms(frame: Frame) -> Atoms:
     symbols = arrays.pop("symbols", None)
     if symbols is not None:
         # Map the species column to atomic numbers and hand ASE those; a `Z`
-        # column, if also present, still wins (as ASE's reader has it).
-        mapped = _species_to_numbers(symbols)
+        # column, if also present, still wins (as ASE's reader has it). The map
+        # is oxyz._convert's ASE-independent table, pinned equal to ase.data.
+        try:
+            mapped = species_to_numbers(symbols)
+        except UnknownSpeciesError as error:
+            raise ToAseError(str(error)) from None
         if numbers is None:
             numbers = mapped
     if numbers is None:
@@ -113,45 +116,6 @@ def to_atoms(frame: Frame) -> Atoms:
     # ASE's own routing: known results -> SinglePointCalculator, rest -> arrays.
     set_calc_and_arrays(atoms, arrays)
     return atoms
-
-
-@functools.cache
-def _atomic_number(symbol: str) -> int:
-    """Atomic number for a species token, capitalised (so `si` -> `Si`).
-
-    Cached: a file repeats the same handful of species across every atom, so
-    the capitalise and dict lookup happen once per distinct token, not once
-    per atom. Raises `KeyError` for non-symbols, turned into `ToAseError` by
-    the caller.
-    """
-    return atomic_numbers[symbol.capitalize()]
-
-
-def _species_to_numbers(symbols: np.ndarray | list[str]) -> np.ndarray:
-    """Map a species column to atomic numbers via the cached per-token lookup.
-
-    ASE is then handed numbers, so it skips its own per-atom symbol parsing.
-    Faster than vectorising with numpy here: a file's frames are small and
-    many, so the per-call cost of `np.char`/`np.unique` outweighs a cached
-    dict lookup over a plain list.
-    """
-    # tolist() yields plain str, faster to iterate than ndarray's np.str_ scalars.
-    species: list[str] = (
-        symbols.tolist() if isinstance(symbols, np.ndarray) else symbols
-    )
-    try:
-        return np.fromiter(
-            (_atomic_number(s) for s in species), dtype=int, count=len(species)
-        )
-    except (KeyError, TypeError):
-        # KeyError: a token that is not a chemical symbol. TypeError: a non-scalar
-        # species cell (a multi-component `species:S:2` column is list[list[str]],
-        # unhashable, so the cached lookup cannot key on it). Either way the column
-        # has no faithful symbol mapping, so report it strictly via `str(...)`
-        # rather than letting the raw exception escape.
-        tokens = (str(s).capitalize() for s in species)
-        unknown = sorted({t for t in tokens if t not in atomic_numbers})
-        raise ToAseError(f"species are not chemical symbols: {unknown}") from None
 
 
 @overload
@@ -186,10 +150,10 @@ def read(
     whole-file validation is `oxyz.infer_schema`'s job.
     """
     _check_format(format)
-    index = _parse_index(-1 if index is None else index)
+    index = parse_index(-1 if index is None else index)
     if isinstance(index, int):
-        return to_atoms(_nth_frame(path, index))
-    return [to_atoms(frame) for frame in _frames_for_read(path, index)]
+        return to_atoms(nth_frame(path, index))
+    return [to_atoms(frame) for frame in frames_for_read(path, index)]
 
 
 def iread(
@@ -200,73 +164,12 @@ def iread(
 ) -> Iterator[Atoms]:
     """Drop-in for `ase.io.iread` on extxyz files: yields one Atoms at a time."""
     _check_format(format)
-    index = _parse_index(index)
+    index = parse_index(index)
     if isinstance(index, int):
-        return iter((to_atoms(_nth_frame(path, index)),))
-    return (to_atoms(frame) for frame in _sliced_frames(path, index))
+        return iter((to_atoms(nth_frame(path, index)),))
+    return (to_atoms(frame) for frame in sliced_frames(path, index))
 
 
 def _check_format(format: str | None) -> None:
     if format not in (None, "extxyz", "xyz"):
         raise ValueError(f"oxyz.ase only reads extxyz, got format={format!r}")
-
-
-def _parse_index(index: int | str | slice) -> int | slice:
-    """ASE's index grammar: an int, an int string, or a slice string."""
-    if not isinstance(index, str):
-        return index
-    if ":" not in index:
-        return int(index)
-    parts = index.split(":")
-    if len(parts) > 3:
-        raise ValueError(f"invalid slice string: {index!r}")
-    start, stop, step = (int(part) if part else None for part in (*parts, "", "")[:3])
-    return slice(start, stop, step)
-
-
-def _nth_frame(path: str | Path, index: int) -> Frame:
-    """Frame `index`; negatives resolve via a scan and seek, not a full parse."""
-    if index < 0:
-        frames = IndexedFrames(path)
-        if index + len(frames) < 0:
-            raise IndexError(
-                f"frame {index} out of range: file has {len(frames)} frames"
-            )
-        return frames.get(index + len(frames))
-
-    frame = next(islice(iter_frames(path), index, None), None)
-    if frame is None:
-        raise IndexError(f"frame {index} out of range")
-    return frame
-
-
-def _is_forward(frames: slice) -> bool:
-    """A slice reads front-to-back iff its bounds are non-negative and its step
-    positive; anything else (negative bound or step) must resolve via the index."""
-    start, stop, step = frames.start, frames.stop, frames.step
-    return all(bound is None or bound >= 0 for bound in (start, stop)) and (
-        step is None or step > 0
-    )
-
-
-def _frames_for_read(path: str | Path, frames: slice) -> Iterable[Frame]:
-    """Frames for the eager list read.
-
-    An unbounded forward slice needs every frame to end of file, so parse the
-    whole file on all cores rather than streaming on one. Bounded or reverse
-    slices keep the streaming/indexed path, which stops early — `read` must
-    not parse past the frames a bounded slice asks for.
-    """
-    if _is_forward(frames) and frames.stop is None:
-        return read_frames_sliced(path, slice(frames.start, None, frames.step))
-    return _sliced_frames(path, frames)
-
-
-def _sliced_frames(path: str | Path, frames: slice) -> Iterator[Frame]:
-    """Forward slices stream; negative bounds or steps go via the index."""
-    if _is_forward(frames):
-        return islice(iter_frames(path), frames.start, frames.stop, frames.step)
-
-    indexed = IndexedFrames(path)
-    selected = range(*frames.indices(len(indexed)))
-    return (indexed.get(i) for i in selected)
