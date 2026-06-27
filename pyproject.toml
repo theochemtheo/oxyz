@@ -55,6 +55,10 @@ ase = ["ase>=3.23,<4"]
 # semantics oxyz.metatomic relies on. CPU wheels are pinned via the uv index
 # below so CI never pulls a CUDA build.
 metatomic = ["torch>=2", "metatomic-torch"]
+# torch>=2 for the tensor API; torch-sim-atomistic is the PyPI name of the
+# `torch_sim` package whose `SimState` oxyz.torch_sim targets. Heavier than the
+# other extras (it pulls h5py/tables); only installed when this target is used.
+torch-sim = ["torch>=2", "torch-sim-atomistic"]
 
 [dependency-groups]
 # Benchmark dependencies live in benchmarks/run.py (PEP 723), not here:
@@ -71,6 +75,7 @@ dev = [
     "rumdl>=0.2.15",
     "seaborn>=0.13.2",
     "torch>=2",
+    "torch-sim-atomistic",
     "ty>=0.0.44",
 ]
 
