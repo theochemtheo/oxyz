@@ -10,6 +10,13 @@ recorded here.
 
 ## [Unreleased]
 
+### Removed
+
+- Python 3.11 support. oxyz now requires Python 3.12+, following
+  [SPEC 0](https://scientific-python.org/specs/spec-0000/) (a Python version is
+  dropped three years after release; 3.11's window closed Q4 2025). Wheels are
+  now abi3 for CPython 3.12+. Users on 3.11 can pin `oxyz<0.3`.
+
 ### Added
 
 - `oxyz.metatomic` reads extxyz into `metatomic.torch.System`s without an ASE

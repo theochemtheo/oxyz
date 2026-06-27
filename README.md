@@ -2,6 +2,8 @@
 
 [![test](https://github.com/theochemtheo/oxyz/actions/workflows/test.yml/badge.svg)](https://github.com/theochemtheo/oxyz/actions/workflows/test.yml)
 [![PyPI](https://img.shields.io/pypi/v/oxyz)](https://pypi.org/project/oxyz/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/downloads/)
+[![SPEC 0](https://img.shields.io/badge/SPEC-0-green?labelColor=%23004811&color=%235CB05C)](https://scientific-python.org/specs/spec-0000/)
 
 Fast, schema-aware [extxyz](https://github.com/libAtoms/extxyz) reading for
 atomistic machine learning. A Rust parser behind a small, typed Python API:
@@ -38,8 +40,13 @@ pip install "oxyz[ase]"         # adds ASE conversion (ase >=3.23,<4)
 pip install "oxyz[metatomic]"   # adds metatomic.torch.System reading (torch >=2)
 ```
 
-Wheels cover CPython ≥3.11 on Linux (x86_64, aarch64), macOS (arm64,
+Wheels cover CPython ≥3.12 on Linux (x86_64, aarch64), macOS (arm64,
 x86_64), and Windows (x64).
+
+oxyz follows [SPEC 0](https://scientific-python.org/specs/spec-0000/) for its
+support window: Python versions are dropped three years after release, so the
+current minimum is 3.12. Older interpreters can pin an earlier oxyz (3.11 is
+supported up to 0.2.0).
 
 Installing puts an `oxyz` command on the path; `oxyz scan train.extxyz`
 summarises a file without writing any Python. It also runs without

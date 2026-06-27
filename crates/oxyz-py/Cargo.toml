@@ -17,7 +17,7 @@ extension-module = ["pyo3/extension-module"]
 oxyz-core = { path = "../oxyz-core" }
 ndarray = "0.16"
 numpy = "0.28"
-# abi3-py311: one wheel per platform covers CPython >=3.11. Trade-off:
-# no free-threaded wheels (abi3 does not cover them); add version-specific
-# wheels later if demand appears.
-pyo3 = { version = "0.28", features = ["abi3-py311"] }
+# abi3-py312: one wheel per platform covers CPython >=3.12 (the SPEC 0 floor).
+# Trade-off: no free-threaded wheels (abi3 does not cover them); add
+# version-specific wheels later if demand appears.
+pyo3 = { version = "0.28", features = ["abi3-py312"] }
