@@ -195,21 +195,48 @@ pub fn scan_index(path: impl AsRef<Path>) -> Result<FrameIndex> {
     scan_frames(BufReader::new(File::open(path)?))
 }
 
+/// [`scan_index`] that also records each frame's cell volume `|det(Lattice)|`,
+/// reading the one comment line per frame a plain scan skips. For the batched
+/// `torch_sim` reader's density-aware binning; off by default so the structural
+/// scan stays count-lines-only.
+pub fn scan_index_with_volume(path: impl AsRef<Path>) -> Result<FrameIndex> {
+    scan_frames_with_volume(BufReader::new(File::open(path)?))
+}
+
 /// Scan any reader. The count line is trusted, per the format spec: atom
 /// lines are skipped blindly, so a lying count desyncs the scan and surfaces
 /// as an invalid count line one frame late. Contents are never validated —
 /// that is the parser's and [`infer_schema`]'s job.
-pub fn scan_frames<R: BufRead>(mut reader: R) -> Result<FrameIndex> {
+pub fn scan_frames<R: BufRead>(reader: R) -> Result<FrameIndex> {
+    scan_inner(reader, false)
+}
+
+/// [`scan_frames`] that additionally parses each comment line's `Lattice` and
+/// records `|det|` as the frame's volume (`NaN` when there is no `Lattice`).
+pub fn scan_frames_with_volume<R: BufRead>(reader: R) -> Result<FrameIndex> {
+    scan_inner(reader, true)
+}
+
+fn scan_inner<R: BufRead>(mut reader: R, with_volume: bool) -> Result<FrameIndex> {
     let mut entries = Vec::new();
+    let mut volumes: Vec<f64> = Vec::new();
     let mut line = Vec::new();
     let mut offset: u64 = 0;
     let mut line_number: usize = 1;
+
+    let finish = |entries, volumes| {
+        if with_volume {
+            Ok(FrameIndex::with_volumes(entries, volumes))
+        } else {
+            Ok(FrameIndex::new(entries))
+        }
+    };
 
     loop {
         line.clear();
         let n_read = reader.read_until(b'\n', &mut line)?;
         if n_read == 0 {
-            return Ok(FrameIndex::new(entries));
+            return finish(entries, volumes);
         }
 
         let count_offset = offset;
@@ -222,7 +249,7 @@ pub fn scan_frames<R: BufRead>(mut reader: R) -> Result<FrameIndex> {
         // reader does: trailing blank lines are tolerated and a blank line
         // between frames stops the read.
         if text.is_some_and(|text| text.trim().is_empty()) {
-            return Ok(FrameIndex::new(entries));
+            return finish(entries, volumes);
         }
         let n_atoms = text
             .and_then(|text| text.trim().parse::<usize>().ok())
@@ -233,18 +260,40 @@ pub fn scan_frames<R: BufRead>(mut reader: R) -> Result<FrameIndex> {
                 }),
             })?;
 
-        // Saturating: an untrusted count of usize::MAX must not overflow the
-        // +1 for the comment line. usize::MAX lines never arrive, so the read
-        // hits EOF and reports a missing line rather than wrapping to 0.
-        let (n_bytes, skipped) = skip_lines(&mut reader, n_atoms.saturating_add(1))?;
-        offset += n_bytes;
-        line_number += skipped;
-        if skipped <= n_atoms {
-            let label = if skipped == 0 { "comment" } else { "atom" };
-            return Err(ExtxyzError::InFrame {
-                frame_index: entries.len(),
-                source: Box::new(ExtxyzError::MissingLine(label)),
-            });
+        if with_volume {
+            // Read the comment line so its Lattice can be measured, then skip
+            // only the atom lines. A malformed or Lattice-free comment yields
+            // NaN: volume is a heuristic, never a reason to fail the scan.
+            line.clear();
+            let n_comment = reader.read_until(b'\n', &mut line)?;
+            if n_comment == 0 {
+                return Err(missing_line(entries.len(), "comment"));
+            }
+            offset += n_comment as u64;
+            line_number += 1;
+            let volume = std::str::from_utf8(&line)
+                .ok()
+                .and_then(lattice_volume)
+                .unwrap_or(f64::NAN);
+            volumes.push(volume);
+
+            let (n_bytes, skipped) = skip_lines(&mut reader, n_atoms)?;
+            offset += n_bytes;
+            line_number += skipped;
+            if skipped < n_atoms {
+                return Err(missing_line(entries.len(), "atom"));
+            }
+        } else {
+            // Saturating: an untrusted count of usize::MAX must not overflow the
+            // +1 for the comment line. usize::MAX lines never arrive, so the read
+            // hits EOF and reports a missing line rather than wrapping to 0.
+            let (n_bytes, skipped) = skip_lines(&mut reader, n_atoms.saturating_add(1))?;
+            offset += n_bytes;
+            line_number += skipped;
+            if skipped <= n_atoms {
+                let label = if skipped == 0 { "comment" } else { "atom" };
+                return Err(missing_line(entries.len(), label));
+            }
         }
 
         entries.push(FrameEntry {
@@ -253,6 +302,44 @@ pub fn scan_frames<R: BufRead>(mut reader: R) -> Result<FrameIndex> {
             n_atoms,
         });
     }
+}
+
+fn missing_line(frame_index: usize, label: &'static str) -> ExtxyzError {
+    ExtxyzError::InFrame {
+        frame_index,
+        source: Box::new(ExtxyzError::MissingLine(label)),
+    }
+}
+
+/// `|det(cell)|` from a comment line's `Lattice`, or `None` when there is no
+/// well-formed 9-component `Lattice`. `|det|` is the volume independent of cell
+/// handedness and of the row/column order the nine components are read in.
+fn lattice_volume(comment: &str) -> Option<f64> {
+    let pairs = parse_comment_metadata(comment).ok()?;
+    // Last Lattice wins, matching the metadata map's last-key-wins semantics.
+    let raw = pairs
+        .iter()
+        .rev()
+        .find(|(key, _)| key == "Lattice")
+        .map(|(_, value)| value.as_str())?;
+    let mut cell = [0.0f64; 9];
+    let mut count = 0usize;
+    for token in raw.split_whitespace() {
+        if count == 9 {
+            return None; // more than nine components: not a 3x3 cell
+        }
+        cell[count] = token.parse().ok()?;
+        count += 1;
+    }
+    if count != 9 {
+        return None;
+    }
+    Some(det3(&cell).abs())
+}
+
+fn det3(m: &[f64; 9]) -> f64 {
+    m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6])
+        + m[2] * (m[3] * m[7] - m[4] * m[6])
 }
 
 /// Skip up to `n` lines without copying them: newlines are counted straight
@@ -734,8 +821,21 @@ pub struct IndexedFrames {
 impl IndexedFrames {
     /// Scan `path`, keeping the file open for random access.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref();
-        let index = scan_index(path)?;
+        Self::open_inner(path.as_ref(), false)
+    }
+
+    /// [`open`](Self::open) whose scan also records per-frame cell volumes
+    /// (`index().volumes()`), for density-aware batch planning.
+    pub fn open_with_volume(path: impl AsRef<Path>) -> Result<Self> {
+        Self::open_inner(path.as_ref(), true)
+    }
+
+    fn open_inner(path: &Path, with_volume: bool) -> Result<Self> {
+        let index = if with_volume {
+            scan_index_with_volume(path)?
+        } else {
+            scan_index(path)?
+        };
         Ok(IndexedFrames {
             file: File::open(path)?,
             path: path.to_owned(),

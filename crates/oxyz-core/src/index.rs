@@ -17,14 +17,34 @@ pub struct FrameEntry {
     pub n_atoms: usize,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct FrameIndex {
     entries: Vec<FrameEntry>,
+    /// Per-frame cell volume `|det(Lattice)|`, present only for a scan run with
+    /// volume on (see `scan_frames_with_volume`); `NaN` for a frame with no
+    /// `Lattice`. `None` means volume was not requested. Held parallel to
+    /// `entries` rather than on `FrameEntry`, which stays `Copy + Eq`.
+    volumes: Option<Vec<f64>>,
 }
 
 impl FrameIndex {
     pub fn new(entries: Vec<FrameEntry>) -> Self {
-        FrameIndex { entries }
+        FrameIndex {
+            entries,
+            volumes: None,
+        }
+    }
+
+    pub fn with_volumes(entries: Vec<FrameEntry>, volumes: Vec<f64>) -> Self {
+        debug_assert_eq!(entries.len(), volumes.len());
+        FrameIndex {
+            entries,
+            volumes: Some(volumes),
+        }
+    }
+
+    pub fn volumes(&self) -> Option<&[f64]> {
+        self.volumes.as_deref()
     }
 
     pub fn n_frames(&self) -> usize {

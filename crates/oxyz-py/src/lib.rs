@@ -45,10 +45,19 @@ impl FrameIter {
 }
 
 /// Structurally scan the file: `{"offsets": ndarray, "n_atoms": ndarray}`.
+/// With `with_volume=True` the result also carries `"volumes"`: per-frame
+/// `|det(Lattice)|`, `NaN` where a frame has no `Lattice`.
 #[pyfunction]
-fn scan<'py>(py: Python<'py>, path: PathBuf) -> PyResult<Bound<'py, PyDict>> {
+#[pyo3(signature = (path, with_volume=false))]
+fn scan<'py>(py: Python<'py>, path: PathBuf, with_volume: bool) -> PyResult<Bound<'py, PyDict>> {
     let index = py
-        .detach(|| oxyz_core::scan_index(path))
+        .detach(|| {
+            if with_volume {
+                oxyz_core::scan_index_with_volume(path)
+            } else {
+                oxyz_core::scan_index(path)
+            }
+        })
         .map_err(extxyz_error_to_py)?;
 
     let offsets: Vec<u64> = index.entries().iter().map(|entry| entry.offset).collect();
@@ -63,6 +72,9 @@ fn scan<'py>(py: Python<'py>, path: PathBuf) -> PyResult<Bound<'py, PyDict>> {
     let data = PyDict::new(py);
     data.set_item("offsets", offsets.into_pyarray(py))?;
     data.set_item("n_atoms", n_atoms.into_pyarray(py))?;
+    if let Some(volumes) = index.volumes() {
+        data.set_item("volumes", volumes.to_vec().into_pyarray(py))?;
+    }
     Ok(data)
 }
 
@@ -76,15 +88,33 @@ struct IndexedFrames {
 #[pymethods]
 impl IndexedFrames {
     #[new]
-    fn new(py: Python<'_>, path: PathBuf) -> PyResult<Self> {
+    #[pyo3(signature = (path, with_volume=false))]
+    fn new(py: Python<'_>, path: PathBuf, with_volume: bool) -> PyResult<Self> {
         let inner = py
-            .detach(|| oxyz_core::IndexedFrames::open(path))
+            .detach(|| {
+                if with_volume {
+                    oxyz_core::IndexedFrames::open_with_volume(path)
+                } else {
+                    oxyz_core::IndexedFrames::open(path)
+                }
+            })
             .map_err(extxyz_error_to_py)?;
         Ok(IndexedFrames { inner })
     }
 
     fn __len__(&self) -> usize {
         self.inner.len()
+    }
+
+    /// Per-frame cell volume `|det(Lattice)|` from the scan, or `None` when the
+    /// reader was opened without `with_volume`. `NaN` for a frame with no
+    /// `Lattice`.
+    #[getter]
+    fn volumes<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<f64>>> {
+        self.inner
+            .index()
+            .volumes()
+            .map(|volumes| volumes.to_vec().into_pyarray(py))
     }
 
     /// Declared atom count per frame, from the scan done at construction.

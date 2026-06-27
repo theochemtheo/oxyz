@@ -10,7 +10,7 @@ Columns and metadata are kept as written — no aliasing, no normalisation.
 
 from __future__ import annotations
 
-from oxyz._batch import Batch, iter_batches, read_batch
+from oxyz._batch import Batch, MemoryScaling, iter_batches, read_batch
 from oxyz._frames import (
     ColumnValues,
     Frame,
@@ -39,6 +39,7 @@ __all__ = [
     "Frame",
     "FrameIndex",
     "Kind",
+    "MemoryScaling",
     "MetadataSchema",
     "MetadataValue",
     "MetadataVariant",

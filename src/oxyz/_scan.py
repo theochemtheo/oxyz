@@ -22,6 +22,9 @@ class FrameIndex(AtomCountStats):
 
     offsets: np.ndarray
     n_atoms: np.ndarray
+    volumes: np.ndarray | None = None
+    """Per-frame cell volume `|det(Lattice)|`, only for `scan(..., with_volume=True)`;
+    `NaN` for a frame with no `Lattice`. `None` when volume was not requested."""
 
     @property
     def n_frames(self) -> int:
@@ -40,7 +43,7 @@ class FrameIndex(AtomCountStats):
         return int(self.n_atoms.max()) if self.n_frames else None
 
 
-def scan(path: str | Path) -> FrameIndex:
+def scan(path: str | Path, *, with_volume: bool = False) -> FrameIndex:
     """Scan a file's structure without parsing any frame contents.
 
     Returns a `FrameIndex` of per-frame byte offsets and declared atom counts.
@@ -49,6 +52,15 @@ def scan(path: str | Path) -> FrameIndex:
     `median_atoms`/`std_atoms`) are `None` for an empty file — the only
     optionals in the result. For column and metadata types too, at the cost of
     a full parse, use `infer_schema`.
+
+    `with_volume=True` reads one extra line per frame (the comment line) to
+    record each frame's cell volume `|det(Lattice)|` in `volumes`; a frame with
+    no `Lattice` gets `NaN`. It backs density-aware batch binning
+    (`iter_batches(memory_scales_with="n_atoms_x_density")`).
     """
-    data = _rust.scan(str(path))
-    return FrameIndex(offsets=data["offsets"], n_atoms=data["n_atoms"])
+    data = _rust.scan(str(path), with_volume)
+    return FrameIndex(
+        offsets=data["offsets"],
+        n_atoms=data["n_atoms"],
+        volumes=data.get("volumes"),
+    )
