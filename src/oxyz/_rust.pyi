@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 import numpy as np
 
@@ -30,6 +30,9 @@ class FrameData(TypedDict):
 class ScanData(TypedDict):
     offsets: np.ndarray
     n_atoms: np.ndarray
+    # Present only for scan(..., with_volume=True): per-frame |det(Lattice)|,
+    # NaN where a frame has no Lattice.
+    volumes: NotRequired[np.ndarray]
 
 class BatchData(TypedDict):
     offsets: np.ndarray
@@ -75,10 +78,12 @@ class FrameIter:
     def __next__(self) -> FrameData: ...
 
 class IndexedFrames:
-    def __init__(self, path: str) -> None: ...
+    def __init__(self, path: str, with_volume: bool = False) -> None: ...
     def __len__(self) -> int: ...
     @property
     def n_atoms(self) -> np.ndarray: ...
+    @property
+    def volumes(self) -> np.ndarray | None: ...
     def get(self, frame_index: int) -> FrameData: ...
     def get_batch(
         self, indices: list[int], threads: int | None = None
@@ -95,4 +100,4 @@ def read_batch(
     path: str, indices: list[int] | None = None, threads: int | None = None
 ) -> BatchData: ...
 def infer_schema(path: str) -> SchemaData: ...
-def scan(path: str) -> ScanData: ...
+def scan(path: str, with_volume: bool = False) -> ScanData: ...

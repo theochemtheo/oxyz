@@ -21,6 +21,15 @@ recorded here.
   hold the result equal to `systems_to_torch(ase.io.read(...))`.
 - `oxyz.read_batch(path, indices=None)` reads the whole file into one `Batch` in
   a single pass; an empty file yields the empty batch.
+- `oxyz.iter_batches(memory_scales_with=..., max_scaler=...)` packs frames into
+  balanced bins (best-fit-decreasing) for roughly equal per-batch memory,
+  weighting each frame by `"n_atoms"` or by `"n_atoms_x_density"`
+  (`n_atoms**2 / volume`, a proxy for the neighbour-graph size that drives MLIP
+  memory). A frame over the budget gets its own bin; provenance is kept in
+  `frame_indices`.
+- `oxyz.scan(path, with_volume=True)` additionally records each frame's cell
+  volume `|det(Lattice)|` in `FrameIndex.volumes` (`NaN` where a frame has no
+  `Lattice`), reading one extra line per frame; it backs the density weight.
 
 ## [0.2.0] - 2026-06-25
 

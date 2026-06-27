@@ -19,6 +19,7 @@
 | `virial_matrix9.extxyz` | Frame-level `virial` (preserve losslessly; no sign/unit conversion at parse time). |
 | `two_frame_same_schema.xyz` | Two-frame trajectory, stable schema, per-frame `energy`/`Time`. |
 | `varying_atom_counts.xyz` | Three frames with 3/1/2 atoms — forces the ragged-data decision. |
+| `varying_density.extxyz` | Three 2-atom frames, one dense cell and two sparse — distinguishes `n_atoms_x_density` binning from plain atom-count binning. |
 | `molecule_type_labels.extxyz` | Per-atom *string* column (`molecule_type:S:1`) — column types beyond numbers. |
 | `per_atom_boolean.extxyz` | Per-atom *boolean* column (`active:L:1`) — the extxyz `L` kind. |
 | `move_mask_fix_cartesian.extxyz` | Per-atom `move_mask:L:3` — ASE writes/reads it as `FixCartesian` constraints. |

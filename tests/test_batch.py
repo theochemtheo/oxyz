@@ -65,6 +65,86 @@ def test_atom_budget_empty_file_yields_no_batches(tmp_path: Path) -> None:
     assert list(oxyz.iter_batches(empty, atoms_per_batch=100)) == []
 
 
+VARYING_DENSITY = DATA_DIR / "varying_density.extxyz"
+
+
+def test_memory_binning_by_n_atoms_balances_best_fit() -> None:
+    # VARYING has 3/1/2 atoms. Best-fit-decreasing at budget 3 packs the
+    # 3-atom frame alone, then the 2- and 1-atom frames together.
+    batches = list(
+        oxyz.iter_batches(VARYING, memory_scales_with="n_atoms", max_scaler=3)
+    )
+    assert [sorted(b.frame_indices) for b in batches] == [[0], [1, 2]]
+    # No bin exceeds the budget (each here totals 3 atoms).
+    assert all(b.total_atoms <= 3 for b in batches)
+
+
+def test_memory_binning_by_density_separates_dense_from_sparse() -> None:
+    # varying_density: three 2-atom frames. Frame 0 is dense (vol 1 -> weight 4),
+    # frames 1 and 2 sparse (vol 1000 -> ~0.004). By density the dense frame is
+    # isolated and the two sparse frames share a bin; by raw atom count (all
+    # weigh 2) the packing differs, proving the density weight is in play.
+    by_density = [
+        sorted(b.frame_indices)
+        for b in oxyz.iter_batches(
+            VARYING_DENSITY, memory_scales_with="n_atoms_x_density", max_scaler=4
+        )
+    ]
+    by_atoms = [
+        sorted(b.frame_indices)
+        for b in oxyz.iter_batches(
+            VARYING_DENSITY, memory_scales_with="n_atoms", max_scaler=4
+        )
+    ]
+    assert by_density == [[0], [1, 2]]
+    assert by_atoms == [[0, 1], [2]]
+
+
+def test_density_weight_falls_back_to_atom_count_for_molecules() -> None:
+    # A frame with no Lattice has NaN volume; its weight is the atom count, the
+    # torch_sim where(volume > 0, n**2/v, n) fallback. Pinned at the weight
+    # helper because a bin may not mix Lattice and Lattice-free schemas.
+    from oxyz._batch import _memory_weights
+
+    n_atoms = np.array([2, 3], dtype=np.intp)
+    volumes = np.array([8.0, np.nan])
+    weights = _memory_weights("n_atoms_x_density", n_atoms, volumes)
+    assert_allclose(weights, [2 * 2 / 8, 3.0])
+
+
+def test_memory_binning_isolates_a_frame_over_budget() -> None:
+    # A frame whose weight exceeds the budget still gets its own bin.
+    batches = list(
+        oxyz.iter_batches(VARYING, memory_scales_with="n_atoms", max_scaler=1)
+    )
+    assert sorted(sorted(b.frame_indices) for b in batches) == [[0], [1], [2]]
+
+
+def test_memory_binning_preserves_frame_provenance() -> None:
+    # Reordered packing still records which file frame each entry came from.
+    batches = list(
+        oxyz.iter_batches(VARYING, memory_scales_with="n_atoms", max_scaler=3)
+    )
+    seen = sorted(i for b in batches for i in b.frame_indices)
+    assert seen == [0, 1, 2]
+
+
+def test_memory_binning_requires_max_scaler() -> None:
+    with pytest.raises(ValueError, match="max_scaler"):
+        list(oxyz.iter_batches(VARYING, memory_scales_with="n_atoms"))
+
+
+def test_memory_binning_rejects_unknown_metric() -> None:
+    with pytest.raises(ValueError, match="memory_scales_with"):
+        list(
+            oxyz.iter_batches(
+                VARYING,
+                memory_scales_with="n_edges",  # ty: ignore[invalid-argument-type]
+                max_scaler=4,
+            )
+        )
+
+
 def test_shuffled_batches_are_seeded_and_partition_the_file() -> None:
     def plan(seed: int) -> list[list[int]]:
         return [
@@ -128,6 +208,10 @@ def test_read_batch_whole_file_empty_is_no_frames(tmp_path: Path) -> None:
         {"atoms_per_batch": 0},
         {"frames_per_batch": 2, "seed": 0},
         {"frames_per_batch": 2, "threads": 0},
+        {"atoms_per_batch": 4, "memory_scales_with": "n_atoms"},
+        {"memory_scales_with": "n_atoms", "max_scaler": 0},
+        {"memory_scales_with": "n_atoms", "max_scaler": 4, "shuffle": True},
+        {"max_scaler": 4},
     ],
 )
 def test_invalid_batching_arguments(kwargs) -> None:

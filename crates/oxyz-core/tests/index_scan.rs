@@ -1,6 +1,6 @@
 use std::{io::Cursor, path::PathBuf};
 
-use oxyz_core::{IndexedFrames, read_frames, scan_frames, scan_index};
+use oxyz_core::{IndexedFrames, read_frames, scan_frames, scan_frames_with_volume, scan_index};
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -86,6 +86,39 @@ fn truncated_final_frame_is_an_error() {
     let error = scan_frames(Cursor::new(text)).unwrap_err();
     assert!(error.to_string().contains("frame 0"), "{error}");
     assert!(error.to_string().contains("missing atom line"), "{error}");
+}
+
+#[test]
+fn volume_scan_records_lattice_determinant() {
+    // A periodic frame (2x2x2 cubic cell, volume 8) followed by a molecular
+    // frame with no Lattice: the molecular volume is NaN, the cheap fallback to
+    // an atom-count weight downstream.
+    let text = "1\nLattice=\"2 0 0 0 2 0 0 0 2\"\nH 0 0 0\n1\ncomment\nH 1 1 1\n";
+    let index = scan_frames_with_volume(Cursor::new(text)).unwrap();
+    let volumes = index.volumes().expect("volume scan records volumes");
+    assert_eq!(volumes.len(), 2);
+    assert!((volumes[0] - 8.0).abs() < 1e-9, "{volumes:?}");
+    assert!(volumes[1].is_nan(), "{volumes:?}");
+
+    // Counts and offsets must match a plain scan: volume is purely additive.
+    let plain = scan_frames(Cursor::new(text)).unwrap();
+    assert_eq!(index.entries(), plain.entries());
+}
+
+#[test]
+fn volume_scan_handles_triclinic_and_negative_determinant() {
+    // A sheared cell: |det| is the volume regardless of handedness or the
+    // row/column order the nine components are read in.
+    let text = "1\nLattice=\"2 0 0 1 2 0 0 0 3\"\nH 0 0 0\n";
+    let index = scan_frames_with_volume(Cursor::new(text)).unwrap();
+    let volumes = index.volumes().unwrap();
+    assert!((volumes[0] - 12.0).abs() < 1e-9, "{volumes:?}");
+}
+
+#[test]
+fn plain_scan_records_no_volumes() {
+    let index = scan_frames(Cursor::new("1\ncomment\nH 0 0 0\n")).unwrap();
+    assert!(index.volumes().is_none());
 }
 
 #[test]

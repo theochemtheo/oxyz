@@ -3,11 +3,14 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 
 import oxyz._rust as _rust
 from oxyz._frames import ColumnValues, _check_threads
+
+MemoryScaling = Literal["n_atoms", "n_atoms_x_density"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,29 +93,61 @@ def iter_batches(
     *,
     frames_per_batch: int | None = None,
     atoms_per_batch: int | None = None,
+    memory_scales_with: MemoryScaling | None = None,
+    max_scaler: float | None = None,
     shuffle: bool = False,
     seed: int | None = None,
     threads: int | None = None,
 ) -> Iterator[Batch]:
     """Read a file as a sequence of batches.
 
-    Exactly one of `frames_per_batch` (fixed structure count) or
-    `atoms_per_batch` (greedy packing to a total-atom budget; a frame larger
-    than the budget gets a batch to itself) must be given. `shuffle` draws
-    frames in a seeded random order via the byte-offset index instead of
-    file order.
+    Exactly one batching strategy must be given:
+
+    - `frames_per_batch` — a fixed structure count per batch.
+    - `atoms_per_batch` — greedy file-order packing to a total-atom budget; a
+      frame larger than the budget gets a batch to itself.
+    - `memory_scales_with` — pack into balanced bins (best-fit-decreasing) under
+      `max_scaler`, weighting each frame by `"n_atoms"` or by `"n_atoms_x_density"`
+      (`n_atoms**2 / volume`, a proxy for the neighbour-graph size that drives
+      MLIP memory). A frame whose weight exceeds `max_scaler` gets its own bin.
+      Density needs the cell volume, read by an opt-in extension of the scan;
+      a frame with no `Lattice` falls back to its atom count.
+
+    `shuffle` draws frames in a seeded random order via the byte-offset index
+    instead of file order (not available with `memory_scales_with`, whose
+    packing defines its own order). Whatever the order, each batch records the
+    file frame every entry came from in `frame_indices`.
 
     Batch composition depends only on the file, the knobs, and the seed —
     never on `threads`, which sets parsing parallelism within each batch
     (None: all cores; 1: serial, which for unshuffled `frames_per_batch`
     streams the file without scanning).
     """
-    if (frames_per_batch is None) == (atoms_per_batch is None):
-        raise ValueError("pass exactly one of frames_per_batch or atoms_per_batch")
+    strategies = sum(
+        knob is not None
+        for knob in (frames_per_batch, atoms_per_batch, memory_scales_with)
+    )
+    if strategies != 1:
+        raise ValueError(
+            "pass exactly one of frames_per_batch, atoms_per_batch, "
+            "or memory_scales_with"
+        )
     if frames_per_batch is not None and frames_per_batch < 1:
         raise ValueError("frames_per_batch must be at least 1")
     if atoms_per_batch is not None and atoms_per_batch < 1:
         raise ValueError("atoms_per_batch must be at least 1")
+    if memory_scales_with is not None:
+        if memory_scales_with not in ("n_atoms", "n_atoms_x_density"):
+            raise ValueError(
+                "memory_scales_with must be 'n_atoms' or 'n_atoms_x_density', "
+                f"got {memory_scales_with!r}"
+            )
+        if max_scaler is None or max_scaler <= 0:
+            raise ValueError("memory_scales_with requires max_scaler > 0")
+        if shuffle:
+            raise ValueError("shuffle is not supported with memory_scales_with")
+    elif max_scaler is not None:
+        raise ValueError("max_scaler requires memory_scales_with")
     if seed is not None and not shuffle:
         raise ValueError("seed requires shuffle=True")
     _check_threads(threads)
@@ -120,7 +155,14 @@ def iter_batches(
     if frames_per_batch is not None and not shuffle and threads == 1:
         return _sequential_batches(path, frames_per_batch)
     return _planned_batches(
-        path, frames_per_batch, atoms_per_batch, shuffle, seed, threads
+        path,
+        frames_per_batch,
+        atoms_per_batch,
+        memory_scales_with,
+        max_scaler,
+        shuffle,
+        seed,
+        threads,
     )
 
 
@@ -137,6 +179,8 @@ def _planned_batches(
     path: str | Path,
     frames_per_batch: int | None,
     atoms_per_batch: int | None,
+    memory_scales_with: MemoryScaling | None,
+    max_scaler: float | None,
     shuffle: bool,
     seed: int | None,
     threads: int | None,
@@ -145,8 +189,10 @@ def _planned_batches(
 
     Planning is serial and happens before any parsing, so `threads` cannot
     influence which frames land in which batch. The reader's own index
-    supplies the atom counts, so the file is scanned exactly once."""
-    reader = _rust.IndexedFrames(str(path))
+    supplies the atom counts (and, for density, the cell volumes), so the file
+    is scanned exactly once."""
+    need_volume = memory_scales_with == "n_atoms_x_density"
+    reader = _rust.IndexedFrames(str(path), need_volume)
     n_atoms = reader.n_atoms
     order = np.arange(len(n_atoms), dtype=np.intp)
     if shuffle:
@@ -157,9 +203,12 @@ def _planned_batches(
             [int(i) for i in order[start : start + frames_per_batch]]
             for start in range(0, len(order), frames_per_batch)
         ]
-    else:
-        assert atoms_per_batch is not None
+    elif atoms_per_batch is not None:
         plans = _greedy_atom_plans(order, n_atoms, atoms_per_batch)
+    else:
+        assert memory_scales_with is not None and max_scaler is not None
+        weights = _memory_weights(memory_scales_with, n_atoms, reader.volumes)
+        plans = _balanced_bins(order, weights, max_scaler)
 
     for plan in plans:
         yield _batch_from_data(reader.get_batch(plan, threads), plan)
@@ -182,6 +231,49 @@ def _greedy_atom_plans(
     if current:
         plans.append(current)
     return plans
+
+
+def _memory_weights(
+    metric: MemoryScaling, n_atoms: np.ndarray, volumes: np.ndarray | None
+) -> np.ndarray:
+    """Per-frame packing weight; see `iter_batches` for the rationale.
+
+    `n_atoms_x_density` is `n_atoms**2 / volume`, falling back to `n_atoms`
+    where the volume is missing (`NaN`, a frame with no `Lattice`) or
+    non-positive — mirroring `torch_sim`'s `where(volume > 0, ...)`.
+    """
+    counts = n_atoms.astype(np.float64)
+    if metric == "n_atoms":
+        return counts
+    assert volumes is not None  # need_volume opened the scan with volumes
+    with np.errstate(invalid="ignore", divide="ignore"):
+        density = counts * counts / volumes
+    return np.where(np.isfinite(volumes) & (volumes > 0), density, counts)
+
+
+def _balanced_bins(
+    order: np.ndarray, weights: np.ndarray, max_volume: float
+) -> list[list[int]]:
+    """Best-fit-decreasing bin packing, after `torch_sim`'s
+    `to_constant_volume_bins`: heaviest first, into the most-full bin that still
+    has room, opening a new bin only when none does. A frame heavier than the
+    budget opens (and fills) a bin of its own."""
+    entries = sorted(
+        ((float(weights[i]), int(i)) for i in order), key=lambda entry: -entry[0]
+    )
+    bins: list[list[int]] = []
+    sums: list[float] = []
+    for weight, index in entries:
+        candidates = [b for b, total in enumerate(sums) if total + weight <= max_volume]
+        if candidates:
+            chosen = max(candidates, key=lambda b: sums[b])
+        else:
+            chosen = len(bins)
+            bins.append([])
+            sums.append(0.0)
+        bins[chosen].append(index)
+        sums[chosen] += weight
+    return bins
 
 
 def _batch_from_data(data: _rust.BatchData, frame_indices: Sequence[int]) -> Batch:

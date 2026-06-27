@@ -33,6 +33,7 @@ const FIXTURES: &[&str] = &[
     "stress_voigt6.extxyz",
     "two_frame_same_schema.xyz",
     "varying_atom_counts.xyz",
+    "varying_density.extxyz",
     "virial_matrix9.extxyz",
 ];
 

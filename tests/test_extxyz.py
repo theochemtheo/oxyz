@@ -175,6 +175,21 @@ def test_scan_reports_structure_and_statistics() -> None:
     assert index.std_atoms == pytest.approx((2 / 3) ** 0.5)
 
 
+def test_scan_volumes_default_off_and_opt_in() -> None:
+    plain = oxyz.scan(DATA_DIR / "varying_density.extxyz")
+    assert plain.volumes is None
+
+    index = oxyz.scan(DATA_DIR / "varying_density.extxyz", with_volume=True)
+    assert index.volumes is not None
+    assert list(index.volumes) == pytest.approx([1.0, 1000.0, 1000.0])
+
+
+def test_scan_volume_is_nan_without_lattice() -> None:
+    index = oxyz.scan(DATA_DIR / "no_lattice_molecule.xyz", with_volume=True)
+    assert index.volumes is not None
+    assert np.isnan(index.volumes).all()
+
+
 def test_scan_rejects_structural_garbage(tmp_path: Path) -> None:
     text = (DATA_DIR / "varying_atom_counts.xyz").read_text()
     broken = tmp_path / "broken.xyz"
