@@ -26,6 +26,16 @@ recorded here.
   array-native `per_config` / `per_atom` tensor extraction for targets. New
   optional extra `oxyz[metatomic]` (torch >=2, metatomic-torch). Parity tests
   hold the result equal to `systems_to_torch(ase.io.read(...))`.
+- `oxyz.torch_sim` reads extxyz into `torch_sim.SimState`, reproducing
+  `torch_sim.io.atoms_to_state(ase.io.read(...))` without the ASE round-trip.
+  Because `SimState` is natively batched, `read` returns a single batched state
+  (the whole selection) and `iread` streams the file as batched states (with
+  `oxyz.iter_batches`'s binning knobs); a `SimStateSource` serves the state plus
+  array-native `per_config` / `per_atom` extraction. Cells use torch_sim's
+  column convention, all systems share one pbc (frames that disagree raise), and
+  masses come from a `masses` column or an ASE-parity atomic-weight table. New
+  optional extra `oxyz[torch-sim]` (torch >=2, torch-sim-atomistic); parity
+  tests hold the result equal to `atoms_to_state(ase.io.read(...))`.
 - `oxyz.read_batch(path, indices=None)` reads the whole file into one `Batch` in
   a single pass; an empty file yields the empty batch.
 - `oxyz.iter_batches(memory_scales_with=..., max_scaler=...)` packs frames into

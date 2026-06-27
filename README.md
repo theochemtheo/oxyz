@@ -38,6 +38,7 @@ Pre-1.0: minor versions may change the API.
 pip install oxyz                # numpy is the only dependency
 pip install "oxyz[ase]"         # adds ASE conversion (ase >=3.23,<4)
 pip install "oxyz[metatomic]"   # adds metatomic.torch.System reading (torch >=2)
+pip install "oxyz[torch-sim]"   # adds torch_sim.SimState reading (torch >=2)
 ```
 
 Wheels cover CPython ≥3.12 on Linux (x86_64, aarch64), macOS (arm64,
@@ -139,6 +140,50 @@ readers, with the gradient-sign, volume, and `TensorMap` conventions
 staying on the metatrain side. oxyz depends only on torch and
 metatomic-torch, never on metatrain or metatensor; that integration is
 left to metatrain deliberately.
+
+## To PyTorch (torch_sim)
+
+`oxyz.torch_sim` reads extxyz into `torch_sim.SimState`, reproducing
+`torch_sim.io.atoms_to_state(ase.io.read(...))`. `SimState` is natively
+batched — one state holds many systems with their atoms concatenated — so
+the reader maps onto oxyz's batched parse rather than the per-frame path:
+`read` returns a *single* batched state, `iread` streams the file as a
+sequence of batched states. Needs `pip install "oxyz[torch-sim]"`.
+
+```python
+import torch
+import oxyz.torch_sim
+
+state = oxyz.torch_sim.read("train.extxyz")              # one batched SimState
+substate = oxyz.torch_sim.read("train.extxyz", "0:64")   # a slice, still one state
+```
+
+With a model and a GPU, hand the whole-file state to `torch_sim`'s
+`BinningAutoBatcher`, which sizes memory-aware batches by probing the model:
+
+```python
+from torch_sim.autobatching import BinningAutoBatcher
+
+batcher = BinningAutoBatcher(model, memory_scales_with="n_atoms_x_density")
+batcher.load_states(oxyz.torch_sim.read("train.extxyz"))
+```
+
+For files too large to materialise, `iread` streams batches itself, with the
+same binning knobs as `oxyz.iter_batches` (`frames_per_batch` /
+`atoms_per_batch` / `memory_scales_with` + `max_scaler`):
+
+```python
+for batch in oxyz.torch_sim.iread("huge.extxyz", memory_scales_with="n_atoms_x_density",
+                                  max_scaler=50_000):
+    ...
+```
+
+Cells follow `torch_sim`'s column-vector convention (ASE's cell transposed),
+every system shares one pbc (frames that disagree are an error), and masses
+come from a `masses` column or, failing that, the ASE-parity atomic-weight
+table. `dtype=None` infers from the data (float64), matching `atoms_to_state`;
+pass `torch.float32` for ML use. `SimStateSource` parses once and serves the
+state plus array-native `per_config` / `per_atom` extraction.
 
 ## What you get beyond ASE
 

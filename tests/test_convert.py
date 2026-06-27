@@ -6,8 +6,10 @@ import numpy as np
 import pytest
 
 from oxyz._convert import (
+    ATOMIC_MASSES,
     SYMBOL_TO_Z,
     UnknownSpeciesError,
+    numbers_to_masses,
     species_to_numbers,
 )
 
@@ -23,6 +25,20 @@ def test_element_table_matches_ase() -> None:
     from ase.data import atomic_numbers
 
     assert atomic_numbers == SYMBOL_TO_Z
+
+
+@needs_ase
+def test_atomic_masses_match_ase() -> None:
+    # The torch_sim path derives masses without importing ASE; the table must
+    # agree with ASE's, element for element.
+    from ase.data import atomic_masses
+
+    np.testing.assert_array_equal(ATOMIC_MASSES, atomic_masses)
+
+
+def test_numbers_to_masses_indexes_by_atomic_number() -> None:
+    masses = numbers_to_masses(np.array([1, 8, 6]))
+    np.testing.assert_allclose(masses, [1.008, 15.999, 12.011])
 
 
 def test_species_to_numbers_maps_and_capitalises() -> None:

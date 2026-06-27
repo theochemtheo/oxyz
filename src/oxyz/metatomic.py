@@ -25,7 +25,7 @@ from typing import overload
 
 import numpy as np
 
-from oxyz._convert import UnknownSpeciesError, species_to_numbers
+from oxyz._convert import UnknownSpeciesError
 from oxyz._frames import Frame, read_frames
 from oxyz._select import frames_for_read, nth_frame, parse_index, sliced_frames
 
@@ -37,6 +37,8 @@ except ImportError as error:
         "oxyz.metatomic requires the optional dependencies 'torch' and "
         "'metatomic-torch'; install them with: pip install oxyz[metatomic]"
     ) from error
+
+from oxyz._torch import MissingSpeciesError, numbers, resolve_dtype, to_tensor
 
 __all__ = ["SystemSource", "ToSystemError", "iread", "read"]
 
@@ -196,7 +198,7 @@ class SystemSource:
             ) from None
         if stacked.dtype == object:
             raise ValueError(f"metadata {key!r} has inconsistent shapes across frames")
-        return _to_tensor(stacked, key, dtype, device)
+        return to_tensor(stacked, key, resolve_dtype(dtype), device)
 
     def per_atom(
         self,
@@ -220,7 +222,7 @@ class SystemSource:
         offsets = np.zeros(len(self._frames) + 1, dtype=np.intp)
         offsets[1:] = np.cumsum([frame.n_atoms for frame in self._frames])
         values = np.concatenate(columns, axis=0)
-        return _to_tensor(values, key, dtype, device), offsets
+        return to_tensor(values, key, resolve_dtype(dtype), device), offsets
 
     def _require_frames(self, key: str) -> None:
         if not self._frames:
@@ -233,29 +235,6 @@ def _require(mapping: dict, key: str, kind: str, frame_index: int) -> object:
     return mapping[key]
 
 
-def _resolve_dtype(dtype: torch.dtype | None) -> torch.dtype:
-    return torch.get_default_dtype() if dtype is None else dtype
-
-
-def _to_tensor(
-    array: np.ndarray,
-    key: str,
-    dtype: torch.dtype | None,
-    device: torch.device | None,
-) -> torch.Tensor:
-    """Tensor from a numeric/bool array, or a clear error naming the key.
-
-    `torch.tensor` on a string or object array raises a cryptic TypeError, so
-    reject non-numeric columns up front — a per-atom `species` column or a
-    string metadata value is not a target.
-    """
-    if array.dtype.kind not in "biuf":
-        raise ValueError(
-            f"{key!r} is not numeric (dtype {array.dtype}); cannot make a tensor"
-        )
-    return torch.tensor(array, dtype=_resolve_dtype(dtype), device=device)
-
-
 def _to_system(
     frame: Frame,
     dtype: torch.dtype | None,
@@ -264,7 +243,7 @@ def _to_system(
     cell_requires_grad: bool,
 ) -> System:
     """Convert one frame, reproducing `systems_to_torch`'s cell/pbc handling."""
-    resolved = _resolve_dtype(dtype)
+    resolved = resolve_dtype(dtype)
 
     pos = frame.columns.get("pos")
     if pos is None:
@@ -293,20 +272,11 @@ def _to_system(
 
 
 def _numbers(frame: Frame) -> np.ndarray:
-    """Atomic numbers: an explicit `Z`/`numbers` column wins, else map species."""
-    for name in ("Z", "numbers"):
-        column = frame.columns.get(name)
-        if column is not None:
-            values = np.asarray(column)
-            if np.issubdtype(values.dtype, np.floating):
-                values = np.rint(values)  # a float Z column: round, don't truncate
-            return values.astype(np.int32, copy=False)
-
-    species = frame.columns.get("species")
-    if species is None:
-        raise ToSystemError("frame has neither a 'species' nor a 'Z' column")
+    """Atomic numbers, with the missing/unknown cases as `ToSystemError`s."""
     try:
-        return species_to_numbers(species)
+        return numbers(frame.columns)
+    except MissingSpeciesError:
+        raise ToSystemError("frame has neither a 'species' nor a 'Z' column") from None
     except UnknownSpeciesError as error:
         raise ToSystemError(str(error)) from None
 
