@@ -81,11 +81,16 @@ fn gzip_bytes(plain: &str) -> Vec<u8> {
 }
 
 fn zip_bytes(plain: &str) -> Vec<u8> {
+    zip_member("many.xyz", plain)
+}
+
+/// A zip holding one member of the given name and body.
+fn zip_member(name: &str, body: &str) -> Vec<u8> {
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
     writer
-        .start_file("many.xyz", zip::write::SimpleFileOptions::default())
+        .start_file(name, zip::write::SimpleFileOptions::default())
         .unwrap();
-    writer.write_all(plain.as_bytes()).unwrap();
+    writer.write_all(body.as_bytes()).unwrap();
     writer.finish().unwrap().into_inner()
 }
 
@@ -132,6 +137,93 @@ fn every_route_reads_a_large_multi_frame_file() {
         assert_eq!(frames.len(), expected, "frame count for .{extension}");
         let _ = std::fs::remove_file(&path);
     }
+}
+
+#[test]
+fn unknown_extension_falls_back_to_magic_bytes() {
+    // A `.dat` extension says nothing, so the codec is recognised from the
+    // leading magic bytes. zstd magic comes from the committed fixture; the
+    // rest are encoded here.
+    let one = std::fs::read_to_string(fixture("two_frame_same_schema.xyz")).unwrap();
+    let zstd = std::fs::read(fixture("compressed/two_frame.xyz.zst")).unwrap();
+    let cases: [(Vec<u8>, usize); 4] = [
+        (one.clone().into_bytes(), 2), // plain text -> read as-is
+        (gzip_bytes(&one), 2),
+        (zip_bytes(&one), 2),
+        (zstd, 2),
+    ];
+    for (bytes, expected) in cases {
+        let path = temp_file(&bytes, "dat");
+        assert_eq!(read_frames(&path).unwrap().len(), expected);
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+#[test]
+fn archive_with_no_extxyz_member_errors() {
+    let path = temp_file(&zip_member("notes.txt", "nothing to parse here"), "zip");
+    let error = open_decoded(&path, Compression::Infer, None).err().unwrap();
+    assert!(
+        matches!(error, ExtxyzError::NoExtxyzMember { .. }),
+        "{error:?}"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn tar_skips_directory_entries_when_resolving_a_member() {
+    // A directory entry alongside the sole extxyz member must be ignored during
+    // enumeration, not mistaken for a second member.
+    let plain = std::fs::read_to_string(fixture("two_frame_same_schema.xyz")).unwrap();
+    let mut builder = tar::Builder::new(Vec::new());
+    let mut dir = tar::Header::new_gnu();
+    dir.set_entry_type(tar::EntryType::Directory);
+    dir.set_path("sub/").unwrap();
+    dir.set_size(0);
+    dir.set_mode(0o755);
+    dir.set_cksum();
+    builder.append(&dir, std::io::empty()).unwrap();
+    let mut member = tar::Header::new_gnu();
+    member.set_size(plain.len() as u64);
+    member.set_mode(0o644);
+    member.set_cksum();
+    builder
+        .append_data(&mut member, "many.xyz", plain.as_bytes())
+        .unwrap();
+    let path = temp_file(&builder.into_inner().unwrap(), "tar");
+    assert_eq!(read_frames(&path).unwrap().len(), 2);
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn corrupt_zip_surfaces_an_error() {
+    // Bytes with a zip extension but no valid central directory must fail at
+    // open, not panic or read garbage.
+    let path = temp_file(b"PK\x03\x04 not really a zip", "zip");
+    assert!(open_decoded(&path, Compression::Infer, None).is_err());
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_corrupt_archive_member_surfaces_an_error_not_a_silent_truncation() {
+    // A stored zip member with a flipped data byte fails its CRC check while the
+    // producer thread streams it; the error must reach the reader rather than
+    // ending the stream early.
+    let plain = std::fs::read_to_string(fixture("two_frame_same_schema.xyz")).unwrap();
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    writer.start_file("many.xyz", options).unwrap();
+    writer.write_all(plain.as_bytes()).unwrap();
+    let mut bytes = writer.finish().unwrap().into_inner();
+    // Flip a byte inside the stored member data (past the local header, before
+    // the trailing central directory) to break its CRC.
+    let middle = bytes.len() / 2;
+    bytes[middle] ^= 0xff;
+
+    let path = temp_file(&bytes, "zip");
+    assert!(read_frames(&path).is_err());
+    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
