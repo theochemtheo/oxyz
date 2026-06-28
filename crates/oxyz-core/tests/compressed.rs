@@ -5,7 +5,7 @@
 //! `two_frame_same_schema.xyz` (see that directory's README).
 
 use std::{
-    io::{Read, Write},
+    io::{Cursor, Read, Write},
     path::PathBuf,
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -61,6 +61,77 @@ fn concatenated_zstd_frames_are_all_read() {
     // so the multi-frame wrapper must drive it across the boundary (4 frames).
     let frames = read_frames(fixture("compressed/concat.xyz.zst")).unwrap();
     assert_eq!(frames.len(), 4);
+}
+
+/// Encodes a plain extxyz body into one codec's bytes.
+type Encoder = fn(&str) -> Vec<u8>;
+
+/// A multi-frame body large enough to span several pipe chunks for the archive
+/// routes (the producer thread streams 64 KiB at a time) and several reads for
+/// the direct decoders. Each copy of the two-frame fixture adds two frames.
+fn large_body(copies: usize) -> (String, usize) {
+    let one = std::fs::read_to_string(fixture("two_frame_same_schema.xyz")).unwrap();
+    (one.repeat(copies), copies * 2)
+}
+
+fn gzip_bytes(plain: &str) -> Vec<u8> {
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(plain.as_bytes()).unwrap();
+    encoder.finish().unwrap()
+}
+
+fn zip_bytes(plain: &str) -> Vec<u8> {
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    writer
+        .start_file("many.xyz", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    writer.write_all(plain.as_bytes()).unwrap();
+    writer.finish().unwrap().into_inner()
+}
+
+fn tar_bytes(plain: &str) -> Vec<u8> {
+    tar_into(plain, Vec::new())
+}
+
+fn tar_gz_bytes(plain: &str) -> Vec<u8> {
+    let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    tar_into(plain, encoder).finish().unwrap()
+}
+
+/// Write a single `many.xyz` member into a fresh tar over `sink`, returning the
+/// finished sink.
+fn tar_into<W: Write>(plain: &str, sink: W) -> W {
+    let mut builder = tar::Builder::new(sink);
+    let mut header = tar::Header::new_gnu();
+    header.set_size(plain.len() as u64);
+    header.set_mode(0o644);
+    header.set_cksum();
+    builder
+        .append_data(&mut header, "many.xyz", plain.as_bytes())
+        .unwrap();
+    builder.into_inner().unwrap()
+}
+
+#[test]
+fn every_route_reads_a_large_multi_frame_file() {
+    // 1500 copies (3000 frames, ~500 KiB) clears the 64 KiB pipe chunk many
+    // times over, so a chunking or truncation bug in the streaming/archive
+    // paths would drop frames here. zstd has no pure-Rust encoder, so its
+    // multi-frame coverage is the committed concat fixture
+    // (`concatenated_zstd_frames_are_all_read`) instead.
+    let (plain, expected) = large_body(1500);
+    let routes: [(&str, Encoder); 4] = [
+        ("gz", gzip_bytes),
+        ("zip", zip_bytes),
+        ("tar", tar_bytes),
+        ("tar.gz", tar_gz_bytes),
+    ];
+    for (extension, encode) in routes {
+        let path = temp_file(&encode(&plain), extension);
+        let frames = read_frames(&path).unwrap();
+        assert_eq!(frames.len(), expected, "frame count for .{extension}");
+        let _ = std::fs::remove_file(&path);
+    }
 }
 
 #[test]

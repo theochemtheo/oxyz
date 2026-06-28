@@ -23,7 +23,12 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 criterion = "0.7.0"
+# Encoders for the round-trip tests; ruzstd is decode-only, so zstd fixtures
+# are committed instead. Features match the runtime deps to keep one build.
+flate2 = "1"
 proptest = "1.11.0"
+tar = { version = "0.4", default-features = false }
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [[bench]]
 name = "parse"
