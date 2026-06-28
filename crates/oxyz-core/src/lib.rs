@@ -1,5 +1,6 @@
 pub mod batch;
 pub mod decode;
+pub mod encode;
 pub mod extxyz;
 pub mod index;
 pub mod model;
@@ -7,6 +8,7 @@ pub mod schema;
 
 pub use batch::{Batch, BatchBuilder, BatchError};
 pub use decode::{Compression, DecodedReader, is_compressed, open_decoded};
+pub use encode::{FrameSink, write_frame, write_frames};
 pub use extxyz::{
     BatchIter, ExtxyzError, FrameIter, IndexedFrames, infer_schema, infer_schema_from,
     iter_batches, iter_batches_from, iter_frames, iter_frames_from, read_all_batch,

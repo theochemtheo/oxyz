@@ -1,0 +1,196 @@
+//! Writing frames out: codec round-trips against the reader, append, the
+//! rejections (zstd-write, bad level), and a lossless round-trip invariant.
+//!
+//! Temp files land in the OS temp dir under a per-process, per-test name and
+//! are removed on success; a failing test leaves its file for inspection.
+
+use std::{
+    fs,
+    path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
+};
+
+use oxyz_core::{
+    Column, ColumnData, Compression, ExtxyzError, Frame, FrameSink, Value, read_frames,
+    write_frames,
+};
+use proptest::prelude::*;
+
+static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// A unique temp path with the given trailing name, so codec inference fires on
+/// the extension exactly as it would for a user path.
+fn temp_path(name: &str) -> PathBuf {
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("oxyz_write_{}_{n}_{name}", std::process::id()))
+}
+
+fn col(name: &str, width: usize, data: ColumnData) -> Column {
+    Column {
+        name: name.to_owned(),
+        width,
+        data,
+    }
+}
+
+/// Two frames already in canonical order (species, pos lead; no Lattice/pbc to
+/// hoist), so a write then read compares equal field for field.
+fn sample_frames() -> Vec<Frame> {
+    let frame = Frame {
+        n_atoms: 2,
+        columns: vec![
+            col(
+                "species",
+                1,
+                ColumnData::Str(vec!["Si".to_owned(), "O".to_owned()]),
+            ),
+            col(
+                "pos",
+                3,
+                ColumnData::Real(vec![0.0, 1.5, -2.25, 3.5, 4.0, 5.0]),
+            ),
+            col("tag", 1, ColumnData::Int(vec![1, -2])),
+        ],
+        metadata: vec![("energy".to_owned(), Value::Real(-12.5))],
+    };
+    vec![frame.clone(), frame]
+}
+
+#[test]
+fn every_codec_round_trips_through_the_reader() {
+    let frames = sample_frames();
+    for name in [
+        "two.xyz",
+        "two.extxyz",
+        "two.xyz.gz",
+        "two.xyz.zip",
+        "two.tar",
+        "two.tar.gz",
+    ] {
+        let path = temp_path(name);
+        write_frames(&path, &frames, Compression::Infer, None, false).unwrap();
+        let back = read_frames(&path).unwrap();
+        assert_eq!(back, frames, "round trip mismatch for {name}");
+        fs::remove_file(&path).unwrap();
+    }
+}
+
+#[test]
+fn explicit_compression_overrides_a_plain_extension() {
+    let frames = sample_frames();
+    let path = temp_path("forced_gzip.xyz");
+    write_frames(&path, &frames, Compression::Gzip, Some(9), false).unwrap();
+    // The name says plain, so reading must be told the codec too.
+    let back = read_frames(&path).unwrap();
+    // Auto-detect falls back to the magic bytes and still reads it.
+    assert_eq!(back, frames);
+    fs::remove_file(&path).unwrap();
+}
+
+#[test]
+fn append_concatenates_for_plain_and_gzip() {
+    let frames = sample_frames();
+    for name in ["append.xyz", "append.xyz.gz"] {
+        let path = temp_path(name);
+        write_frames(&path, &frames, Compression::Infer, None, false).unwrap();
+        write_frames(&path, &frames, Compression::Infer, None, true).unwrap();
+        let back = read_frames(&path).unwrap();
+        assert_eq!(back.len(), 4, "append mismatch for {name}");
+        assert_eq!(back[3], frames[1]);
+        fs::remove_file(&path).unwrap();
+    }
+}
+
+#[test]
+fn append_is_rejected_for_archive_codecs() {
+    for name in ["a.xyz.zip", "a.tar", "a.tar.gz"] {
+        let path = temp_path(name);
+        let result = FrameSink::create(&path, Compression::Infer, None, true);
+        assert!(
+            matches!(result, Err(ExtxyzError::AppendUnsupported { .. })),
+            "expected append refusal for {name}"
+        );
+    }
+}
+
+#[test]
+fn zstd_write_is_refused() {
+    let path = temp_path("x.xyz.zst");
+    let by_extension = FrameSink::create(&path, Compression::Infer, None, false);
+    assert!(matches!(
+        by_extension,
+        Err(ExtxyzError::ZstdWriteUnsupported)
+    ));
+    let by_request = FrameSink::create(&temp_path("x.xyz"), Compression::Zstd, None, false);
+    assert!(matches!(by_request, Err(ExtxyzError::ZstdWriteUnsupported)));
+}
+
+#[test]
+fn out_of_range_level_is_refused() {
+    let result = FrameSink::create(&temp_path("x.xyz.gz"), Compression::Infer, Some(12), false);
+    assert!(matches!(
+        result,
+        Err(ExtxyzError::InvalidCompressionLevel { level: 12 })
+    ));
+}
+
+// --- Lossless round-trip invariant -----------------------------------------
+
+/// A short species token (non-empty, no whitespace, a real chemical symbol so a
+/// `species` column is well-formed).
+fn species_strategy() -> impl Strategy<Value = String> {
+    prop::sample::select(vec!["H", "C", "N", "O", "Si", "Fe"]).prop_map(str::to_owned)
+}
+
+/// Any finite f64 — the bit pattern Ryū must reproduce exactly.
+fn finite() -> impl Strategy<Value = f64> {
+    any::<f64>().prop_filter("finite", |x| x.is_finite())
+}
+
+prop_compose! {
+    /// A canonically-ordered frame: `species`, `pos`, then a real and an int
+    /// column; metadata holds round-trippable scalars and arrays (nothing that
+    /// re-types on parse, and no Lattice/pbc so order is preserved). The model
+    /// it produces must survive write then re-parse unchanged.
+    fn frame_strategy()(
+        n in 0usize..6,
+    )(
+        species in prop::collection::vec(species_strategy(), n..=n),
+        pos in prop::collection::vec(finite(), (n * 3)..=(n * 3)),
+        charge in prop::collection::vec(finite(), n..=n),
+        tag in prop::collection::vec(any::<i64>(), n..=n),
+        energy in finite(),
+        count in any::<i64>(),
+        flag in any::<bool>(),
+        lattice in prop::collection::vec(finite(), 9..=9),
+    ) -> Frame {
+        Frame {
+            n_atoms: species.len(),
+            columns: vec![
+                col("species", 1, ColumnData::Str(species)),
+                col("pos", 3, ColumnData::Real(pos)),
+                col("charge", 1, ColumnData::Real(charge)),
+                col("tag", 1, ColumnData::Int(tag)),
+            ],
+            metadata: vec![
+                ("energy".to_owned(), Value::Real(energy)),
+                ("count".to_owned(), Value::Int(count)),
+                ("flag".to_owned(), Value::Bool(flag)),
+                ("box".to_owned(), Value::RealArray(lattice)),
+            ],
+        }
+    }
+}
+
+proptest! {
+    #[test]
+    fn write_then_reparse_is_lossless(frame in frame_strategy()) {
+        let mut bytes = Vec::new();
+        oxyz_core::write_frame(&mut bytes, &frame).unwrap();
+        let reparsed = oxyz_core::FrameIter::new(std::io::Cursor::new(&bytes))
+            .collect::<Result<Vec<_>, _>>()
+            .expect("written frame must re-parse");
+        prop_assert_eq!(reparsed.len(), 1);
+        prop_assert_eq!(&reparsed[0], &frame);
+    }
+}

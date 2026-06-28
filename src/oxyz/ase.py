@@ -22,7 +22,7 @@ from typing import overload
 import numpy as np
 
 from oxyz._convert import UnknownSpeciesError, species_to_numbers
-from oxyz._frames import Compression, Frame
+from oxyz._frames import ColumnValues, Compression, Frame, MetadataValue
 from oxyz._select import frames_for_read, nth_frame, parse_index, sliced_frames
 
 try:
@@ -32,8 +32,10 @@ try:
     # Internal-but-stable pieces of ase.io.extxyz, reused deliberately so the
     # key routing cannot drift from ASE's own reader. Revisit at ASEv4.
     from ase.io.extxyz import (
+        PROPERTY_NAME_MAP,
         REV_PROPERTY_NAME_MAP,
         SPECIAL_3_3_KEYS,
+        save_calc_results,
         set_calc_and_arrays,
     )
 except ImportError as error:
@@ -42,11 +44,15 @@ except ImportError as error:
         "install it with: pip install oxyz[ase]"
     ) from error
 
-__all__ = ["ToAseError", "iread", "read", "to_atoms"]
+__all__ = ["FromAtomsError", "ToAseError", "from_atoms", "iread", "read", "to_atoms"]
 
 
 class ToAseError(ValueError):
     """The frame has no faithful `ase.Atoms` representation (strict: no repair)."""
+
+
+class FromAtomsError(ValueError):
+    """The `ase.Atoms` carries something a `Frame` cannot represent faithfully."""
 
 
 def to_atoms(frame: Frame) -> Atoms:
@@ -116,6 +122,72 @@ def to_atoms(frame: Frame) -> Atoms:
     # ASE's own routing: known results -> SinglePointCalculator, rest -> arrays.
     set_calc_and_arrays(atoms, arrays)
     return atoms
+
+
+def from_atoms(atoms: Atoms) -> Frame:
+    """Convert one `ase.Atoms` to a `Frame`, the inverse of `to_atoms`.
+
+    Mirrors `ase.io.write`'s mapping so the written file agrees with ASE's:
+    `numbers` become a `species` column, `positions` a `pos` column, the cell a
+    flat row-major `Lattice`, and the remaining `arrays`/`info` carry across with
+    ASE's name map. Any attached calculator's results (energy, forces, ...) are
+    folded in unprefixed, so they re-read as a `SinglePointCalculator`.
+
+    `FixAtoms` constraints become a `move_mask` column; other constraint types
+    have no column form and raise.
+    """
+    # Copy before folding calculator results, which mutates arrays and info.
+    # `Atoms.copy()` drops the calculator, so pass the original's explicitly.
+    calc = atoms.calc
+    atoms = atoms.copy()
+    if calc is not None:
+        save_calc_results(atoms, calc=calc, calc_prefix="")
+
+    columns: dict[str, ColumnValues] = {
+        "species": list(atoms.get_chemical_symbols()),
+        "pos": atoms.get_positions(),
+    }
+    for name, values in atoms.arrays.items():
+        if name not in ("numbers", "positions"):
+            columns[PROPERTY_NAME_MAP.get(name, name)] = values
+
+    move_mask = _move_mask_column(atoms)
+    if move_mask is not None:
+        columns["move_mask"] = move_mask
+
+    metadata: dict[str, MetadataValue] = {}
+    if atoms.cell.rank > 0 or atoms.pbc.any():
+        # to_atoms reads Lattice as a Fortran-order 3x3 then transposes into the
+        # cell; the inverse is the plain row-major flatten of the cell.
+        metadata["Lattice"] = np.asarray(atoms.cell).reshape(9)
+        metadata["pbc"] = np.asarray(atoms.pbc)
+    for key, value in atoms.info.items():
+        array = np.asarray(value)
+        if key in SPECIAL_3_3_KEYS and array.shape == (3, 3):
+            # Stored flattened in Fortran order, the shape to_atoms reshapes back.
+            metadata[key] = array.reshape(9, order="F")
+        else:
+            metadata[key] = value
+
+    return Frame(n_atoms=len(atoms), columns=columns, metadata=metadata)
+
+
+def _move_mask_column(atoms: Atoms) -> np.ndarray | None:
+    """Per-atom `move_mask` from `FixAtoms` constraints (True where free), the
+    inverse of `to_atoms`'s `FixAtoms(mask=~move_mask)`. Other constraint types
+    have no faithful column form."""
+    if not atoms.constraints:
+        return None
+    mask = np.ones(len(atoms), dtype=bool)
+    for constraint in atoms.constraints:
+        if isinstance(constraint, FixAtoms):
+            mask[constraint.index] = False
+        else:
+            raise FromAtomsError(
+                f"cannot represent constraint {type(constraint).__name__} as a "
+                "column; only FixAtoms is supported"
+            )
+    return mask
 
 
 @overload

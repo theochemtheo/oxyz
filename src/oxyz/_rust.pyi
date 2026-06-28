@@ -130,3 +130,21 @@ def scan(
     member: str | None = None,
 ) -> ScanData: ...
 def is_compressed(path: str, compression: str = "infer") -> bool: ...
+def write(
+    path: str,
+    frames: list[FrameData],
+    compression: str = "infer",
+    level: int | None = None,
+    append: bool = False,
+) -> None: ...
+
+class FrameWriter:
+    def __init__(
+        self,
+        path: str,
+        compression: str = "infer",
+        level: int | None = None,
+        append: bool = False,
+    ) -> None: ...
+    def write(self, frame: FrameData) -> None: ...
+    def close(self) -> None: ...

@@ -12,6 +12,19 @@ recorded here.
 
 ### Added
 
+- Writing extxyz. `oxyz.write(path, obj, ...)` takes a `Frame`, an `ase.Atoms`,
+  or an iterable mixing them and writes (ext)xyz, removing the most common reason
+  to keep ASE in a read → filter → write workflow. Reals are written
+  shortest-round-trippable, so `read` then `write` reproduces every `f64` bit for
+  bit; columns come out `species`, `pos`, then the rest, and the comment line
+  `Lattice`, `pbc`, `Properties`, then the rest (a frame lacking `species` or
+  `pos` is rejected). The codec follows the path extension — plain, `.gz`,
+  `.zip`, `.tar`, `.tar.gz` — or is forced with `compression=`; `level=` tunes
+  the deflate codecs, `"-"` writes to stdout, and `append=True` concatenates
+  onto an existing plain or gzip file (archives and stdout reject it).
+  `oxyz.Writer` is the incremental, constant-memory form (a context manager),
+  and `oxyz.ase.from_atoms` is the inverse of `to_atoms`. Writing `.zst` is not
+  yet supported.
 - Reading from compressed files. Every reader (`read_frames`, `iter_frames`,
   `read_batch`, `iter_batches`, `read_first`, `scan`, `infer_schema`, the
   `oxyz.ase` / `oxyz.metatomic` / `oxyz.torch_sim` converters, and the `oxyz`

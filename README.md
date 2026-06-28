@@ -340,9 +340,13 @@ oxyz.infer_schema(path)                      -> Schema
 
 # Every reader above also takes compression="infer" and member=None.
 
+oxyz.write(path, obj, *, append=False, compression="infer", level=None) -> None
+oxyz.Writer(path, *, append=False, compression="infer", level=None)     # incremental, a context manager
+
 oxyz.ase.read(path, index=None, *, format=None)  -> Atoms | list[Atoms]  # index=None: last frame
 oxyz.ase.iread(path, index=":", *, format=None)  -> Iterator[Atoms]
 oxyz.ase.to_atoms(frame)                     -> Atoms              # also Frame.to_ase()
+oxyz.ase.from_atoms(atoms)                   -> Frame              # the inverse
 
 oxyz.metatomic.read(path, index=":", *, dtype=None, device=None,
                     positions_requires_grad=False, cell_requires_grad=False,
@@ -381,6 +385,33 @@ holds. A compressed stream cannot be seeked, so the random-access paths —
 reverse or negative ASE indices — either read the whole file into memory (the
 ASE index path, as ASE itself does) or raise pointing at the limitation;
 decompress the file first if you need them.
+
+### Writing
+
+`oxyz.write` is the inverse of the readers: it takes a `Frame`, an `ase.Atoms`,
+or an iterable mixing them, and writes extxyz, choosing the codec from the path
+extension (overridable with `compression=`):
+
+```python
+oxyz.write("out.extxyz", frames)             # a Frame or list of Frames
+oxyz.write("out.extxyz.gz", atoms)           # an ase.Atoms, gzipped by extension
+oxyz.write("-", frames)                       # "-" writes to stdout
+
+with oxyz.Writer("traj.extxyz") as w:        # incremental, constant memory
+    for frame in produce():
+        w.write(frame)
+```
+
+Reals are written shortest-round-trippable, so `read` then `write` reproduces
+every `f64` bit for bit; the output is compact rather than column-aligned.
+Columns are written `species`, `pos`, then the rest; the comment line is
+`Lattice`, `pbc`, `Properties`, then the remaining metadata. A frame without
+both a `species` and a `pos` column is rejected.
+
+The writable codecs are plain, `.gz`, `.zip`, `.tar`, and `.tar.gz`; `level`
+(`0..=9`) tunes the deflate-based ones. `append=True` adds to an existing file
+for the formats that allow a concatenated stream (plain, gzip) and is rejected
+for the archive codecs and for stdout. Writing `.zst` is not yet supported.
 
 ### The fine print
 
@@ -421,8 +452,9 @@ and width; any species strings. Metadata values are typed by shape, and
 anything that fits no narrower type falls back to a string rather than
 rejecting the file. Compressed inputs (`.gz`, `.tar.gz`, `.zip`, `.zst`,
 `.tar`) are decoded transparently; see [Compressed files](#compressed-files).
-Not supported: writing (reading only, for now), comment lines that are not
-key=value metadata, and single-quoted values.
+Writing the same forms (bar `.zst`) is covered in [Writing](#writing). Not
+supported: comment lines that are not key=value metadata, single-quoted values,
+and writing zstd (`.zst`) output.
 
 ## How it is put together
 
@@ -461,17 +493,18 @@ just that an error occurred.
 In rough order of intent, shaped by what removes the most reasons to fall
 back to other tools:
 
-- **Write support** — lossless `Frame` round-tripping, removing the most
-  common reason to keep ASE in a read → filter → write workflow.
 - **Field selection and a missing-key batching policy** — request only
   the columns and metadata you need; NaN-fill or error on absent keys, so
   mixed-schema training files batch directly.
 - **Normalisation accessors** — `positions`, `cell`, `numbers`, `pbc`,
   `forces`, `energy` as conventional views over the untouched raw data,
   for training loops that want neither ASE nor the raw spelling.
-- **Additional inputs and outputs** — `torch.Tensor` output, `.xz`
-  decompression (awaiting a streaming pure-Rust decoder), and a public lazy
-  dataset object (`len`, indexing, slicing over an open file).
+- **More write targets** — zstd (`.zst`) output (awaiting an encoder),
+  `metatomic.System` and `torch_sim.SimState` writers, and a native HDF5
+  store for `Frame`s.
+- **Additional inputs** — `torch.Tensor` output, `.xz` decompression
+  (awaiting a streaming pure-Rust decoder), and a public lazy dataset object
+  (`len`, indexing, slicing over an open file).
 
 ## Licence
 

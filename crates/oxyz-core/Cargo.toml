@@ -15,6 +15,9 @@ flate2 = "1"
 memchr = "2.8.1"
 rayon = { version = "1", optional = true }
 ruzstd = "0.8"
+# Shortest round-trippable f64 formatting, the write-side counterpart to
+# fast-float2's parsing — keeps `read -> write -> read` bit-exact.
+ryu = "1"
 tar = { version = "0.4", default-features = false }
 thiserror = "2"
 # "deflate" is the pure-Rust (flate2/miniz_oxide) backend; default-features off

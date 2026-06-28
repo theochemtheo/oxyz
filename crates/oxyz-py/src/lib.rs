@@ -1,18 +1,18 @@
 use std::path::{Path, PathBuf};
 
 use ndarray::Array2;
-use numpy::{Element, IntoPyArray, PyArray1};
+use numpy::{Element, IntoPyArray, PyArray1, PyArrayDyn, PyArrayMethods};
 use pyo3::{
     create_exception,
-    exceptions::{PyIndexError, PyOSError, PyValueError},
+    exceptions::{PyIndexError, PyOSError, PyTypeError, PyValueError},
     prelude::*,
-    types::{PyDict, PyList, PyTuple},
+    types::{PyDict, PyList, PyString, PyTuple},
 };
 
 use oxyz_core::schema::{ColumnSchema, MetadataSchema, Schema, ValueType};
 use oxyz_core::{
-    Batch, Column, ColumnData, ColumnKind, Compression, DecodedReader, ExtxyzError, Frame, Value,
-    open_decoded,
+    Batch, Column, ColumnData, ColumnKind, Compression, DecodedReader, ExtxyzError, Frame,
+    FrameSink, Value, open_decoded, write_frames,
 };
 
 /// Map the Python `compression` string to the core selector.
@@ -509,6 +509,193 @@ fn columns_to_pydict(py: Python<'_>, columns: Vec<Column>) -> PyResult<Bound<'_,
     Ok(dict)
 }
 
+/// Write a list of `{"n_atoms", "columns", "metadata"}` dicts to `path`.
+///
+/// Frames are converted to the core model while the GIL is held, then the encode
+/// and I/O run with it released. `level` is `0..=9` (codec default when `None`);
+/// `append` adds to an existing file where the codec allows it.
+#[pyfunction]
+#[pyo3(signature = (path, frames, compression="infer", level=None, append=false))]
+fn write(
+    py: Python<'_>,
+    path: PathBuf,
+    frames: Vec<Bound<'_, PyDict>>,
+    compression: &str,
+    level: Option<i32>,
+    append: bool,
+) -> PyResult<()> {
+    let compression = parse_compression(compression)?;
+    let frames = frames
+        .iter()
+        .map(pydict_to_frame)
+        .collect::<PyResult<Vec<_>>>()?;
+    py.detach(|| write_frames(&path, &frames, compression, level, append))
+        .map_err(extxyz_error_to_py)
+}
+
+/// Incremental writer: build it, `write` frames as they come, then `close`.
+/// Backs the `oxyz.Writer` context manager.
+#[pyclass]
+struct FrameWriter {
+    // `None` once closed, so a double close or a write-after-close is caught.
+    sink: Option<FrameSink>,
+}
+
+#[pymethods]
+impl FrameWriter {
+    #[new]
+    #[pyo3(signature = (path, compression="infer", level=None, append=false))]
+    fn new(path: PathBuf, compression: &str, level: Option<i32>, append: bool) -> PyResult<Self> {
+        let compression = parse_compression(compression)?;
+        let sink =
+            FrameSink::create(&path, compression, level, append).map_err(extxyz_error_to_py)?;
+        Ok(FrameWriter { sink: Some(sink) })
+    }
+
+    fn write(&mut self, py: Python<'_>, frame: Bound<'_, PyDict>) -> PyResult<()> {
+        let frame = pydict_to_frame(&frame)?;
+        let sink = self
+            .sink
+            .as_mut()
+            .ok_or_else(|| PyValueError::new_err("write on a closed Writer"))?;
+        py.detach(|| sink.write(&frame)).map_err(extxyz_error_to_py)
+    }
+
+    fn close(&mut self, py: Python<'_>) -> PyResult<()> {
+        if let Some(sink) = self.sink.take() {
+            py.detach(|| sink.finish()).map_err(extxyz_error_to_py)?;
+        }
+        Ok(())
+    }
+}
+
+/// Build a core `Frame` from a `{"n_atoms", "columns", "metadata"}` dict — the
+/// inverse of [`frame_to_pydict`]. Numeric columns arrive as numpy arrays
+/// (already coerced to f64/i64/bool by the Python layer), string columns as
+/// lists; both inner dicts keep their order.
+fn pydict_to_frame(data: &Bound<'_, PyDict>) -> PyResult<Frame> {
+    let n_atoms: usize = item(data, "n_atoms")?.extract()?;
+    let columns = item(data, "columns")?;
+    let metadata = item(data, "metadata")?;
+
+    let mut core_columns = Vec::new();
+    for (key, value) in columns.cast::<PyDict>()?.iter() {
+        let name: String = key.extract()?;
+        core_columns.push(py_to_column(name, &value)?);
+    }
+
+    let mut core_metadata = Vec::new();
+    for (key, value) in metadata.cast::<PyDict>()?.iter() {
+        core_metadata.push((key.extract()?, py_to_value(&value)?));
+    }
+
+    Ok(Frame {
+        n_atoms,
+        columns: core_columns,
+        metadata: core_metadata,
+    })
+}
+
+fn item<'py>(data: &Bound<'py, PyDict>, key: &str) -> PyResult<Bound<'py, PyAny>> {
+    data.get_item(key)?
+        .ok_or_else(|| PyValueError::new_err(format!("frame dict is missing {key:?}")))
+}
+
+/// One per-atom column. A numpy array is numeric (its dtype picks the kind, its
+/// second dimension the width); a list is a string column (nested for width > 1).
+fn py_to_column(name: String, value: &Bound<'_, PyAny>) -> PyResult<Column> {
+    if value.is_instance_of::<PyList>() {
+        let (data, width) = str_column(value.cast::<PyList>()?)?;
+        return Ok(Column { name, width, data });
+    }
+    let (data, width) = numeric_array(value).ok_or_else(|| {
+        PyTypeError::new_err(format!(
+            "column {name:?} must be a numpy float/int/bool array or a list of strings"
+        ))
+    })?;
+    Ok(Column { name, width, data })
+}
+
+/// A string column from `list[str]` (width 1) or `list[list[str]]` (width n),
+/// flattened row-major.
+fn str_column(list: &Bound<'_, PyList>) -> PyResult<(ColumnData, usize)> {
+    let nested = list
+        .get_item(0)
+        .ok()
+        .is_some_and(|first| first.is_instance_of::<PyList>());
+
+    if !nested {
+        let flat: Vec<String> = list.extract()?;
+        return Ok((ColumnData::Str(flat), 1));
+    }
+
+    let rows: Vec<Vec<String>> = list.extract()?;
+    let width = rows.first().map_or(1, Vec::len);
+    if rows.iter().any(|row| row.len() != width) {
+        return Err(PyValueError::new_err(
+            "string column rows have differing widths",
+        ));
+    }
+    Ok((ColumnData::Str(rows.into_iter().flatten().collect()), width))
+}
+
+/// A numeric column's flat buffer and width, or `None` if `value` is not a 1-D
+/// or 2-D f64/i64/bool numpy array.
+fn numeric_array(value: &Bound<'_, PyAny>) -> Option<(ColumnData, usize)> {
+    flat_array::<f64>(value)
+        .map(|(v, w)| (ColumnData::Real(v), w))
+        .or_else(|| flat_array::<i64>(value).map(|(v, w)| (ColumnData::Int(v), w)))
+        .or_else(|| flat_array::<bool>(value).map(|(v, w)| (ColumnData::Bool(v), w)))
+}
+
+/// Flatten a 1-D or 2-D numpy array of `T` (row-major) into a buffer plus its
+/// width (the trailing dimension, 1 when 1-D). `None` if the dtype or rank
+/// does not match.
+fn flat_array<T: Element + Clone>(value: &Bound<'_, PyAny>) -> Option<(Vec<T>, usize)> {
+    let array = value.cast::<PyArrayDyn<T>>().ok()?;
+    let readonly = array.readonly();
+    let view = readonly.as_array();
+    let width = match view.ndim() {
+        0 | 1 => 1,
+        2 => view.shape()[1],
+        _ => return None,
+    };
+    Some((view.iter().cloned().collect(), width))
+}
+
+/// One metadata value. Strings stay strings; numpy arrays become the matching
+/// array variant; Python lists become string arrays; bool is tried before int
+/// (a Python bool is an int subclass).
+fn py_to_value(value: &Bound<'_, PyAny>) -> PyResult<Value> {
+    if value.is_instance_of::<PyString>() {
+        return Ok(Value::Str(value.extract()?));
+    }
+    if let Some((data, _)) = numeric_array(value) {
+        return Ok(match data {
+            ColumnData::Real(v) => Value::RealArray(v),
+            ColumnData::Int(v) => Value::IntArray(v),
+            ColumnData::Bool(v) => Value::BoolArray(v),
+            ColumnData::Str(v) => Value::StrArray(v),
+        });
+    }
+    if value.is_instance_of::<PyList>() {
+        return Ok(Value::StrArray(value.extract()?));
+    }
+    if let Ok(b) = value.cast::<pyo3::types::PyBool>() {
+        return Ok(Value::Bool(b.is_true()));
+    }
+    if let Ok(i) = value.extract::<i64>() {
+        return Ok(Value::Int(i));
+    }
+    if let Ok(x) = value.extract::<f64>() {
+        return Ok(Value::Real(x));
+    }
+    Err(PyTypeError::new_err(format!(
+        "unsupported metadata value type: {}",
+        value.get_type().name()?
+    )))
+}
+
 create_exception!(
     _rust,
     ParseError,
@@ -538,7 +725,13 @@ fn extxyz_error_to_py(error: ExtxyzError) -> PyErr {
         | ExtxyzError::AmbiguousArchive { .. }
         | ExtxyzError::NoExtxyzMember { .. }
         | ExtxyzError::MemberOnNonArchive
-        | ExtxyzError::RandomAccessUnsupported => {
+        | ExtxyzError::RandomAccessUnsupported
+        // Write-side request errors: the data or options are wrong, not the
+        // file contents, so they carry no frame location to attach.
+        | ExtxyzError::MissingRequiredColumn { .. }
+        | ExtxyzError::AppendUnsupported { .. }
+        | ExtxyzError::ZstdWriteUnsupported
+        | ExtxyzError::InvalidCompressionLevel { .. } => {
             return PyValueError::new_err(error.to_string());
         }
         _ => {}
@@ -604,8 +797,10 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(infer_schema, m)?)?;
     m.add_function(wrap_pyfunction!(scan, m)?)?;
     m.add_function(wrap_pyfunction!(is_compressed, m)?)?;
+    m.add_function(wrap_pyfunction!(write, m)?)?;
     m.add_class::<FrameIter>()?;
     m.add_class::<IndexedFrames>()?;
     m.add_class::<BatchIter>()?;
+    m.add_class::<FrameWriter>()?;
     Ok(())
 }
