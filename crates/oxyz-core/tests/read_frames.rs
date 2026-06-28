@@ -243,6 +243,36 @@ fn errors_carry_the_frame_index_and_stop_iteration() {
 }
 
 #[test]
+fn error_accessors_locate_the_failure() {
+    // A short atom line pins the frame and the file line, with no column.
+    let short = "1\nProperties=species:S:1:pos:R:3\nH 0 0\n";
+    let error = FrameIter::new(Cursor::new(short))
+        .next()
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(error.frame_index(), Some(0));
+    assert_eq!(error.line_number(), Some(3));
+    assert_eq!(error.column(), None);
+
+    // A non-numeric value in a Real column pins the column instead.
+    let bad_value = "1\nProperties=species:S:1:pos:R:3\nH 0 nope 0\n";
+    let error = FrameIter::new(Cursor::new(bad_value))
+        .next()
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(error.column(), Some("pos"));
+    assert_eq!(error.line_number(), None);
+
+    // A clean frame followed by a bad one: the index points at the second.
+    let second_bad = "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n1\nProperties=species:S:1:pos:R:3\nH 0 nope 0\n";
+    let mut frames = FrameIter::new(Cursor::new(second_bad));
+    assert!(frames.next().unwrap().is_ok());
+    let error = frames.next().unwrap().unwrap_err();
+    assert_eq!(error.frame_index(), Some(1));
+    assert_eq!(error.column(), Some("pos"));
+}
+
+#[test]
 fn empty_input_yields_no_frames() {
     let mut frames = FrameIter::new(Cursor::new(""));
     assert!(frames.next().is_none());

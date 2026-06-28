@@ -26,7 +26,7 @@ from typing import overload
 import numpy as np
 
 from oxyz._convert import UnknownSpeciesError
-from oxyz._frames import Frame, read_frames
+from oxyz._frames import Compression, Frame, read_frames
 from oxyz._select import frames_for_read, nth_frame, parse_index, sliced_frames
 
 try:
@@ -66,6 +66,8 @@ def read(
     positions_requires_grad: bool = ...,
     cell_requires_grad: bool = ...,
     threads: int | None = ...,
+    compression: Compression = ...,
+    member: str | None = ...,
 ) -> System: ...
 
 
@@ -79,6 +81,8 @@ def read(
     positions_requires_grad: bool = ...,
     cell_requires_grad: bool = ...,
     threads: int | None = ...,
+    compression: Compression = ...,
+    member: str | None = ...,
 ) -> list[System]: ...
 
 
@@ -92,6 +96,8 @@ def read(
     positions_requires_grad: bool = ...,
     cell_requires_grad: bool = ...,
     threads: int | None = ...,
+    compression: Compression = ...,
+    member: str | None = ...,
 ) -> System | list[System]: ...
 
 
@@ -104,6 +110,8 @@ def read(
     positions_requires_grad: bool = False,
     cell_requires_grad: bool = False,
     threads: int | None = None,
+    compression: Compression = "infer",
+    member: str | None = None,
 ) -> System | list[System]:
     """Read frames into `System`s; default `index=":"` reads the whole file.
 
@@ -112,14 +120,20 @@ def read(
     does. `threads` sets the parallel parse for the whole-file read (`None`: all
     cores); it has no effect on bounded or reverse selections, which stream or
     seek.
+
+    Compressed paths are read too; `compression` and `member` are as in
+    `oxyz.read_frames`.
     """
     options = (dtype, device, positions_requires_grad, cell_requires_grad)
     selection = parse_index(index)
     if isinstance(selection, int):
-        return _to_system(nth_frame(path, selection), *options)
+        frame = nth_frame(path, selection, compression=compression, member=member)
+        return _to_system(frame, *options)
     return [
         _to_system(frame, *options)
-        for frame in frames_for_read(path, selection, threads)
+        for frame in frames_for_read(
+            path, selection, threads, compression=compression, member=member
+        )
     ]
 
 
@@ -131,13 +145,21 @@ def iread(
     device: torch.device | None = None,
     positions_requires_grad: bool = False,
     cell_requires_grad: bool = False,
+    compression: Compression = "infer",
+    member: str | None = None,
 ) -> Iterator[System]:
     """Stream `System`s one at a time, in constant memory (serial parse)."""
     options = (dtype, device, positions_requires_grad, cell_requires_grad)
     selection = parse_index(index)
     if isinstance(selection, int):
-        return iter((_to_system(nth_frame(path, selection), *options),))
-    return (_to_system(frame, *options) for frame in sliced_frames(path, selection))
+        frame = nth_frame(path, selection, compression=compression, member=member)
+        return iter((_to_system(frame, *options),))
+    return (
+        _to_system(frame, *options)
+        for frame in sliced_frames(
+            path, selection, compression=compression, member=member
+        )
+    )
 
 
 class SystemSource:
@@ -148,8 +170,17 @@ class SystemSource:
     every accessor, so the file is never re-read.
     """
 
-    def __init__(self, path: str | Path, *, threads: int | None = None) -> None:
-        self._frames: list[Frame] = read_frames(path, threads=threads)
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        threads: int | None = None,
+        compression: Compression = "infer",
+        member: str | None = None,
+    ) -> None:
+        self._frames: list[Frame] = read_frames(
+            path, threads=threads, compression=compression, member=member
+        )
 
     def __len__(self) -> int:
         return len(self._frames)

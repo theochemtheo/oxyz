@@ -22,7 +22,7 @@ from typing import overload
 import numpy as np
 
 from oxyz._convert import UnknownSpeciesError, species_to_numbers
-from oxyz._frames import Frame
+from oxyz._frames import Compression, Frame
 from oxyz._select import frames_for_read, nth_frame, parse_index, sliced_frames
 
 try:
@@ -120,19 +120,34 @@ def to_atoms(frame: Frame) -> Atoms:
 
 @overload
 def read(
-    path: str | Path, index: int | None = ..., *, format: str | None = ...
+    path: str | Path,
+    index: int | None = ...,
+    *,
+    format: str | None = ...,
+    compression: Compression = ...,
+    member: str | None = ...,
 ) -> Atoms: ...
 
 
 @overload
 def read(
-    path: str | Path, index: slice, *, format: str | None = ...
+    path: str | Path,
+    index: slice,
+    *,
+    format: str | None = ...,
+    compression: Compression = ...,
+    member: str | None = ...,
 ) -> list[Atoms]: ...
 
 
 @overload
 def read(
-    path: str | Path, index: str, *, format: str | None = ...
+    path: str | Path,
+    index: str,
+    *,
+    format: str | None = ...,
+    compression: Compression = ...,
+    member: str | None = ...,
 ) -> Atoms | list[Atoms]: ...
 
 
@@ -141,6 +156,8 @@ def read(
     index: int | str | slice | None = None,
     *,
     format: str | None = None,
+    compression: Compression = "infer",
+    member: str | None = None,
 ) -> Atoms | list[Atoms]:
     """Drop-in for `ase.io.read` on extxyz files; full ASE index grammar.
 
@@ -148,12 +165,22 @@ def read(
     stream; negative or reverse ones resolve via a structural scan and seek,
     never a full parse. Only requested frames have their contents read —
     whole-file validation is `oxyz.infer_schema`'s job.
+
+    Compressed paths (`.gz`, `.zst`, `.zip`, `.tar.gz`, `.tar`) are read too;
+    `compression` and `member` are as in `oxyz.read_frames`. A compressed source
+    cannot seek, so a negative or reverse index reads the whole file and indexes
+    in memory (as ASE does), forgoing the partial-read shortcut.
     """
     _check_format(format)
     index = parse_index(-1 if index is None else index)
     if isinstance(index, int):
-        return to_atoms(nth_frame(path, index))
-    return [to_atoms(frame) for frame in frames_for_read(path, index)]
+        return to_atoms(nth_frame(path, index, compression=compression, member=member))
+    return [
+        to_atoms(frame)
+        for frame in frames_for_read(
+            path, index, compression=compression, member=member
+        )
+    ]
 
 
 def iread(
@@ -161,13 +188,20 @@ def iread(
     index: int | str | slice = ":",
     *,
     format: str | None = None,
+    compression: Compression = "infer",
+    member: str | None = None,
 ) -> Iterator[Atoms]:
     """Drop-in for `ase.io.iread` on extxyz files: yields one Atoms at a time."""
     _check_format(format)
     index = parse_index(index)
     if isinstance(index, int):
-        return iter((to_atoms(nth_frame(path, index)),))
-    return (to_atoms(frame) for frame in sliced_frames(path, index))
+        return iter(
+            (to_atoms(nth_frame(path, index, compression=compression, member=member)),)
+        )
+    return (
+        to_atoms(frame)
+        for frame in sliced_frames(path, index, compression=compression, member=member)
+    )
 
 
 def _check_format(format: str | None) -> None:

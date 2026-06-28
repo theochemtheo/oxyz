@@ -136,3 +136,16 @@ fn out_of_range_get_reports_bounds() {
         "frame index 3 out of range: file has 3 frames"
     );
 }
+
+#[test]
+fn random_access_refuses_a_compressed_source() {
+    // A compressed stream cannot be seeked, so the index-backed reader rejects
+    // it up front rather than reading wrong bytes.
+    let error = IndexedFrames::open(fixture("compressed/two_frame.xyz.gz"))
+        .err()
+        .unwrap();
+    assert!(
+        error.to_string().contains("random access is unsupported"),
+        "{error}"
+    );
+}

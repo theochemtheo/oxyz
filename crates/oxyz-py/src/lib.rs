@@ -1,4 +1,4 @@
-use std::{fs::File, io::BufReader, path::PathBuf};
+use std::path::{Path, PathBuf};
 
 use ndarray::Array2;
 use numpy::{Element, IntoPyArray, PyArray1};
@@ -10,7 +10,31 @@ use pyo3::{
 };
 
 use oxyz_core::schema::{ColumnSchema, MetadataSchema, Schema, ValueType};
-use oxyz_core::{Batch, Column, ColumnData, ColumnKind, ExtxyzError, Frame, Value};
+use oxyz_core::{
+    Batch, Column, ColumnData, ColumnKind, Compression, DecodedReader, ExtxyzError, Frame, Value,
+    open_decoded,
+};
+
+/// Map the Python `compression` string to the core selector.
+fn parse_compression(name: &str) -> PyResult<Compression> {
+    Ok(match name {
+        "infer" => Compression::Infer,
+        "none" => Compression::None,
+        "gzip" => Compression::Gzip,
+        "zstd" => Compression::Zstd,
+        "zip" => Compression::Zip,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "unknown compression {other:?}; expected one of: infer, none, gzip, zstd, zip"
+            )));
+        }
+    })
+}
+
+/// Open a streaming, decoded reader for the given path and options.
+fn open_reader(path: &Path, compression: &str, member: Option<&str>) -> PyResult<DecodedReader> {
+    open_decoded(path, parse_compression(compression)?, member).map_err(extxyz_error_to_py)
+}
 
 /// Streaming iterator: one frame parsed and converted per `__next__`.
 ///
@@ -18,14 +42,16 @@ use oxyz_core::{Batch, Column, ColumnData, ColumnKind, ExtxyzError, Frame, Value
 /// iterator is fused — after an error or EOF it only raises StopIteration.
 #[pyclass]
 struct FrameIter {
-    inner: oxyz_core::FrameIter<BufReader<File>>,
+    inner: oxyz_core::FrameIter<DecodedReader>,
 }
 
 #[pymethods]
 impl FrameIter {
     #[new]
-    fn new(path: PathBuf) -> PyResult<Self> {
-        let inner = oxyz_core::iter_frames(path).map_err(extxyz_error_to_py)?;
+    #[pyo3(signature = (path, compression="infer", member=None))]
+    fn new(path: PathBuf, compression: &str, member: Option<String>) -> PyResult<Self> {
+        let reader = open_reader(&path, compression, member.as_deref())?;
+        let inner = oxyz_core::iter_frames_from(reader).map_err(extxyz_error_to_py)?;
         Ok(FrameIter { inner })
     }
 
@@ -48,14 +74,21 @@ impl FrameIter {
 /// With `with_volume=True` the result also carries `"volumes"`: per-frame
 /// `|det(Lattice)|`, `NaN` where a frame has no `Lattice`.
 #[pyfunction]
-#[pyo3(signature = (path, with_volume=false))]
-fn scan<'py>(py: Python<'py>, path: PathBuf, with_volume: bool) -> PyResult<Bound<'py, PyDict>> {
+#[pyo3(signature = (path, with_volume=false, compression="infer", member=None))]
+fn scan<'py>(
+    py: Python<'py>,
+    path: PathBuf,
+    with_volume: bool,
+    compression: &str,
+    member: Option<String>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let reader = open_reader(&path, compression, member.as_deref())?;
     let index = py
-        .detach(|| {
+        .detach(move || {
             if with_volume {
-                oxyz_core::scan_index_with_volume(path)
+                oxyz_core::scan_frames_with_volume(reader)
             } else {
-                oxyz_core::scan_index(path)
+                oxyz_core::scan_frames(reader)
             }
         })
         .map_err(extxyz_error_to_py)?;
@@ -159,14 +192,22 @@ impl IndexedFrames {
 /// `__next__`; the final batch may be smaller. Fused after errors.
 #[pyclass]
 struct BatchIter {
-    inner: oxyz_core::BatchIter<BufReader<File>>,
+    inner: oxyz_core::BatchIter<DecodedReader>,
 }
 
 #[pymethods]
 impl BatchIter {
     #[new]
-    fn new(path: PathBuf, frames_per_batch: usize) -> PyResult<Self> {
-        let inner = oxyz_core::iter_batches(path, frames_per_batch).map_err(extxyz_error_to_py)?;
+    #[pyo3(signature = (path, frames_per_batch, compression="infer", member=None))]
+    fn new(
+        path: PathBuf,
+        frames_per_batch: usize,
+        compression: &str,
+        member: Option<String>,
+    ) -> PyResult<Self> {
+        let reader = open_reader(&path, compression, member.as_deref())?;
+        let inner =
+            oxyz_core::iter_batches_from(reader, frames_per_batch).map_err(extxyz_error_to_py)?;
         Ok(BatchIter { inner })
     }
 
@@ -185,8 +226,21 @@ impl BatchIter {
 
 /// Read the first frame as `{"n_atoms": int, "columns": {...}, "metadata": {...}}`.
 #[pyfunction]
-fn read_first_frame<'py>(py: Python<'py>, path: PathBuf) -> PyResult<Bound<'py, PyDict>> {
-    let frame = oxyz_core::read_first_frame(path).map_err(extxyz_error_to_py)?;
+#[pyo3(signature = (path, compression="infer", member=None))]
+fn read_first_frame<'py>(
+    py: Python<'py>,
+    path: PathBuf,
+    compression: &str,
+    member: Option<String>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let reader = open_reader(&path, compression, member.as_deref())?;
+    let frame = py
+        .detach(move || {
+            oxyz_core::iter_frames_from(reader)?
+                .next()
+                .unwrap_or(Err(ExtxyzError::MissingLine("atom count")))
+        })
+        .map_err(extxyz_error_to_py)?;
     frame_to_pydict(py, frame)
 }
 
@@ -196,16 +250,19 @@ fn read_first_frame<'py>(py: Python<'py>, path: PathBuf) -> PyResult<Bound<'py, 
 /// streaming read. Either way the file is read in a single pass; output and
 /// errors are identical.
 #[pyfunction]
-#[pyo3(signature = (path, threads=None))]
+#[pyo3(signature = (path, threads=None, compression="infer", member=None))]
 fn read_frames<'py>(
     py: Python<'py>,
     path: PathBuf,
     threads: Option<usize>,
+    compression: &str,
+    member: Option<String>,
 ) -> PyResult<Bound<'py, PyList>> {
+    let reader = open_reader(&path, compression, member.as_deref())?;
     let frames = py
-        .detach(|| match threads {
-            Some(1) => oxyz_core::read_frames(&path),
-            _ => oxyz_core::read_frames_parallel(&path, threads),
+        .detach(move || match threads {
+            Some(1) => oxyz_core::iter_frames_from(reader)?.collect(),
+            _ => oxyz_core::read_frames_parallel_from(reader, threads),
         })
         .map_err(extxyz_error_to_py)?;
 
@@ -226,19 +283,22 @@ fn read_frames<'py>(
 /// identical either way (on a malformed whole-file read the two may report
 /// different frames' errors).
 #[pyfunction]
-#[pyo3(signature = (path, indices=None, threads=None))]
+#[pyo3(signature = (path, indices=None, threads=None, compression="infer", member=None))]
 fn read_batch<'py>(
     py: Python<'py>,
     path: PathBuf,
     indices: Option<Vec<usize>>,
     threads: Option<usize>,
+    compression: &str,
+    member: Option<String>,
 ) -> PyResult<Bound<'py, PyDict>> {
+    let reader = open_reader(&path, compression, member.as_deref())?;
     let batch = py
-        .detach(|| match (indices, threads) {
-            (None, Some(1)) => oxyz_core::read_all_batch(&path),
-            (None, _) => oxyz_core::read_all_batch_parallel(&path, threads),
-            (Some(indices), Some(1)) => oxyz_core::read_batch(&path, &indices),
-            (Some(indices), _) => oxyz_core::read_batch_parallel(&path, &indices, threads),
+        .detach(move || match (indices, threads) {
+            (None, Some(1)) => oxyz_core::read_all_batch_from(reader),
+            (None, _) => oxyz_core::read_all_batch_parallel_from(reader, threads),
+            (Some(indices), Some(1)) => oxyz_core::read_batch_from(reader, &indices),
+            (Some(indices), _) => oxyz_core::read_batch_parallel_from(reader, &indices, threads),
         })
         .map_err(extxyz_error_to_py)?;
     batch_to_pydict(py, batch)
@@ -248,11 +308,27 @@ fn read_batch<'py>(
 /// per-key variant lists with unification verdicts, consistency, and the
 /// rendered report — for the Python `Schema` dataclasses to wrap.
 #[pyfunction]
-fn infer_schema<'py>(py: Python<'py>, path: PathBuf) -> PyResult<Bound<'py, PyDict>> {
+#[pyo3(signature = (path, compression="infer", member=None))]
+fn infer_schema<'py>(
+    py: Python<'py>,
+    path: PathBuf,
+    compression: &str,
+    member: Option<String>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let reader = open_reader(&path, compression, member.as_deref())?;
     let schema = py
-        .detach(|| oxyz_core::infer_schema(path))
+        .detach(move || oxyz_core::infer_schema_from(reader))
         .map_err(extxyz_error_to_py)?;
     schema_to_pydict(py, &schema)
+}
+
+/// Whether `path` would be read through a decompressing layer (`True`) or as a
+/// plain file (`False`), under the given `compression`. The Python layer uses
+/// this to refuse random-access batch strategies on a non-seekable source.
+#[pyfunction]
+#[pyo3(signature = (path, compression="infer"))]
+fn is_compressed(path: PathBuf, compression: &str) -> PyResult<bool> {
+    oxyz_core::is_compressed(&path, parse_compression(compression)?).map_err(extxyz_error_to_py)
 }
 
 fn kind_name(kind: ColumnKind) -> &'static str {
@@ -456,6 +532,15 @@ fn extxyz_error_to_py(error: ExtxyzError) -> PyErr {
     match inner {
         ExtxyzError::Io(io_error) => return PyOSError::new_err(io_error.to_string()),
         ExtxyzError::FrameOutOfRange { .. } => return PyIndexError::new_err(error.to_string()),
+        // Source/archive selection errors are about the request, not the
+        // contents — plain ValueErrors, no frame location to attach.
+        ExtxyzError::MemberNotFound { .. }
+        | ExtxyzError::AmbiguousArchive { .. }
+        | ExtxyzError::NoExtxyzMember { .. }
+        | ExtxyzError::MemberOnNonArchive
+        | ExtxyzError::RandomAccessUnsupported => {
+            return PyValueError::new_err(error.to_string());
+        }
         _ => {}
     }
 
@@ -518,6 +603,7 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_batch, m)?)?;
     m.add_function(wrap_pyfunction!(infer_schema, m)?)?;
     m.add_function(wrap_pyfunction!(scan, m)?)?;
+    m.add_function(wrap_pyfunction!(is_compressed, m)?)?;
     m.add_class::<FrameIter>()?;
     m.add_class::<IndexedFrames>()?;
     m.add_class::<BatchIter>()?;

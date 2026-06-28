@@ -338,6 +338,8 @@ oxyz.iter_batches(path, *, frames_per_batch=None, atoms_per_batch=None,
 oxyz.scan(path)                              -> FrameIndex
 oxyz.infer_schema(path)                      -> Schema
 
+# Every reader above also takes compression="infer" and member=None.
+
 oxyz.ase.read(path, index=None, *, format=None)  -> Atoms | list[Atoms]  # index=None: last frame
 oxyz.ase.iread(path, index=":", *, format=None)  -> Iterator[Atoms]
 oxyz.ase.to_atoms(frame)                     -> Atoms              # also Frame.to_ase()
@@ -356,8 +358,29 @@ dataclasses; everything ships with type stubs.
 The command line mirrors a subset:
 
 ```text
-oxyz scan <path> [--no-schema] [--json]   # stats + inferred schema
+oxyz scan <path> [--no-schema] [--json] [--compression C] [--member M]
 ```
+
+### Compressed files
+
+Any reader takes a compressed path and decodes it while streaming, so
+`read_frames("run.xyz.gz")` just works and stays parallel without
+decompressing to a temporary file:
+
+```python
+oxyz.read_frames("run.xyz.gz")               # .gz, .tar.gz, .zip, .zst, .tar
+oxyz.read_frames("runs.zip", member="run2.xyz")   # pick one archive entry
+oxyz.read_frames("run.bin", compression="gzip")   # force a codec by hand
+```
+
+The codec is inferred from the extension (then the magic bytes), or set with
+`compression=` (`"none"`/`"gzip"`/`"zstd"`/`"zip"`). An archive holding more
+than one extxyz file needs `member=`; otherwise it errors and lists what it
+holds. A compressed stream cannot be seeked, so the random-access paths —
+`iter_batches` with `shuffle`/`atoms_per_batch`/`memory_scales_with`, and
+reverse or negative ASE indices — either read the whole file into memory (the
+ASE index path, as ASE itself does) or raise pointing at the limitation;
+decompress the file first if you need them.
 
 ### The fine print
 
@@ -396,9 +419,10 @@ metadata, but is a boolean in an `L`-kind atom column, following the
 spec); a `Properties` descriptor with `S`/`R`/`I`/`L` columns of any name
 and width; any species strings. Metadata values are typed by shape, and
 anything that fits no narrower type falls back to a string rather than
-rejecting the file. Not supported: writing (reading only, for now),
-compressed input, comment lines that are not key=value metadata, and
-single-quoted values.
+rejecting the file. Compressed inputs (`.gz`, `.tar.gz`, `.zip`, `.zst`,
+`.tar`) are decoded transparently; see [Compressed files](#compressed-files).
+Not supported: writing (reading only, for now), comment lines that are not
+key=value metadata, and single-quoted values.
 
 ## How it is put together
 
@@ -445,9 +469,9 @@ back to other tools:
 - **Normalisation accessors** — `positions`, `cell`, `numbers`, `pbc`,
   `forces`, `energy` as conventional views over the untouched raw data,
   for training loops that want neither ASE nor the raw spelling.
-- **Additional inputs and outputs** — compressed input (`.xyz.gz`,
-  `.xz`), `torch.Tensor` output, and a public lazy dataset object
-  (`len`, indexing, slicing over an open file).
+- **Additional inputs and outputs** — `torch.Tensor` output, `.xz`
+  decompression (awaiting a streaming pure-Rust decoder), and a public lazy
+  dataset object (`len`, indexing, slicing over an open file).
 
 ## Licence
 

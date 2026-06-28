@@ -8,6 +8,27 @@ While the version is below 1.0 the public API is not yet settled: minor
 releases may make breaking changes, patch releases will not. Such changes are
 recorded here.
 
+## [Unreleased]
+
+### Added
+
+- Reading from compressed files. Every reader (`read_frames`, `iter_frames`,
+  `read_batch`, `iter_batches`, `read_first`, `scan`, `infer_schema`, the
+  `oxyz.ase` / `oxyz.metatomic` / `oxyz.torch_sim` converters, and the `oxyz`
+  CLI) now accepts `.gz`, `.tar.gz`, `.zip`, `.zst` and `.tar` paths and decodes
+  them on the fly — `read_frames("run.xyz.gz")` just works, with no separate
+  decompression step. Decoding streams, so reads stay parallel without
+  decompressing to a temporary file or holding the whole file in memory; a bare
+  `.gz` with several concatenated members is fully read. `compression=` forces a
+  codec (`"infer"` default, or `"none"`/`"gzip"`/`"zstd"`/`"zip"`) and `member=`
+  selects one entry from a multi-member archive (which otherwise errors, listing
+  its members). A compressed source cannot be seeked, so random-access
+  strategies — `iter_batches` with `shuffle`, `atoms_per_batch`, or
+  `memory_scales_with`, and reverse/negative ASE indices — either fall back to a
+  full in-memory read (the ASE index path) or raise a clear error pointing at
+  the limitation. Decoders are pure Rust (`flate2`, `ruzstd`, `zip`, `tar`), so
+  the wheel gains no system dependencies.
+
 ## [0.3.0] - 2026-06-27
 
 ### Removed

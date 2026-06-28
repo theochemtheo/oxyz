@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
@@ -14,6 +14,10 @@ if TYPE_CHECKING:
 
 ColumnValues = np.ndarray | list[str] | list[list[str]]
 MetadataValue = float | int | bool | str | np.ndarray | list[str]
+
+Compression = Literal["infer", "none", "gzip", "zstd", "zip"]
+"""How to read a possibly-compressed file. `"infer"` detects the codec from the
+extension, falling back to the leading magic bytes; the rest force a codec."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,12 +42,21 @@ class Frame:
         return to_atoms(self)
 
 
-def read_first(path: str | Path) -> Frame:
+def read_first(
+    path: str | Path,
+    *,
+    compression: Compression = "infer",
+    member: str | None = None,
+) -> Frame:
     """Read only the first frame, stopping there.
 
     Cheaper than `read_frames(path)[0]`, which parses the whole file.
+
+    A compressed path (`.gz`, `.zst`, `.zip`, `.tar.gz`, `.tar`) is decoded on
+    the fly; `compression` overrides the codec and `member` names one entry in a
+    multi-member archive. See `read_frames` for details.
     """
-    return _frame_from_data(_rust.read_first_frame(str(path)))
+    return _frame_from_data(_rust.read_first_frame(str(path), compression, member))
 
 
 def _check_threads(threads: int | None) -> None:
@@ -53,19 +66,37 @@ def _check_threads(threads: int | None) -> None:
         raise ValueError(f"threads must be a positive integer or None, got {threads!r}")
 
 
-def read_frames(path: str | Path, *, threads: int | None = None) -> list[Frame]:
+def read_frames(
+    path: str | Path,
+    *,
+    threads: int | None = None,
+    compression: Compression = "infer",
+    member: str | None = None,
+) -> list[Frame]:
     """Read every frame. Parses on all cores by default; `threads=1` streams
     serially. Results and errors are identical regardless of `threads`.
 
     For constant memory on a large file, stream with `iter_frames`.
+
+    A compressed path is decoded while streaming, so reads stay parallel without
+    decompressing to a temporary file. `compression` forces a codec (one of
+    `"infer"`, `"none"`, `"gzip"`, `"zstd"`, `"zip"`) rather than inferring it
+    from the name. `member` selects one entry from a `.zip`/`.tar`/`.tar.gz`
+    holding more than one; with it omitted, an archive must contain exactly one
+    extxyz file.
     """
     _check_threads(threads)
-    data = _rust.read_frames(str(path), threads)
+    data = _rust.read_frames(str(path), threads, compression, member)
     return [_frame_from_data(frame) for frame in data]
 
 
 def read_frames_sliced(
-    path: str | Path, frames: slice, threads: int | None = None
+    path: str | Path,
+    frames: slice,
+    threads: int | None = None,
+    *,
+    compression: Compression = "infer",
+    member: str | None = None,
 ) -> list[Frame]:
     """`read_frames`, but apply `frames` before wrapping: parse every frame
     (`threads=None`: all cores), then build `Frame` objects only for those the
@@ -75,7 +106,7 @@ def read_frames_sliced(
     prefix or steps (`read(path, "1000:")`, `"::2"`) no longer pays to wrap the
     frames it immediately discards.
     """
-    data = _rust.read_frames(str(path), threads)
+    data = _rust.read_frames(str(path), threads, compression, member)
     return [_frame_from_data(frame) for frame in data[frames]]
 
 
@@ -96,15 +127,23 @@ class IndexedFrames:
         return _frame_from_data(self._inner.get(frame_index))
 
 
-def iter_frames(path: str | Path) -> Iterator[Frame]:
+def iter_frames(
+    path: str | Path,
+    *,
+    compression: Compression = "infer",
+    member: str | None = None,
+) -> Iterator[Frame]:
     """Stream frames one at a time, in constant memory.
 
     The file stays open while iterating and closes when the iterator is
     dropped. After a parse error the stream position is untrustworthy, so
     iteration ends: the error is raised once, then StopIteration. To
     materialise every frame at once (and in parallel), use `read_frames`.
+
+    A compressed path is decoded while streaming; see `read_frames` for the
+    `compression` and `member` options.
     """
-    for data in _rust.FrameIter(str(path)):
+    for data in _rust.FrameIter(str(path), compression, member):
         yield _frame_from_data(data)
 
 

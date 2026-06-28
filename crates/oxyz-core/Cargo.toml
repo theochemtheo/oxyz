@@ -11,13 +11,24 @@ parallel = ["dep:rayon"]
 
 [dependencies]
 fast-float2 = "0.2.3"
+flate2 = "1"
 memchr = "2.8.1"
 rayon = { version = "1", optional = true }
+ruzstd = "0.8"
+tar = { version = "0.4", default-features = false }
 thiserror = "2"
+# "deflate" is the pure-Rust (flate2/miniz_oxide) backend; default-features off
+# drops deflate64/bzip2/zstd-via-C we do not need.
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 criterion = "0.7.0"
+# Encoders for the round-trip tests; ruzstd is decode-only, so zstd fixtures
+# are committed instead. Features match the runtime deps to keep one build.
+flate2 = "1"
 proptest = "1.11.0"
+tar = { version = "0.4", default-features = false }
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [[bench]]
 name = "parse"
