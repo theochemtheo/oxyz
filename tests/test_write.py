@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pytest
@@ -122,6 +123,25 @@ def test_missing_required_column_is_rejected(missing: str, tmp_path: Path) -> No
     frame = Frame(n_atoms=1, columns=columns, metadata={})
     with pytest.raises(ValueError, match=missing):
         oxyz.write(tmp_path / "x.extxyz", frame)
+
+
+def test_unsupported_object_is_rejected(tmp_path: Path) -> None:
+    # cast past the type checker: the point is the runtime TypeError.
+    with pytest.raises(TypeError, match="cannot write"):
+        oxyz.write(tmp_path / "x.extxyz", cast("Frame", 42))
+
+
+def test_string_array_column_is_written(tmp_path: Path) -> None:
+    # A species column handed in as a numpy string array (not a list) must cross
+    # as a list and read back unchanged.
+    frame = Frame(
+        n_atoms=2,
+        columns={"species": np.array(["O", "H"]), "pos": np.zeros((2, 3))},
+        metadata={},
+    )
+    out = tmp_path / "strcol.extxyz"
+    oxyz.write(out, frame)
+    assert list(oxyz.read_frames(out)[0].columns["species"]) == ["O", "H"]
 
 
 @pytest.mark.parametrize(
@@ -257,3 +277,57 @@ def test_atoms_corpus_round_trips_through_ase(name: str, tmp_path: Path) -> None
         assert np.allclose(original.positions, frame.positions)
         assert np.allclose(original.cell[:], frame.cell[:])
         assert (original.pbc == frame.pbc).all()
+
+
+@ase_only
+def test_from_atoms_isolated_molecule_has_no_lattice() -> None:
+    from ase import Atoms
+
+    import oxyz.ase
+
+    molecule = Atoms("H2", positions=[[0.0, 0.0, 0.0], [0.0, 0.0, 0.74]])
+    frame = oxyz.ase.from_atoms(molecule)
+    assert "Lattice" not in frame.metadata
+    assert "pbc" not in frame.metadata
+    assert frame.columns["species"] == ["H", "H"]
+
+
+@ase_only
+def test_from_atoms_flattens_3x3_info_key() -> None:
+    from ase import Atoms
+
+    import oxyz.ase
+
+    atoms = Atoms("H", positions=[[0.0, 0.0, 0.0]], cell=[3.0, 3.0, 3.0], pbc=True)
+    atoms.info["virial"] = np.arange(9.0).reshape(3, 3)
+    frame = oxyz.ase.from_atoms(atoms)
+    # Stored flat (9,), and to_atoms restores the 3x3 — a round trip of the key.
+    assert np.asarray(frame.metadata["virial"]).shape == (9,)
+    assert oxyz.ase.to_atoms(frame).info["virial"].shape == (3, 3)
+
+
+@ase_only
+def test_from_atoms_fixatoms_becomes_move_mask() -> None:
+    from ase import Atoms
+    from ase.constraints import FixAtoms
+
+    import oxyz.ase
+
+    atoms = Atoms("H3", positions=[[0.0, 0, 0], [1.0, 0, 0], [2.0, 0, 0]])
+    atoms.set_constraint(FixAtoms(indices=[0, 2]))
+    mask = np.asarray(oxyz.ase.from_atoms(atoms).columns["move_mask"])
+    # move_mask is True where free, so the two fixed atoms are False.
+    assert mask.tolist() == [False, True, False]
+
+
+@ase_only
+def test_from_atoms_rejects_unsupported_constraint() -> None:
+    from ase import Atoms
+    from ase.constraints import FixBondLength
+
+    import oxyz.ase
+
+    atoms = Atoms("H2", positions=[[0.0, 0, 0], [1.0, 0, 0]])
+    atoms.set_constraint(FixBondLength(0, 1))
+    with pytest.raises(ValueError, match="constraint"):
+        oxyz.ase.from_atoms(atoms)
