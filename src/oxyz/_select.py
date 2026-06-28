@@ -37,6 +37,16 @@ def parse_index(index: int | str | slice) -> int | slice:
     return slice(start, stop, step)
 
 
+def _reject_member_on_plain(member: str | None) -> None:
+    """A non-compressed file is never an archive, so `member=` cannot apply. The
+    forward read paths reject it in the core (`MemberOnNonArchive`); the seek
+    path bypasses the core, so it must reject `member=` itself to match."""
+    if member is not None:
+        raise ValueError(
+            "member= is only valid for an archive (.zip/.tar/.tar.gz) source"
+        )
+
+
 def nth_frame(
     path: str | Path,
     index: int,
@@ -57,6 +67,7 @@ def nth_frame(
                     f"frame {index} out of range: file has {len(frames)} frames"
                 )
             return frames[index]
+        _reject_member_on_plain(member)
         indexed = IndexedFrames(path)
         if index + len(indexed) < 0:
             raise IndexError(
@@ -130,6 +141,7 @@ def sliced_frames(
         in_memory = read_frames(path, compression=compression, member=member)
         return (in_memory[i] for i in range(*frames.indices(len(in_memory))))
 
+    _reject_member_on_plain(member)
     indexed = IndexedFrames(path)
     selected = range(*frames.indices(len(indexed)))
     return (indexed.get(i) for i in selected)

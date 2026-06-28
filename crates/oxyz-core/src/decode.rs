@@ -15,13 +15,15 @@ use std::{
     io::{self, BufRead, BufReader, Cursor, Read},
     path::Path,
     sync::{
-        Mutex,
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
         mpsc::{Receiver, SyncSender, sync_channel},
     },
     thread,
 };
 
 use flate2::read::MultiGzDecoder;
+use ruzstd::decoding::{FrameDecoder, StreamingDecoder};
 
 use crate::extxyz::{ExtxyzError, Result};
 
@@ -83,11 +85,9 @@ pub fn open_decoded(
         Codec::Gzip => Ok(Box::new(BufReader::new(MultiGzDecoder::new(File::open(
             path,
         )?)))),
-        Codec::Zstd => {
-            let decoder = ruzstd::decoding::StreamingDecoder::new(File::open(path)?)
-                .map_err(|error| ExtxyzError::Io(io::Error::other(error.to_string())))?;
-            Ok(Box::new(BufReader::new(decoder)))
-        }
+        Codec::Zstd => Ok(Box::new(BufReader::new(MultiFrameZstd::new(File::open(
+            path,
+        )?)?))),
         Codec::Zip => open_zip_member(path, member),
         Codec::Tar => open_tar_member(path, member, false),
         Codec::TarGzip => open_tar_member(path, member, true),
@@ -147,6 +147,60 @@ fn sniff(path: &Path) -> Result<Codec> {
     } else {
         Codec::Plain
     })
+}
+
+/// Source for the zstd decoder: boxed so the leftover stream can be re-wrapped
+/// (with the peeked byte prepended) to start the next frame.
+type ZstdSource = Box<dyn Read + Send + Sync>;
+
+/// Streams every frame of a `.zst` file. ruzstd's [`StreamingDecoder`] stops at
+/// the first frame, but a zstd file may concatenate several (`zstd` does this,
+/// as does `cat a.zst b.zst`); this re-creates the decoder at each frame
+/// boundary, mirroring how [`MultiGzDecoder`] reads concatenated gzip members.
+struct MultiFrameZstd {
+    decoder: Option<StreamingDecoder<ZstdSource, FrameDecoder>>,
+}
+
+impl MultiFrameZstd {
+    fn new(file: File) -> Result<Self> {
+        let source: ZstdSource = Box::new(file);
+        Ok(MultiFrameZstd {
+            decoder: Some(zstd_decoder(source)?),
+        })
+    }
+}
+
+fn zstd_decoder(source: ZstdSource) -> io::Result<StreamingDecoder<ZstdSource, FrameDecoder>> {
+    StreamingDecoder::new(source).map_err(|error| io::Error::other(error.to_string()))
+}
+
+impl Read for MultiFrameZstd {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        // A zero-length read returns 0 without reading; without this guard it
+        // would be read as frame-exhaustion and wrongly advance to the next
+        // frame, dropping a byte.
+        if out.is_empty() {
+            return Ok(0);
+        }
+        loop {
+            let Some(decoder) = self.decoder.as_mut() else {
+                return Ok(0);
+            };
+            let read = decoder.read(out)?;
+            if read > 0 {
+                return Ok(read);
+            }
+            // Current frame is exhausted. Peek one byte off the leftover source:
+            // nothing left is clean EOF, otherwise another frame follows.
+            let mut source = self.decoder.take().expect("checked above").into_inner();
+            let mut peek = [0u8; 1];
+            if source.read(&mut peek)? == 0 {
+                return Ok(0);
+            }
+            let chained: ZstdSource = Box::new(Cursor::new([peek[0]]).chain(source));
+            self.decoder = Some(zstd_decoder(chained)?);
+        }
+    }
 }
 
 fn is_extxyz(name: &str) -> bool {
@@ -308,10 +362,19 @@ where
     F: FnOnce(&SyncSender<io::Result<Vec<u8>>>) + Send + 'static,
 {
     let (tx, rx) = sync_channel::<io::Result<Vec<u8>>>(4);
-    thread::spawn(move || producer(&tx));
+    let finished = Arc::new(AtomicBool::new(false));
+    let producer_finished = Arc::clone(&finished);
+    thread::spawn(move || {
+        producer(&tx);
+        // Set before `tx` drops (the consumer only wakes once the channel
+        // closes). A panic in `producer` skips this, turning the otherwise
+        // silent truncation into a surfaced error rather than a short read.
+        producer_finished.store(true, Ordering::Release);
+    });
     Box::new(BufReader::new(PipeReader {
         rx: Mutex::new(rx),
         current: Cursor::new(Vec::new()),
+        finished,
         done: false,
     }))
 }
@@ -323,6 +386,9 @@ where
 struct PipeReader {
     rx: Mutex<Receiver<io::Result<Vec<u8>>>>,
     current: Cursor<Vec<u8>>,
+    /// Set by the producer thread once it returns normally. A closed channel
+    /// with this unset means the producer aborted (panicked) mid-stream.
+    finished: Arc<AtomicBool>,
     done: bool,
 }
 
@@ -345,7 +411,12 @@ impl Read for PipeReader {
                 }
                 Err(_) => {
                     self.done = true;
-                    return Ok(0);
+                    if self.finished.load(Ordering::Acquire) {
+                        return Ok(0);
+                    }
+                    return Err(io::Error::other(
+                        "decompression worker stopped before completing the stream",
+                    ));
                 }
             }
         }

@@ -55,6 +55,15 @@ fn concatenated_gzip_members_are_all_read() {
 }
 
 #[test]
+fn concatenated_zstd_frames_are_all_read() {
+    // concat.xyz.zst is the two-frame file zstd-compressed and catted: a single
+    // `.zst` of two frames. ruzstd's StreamingDecoder stops at the first frame,
+    // so the multi-frame wrapper must drive it across the boundary (4 frames).
+    let frames = read_frames(fixture("compressed/concat.xyz.zst")).unwrap();
+    assert_eq!(frames.len(), 4);
+}
+
+#[test]
 fn plain_path_decodes_to_itself() {
     assert_eq!(
         decoded_string("two_frame_same_schema.xyz", Compression::Infer, None),

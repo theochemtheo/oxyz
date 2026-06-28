@@ -70,6 +70,11 @@ def test_concatenated_gzip_reads_all_members() -> None:
     assert len(oxyz.read_frames(DATA_DIR / "compressed/concat.xyz.gz")) == 4
 
 
+def test_concatenated_zstd_reads_all_frames() -> None:
+    # concat.xyz.zst holds two zstd frames; both must be read.
+    assert len(oxyz.read_frames(DATA_DIR / "compressed/concat.xyz.zst")) == 4
+
+
 def test_member_selects_one_from_archive(plain_frames: list[oxyz.Frame]) -> None:
     frames = oxyz.read_frames(DATA_DIR / "compressed/multi_member.zip", member="a.xyz")
     assert len(frames) == len(plain_frames)
