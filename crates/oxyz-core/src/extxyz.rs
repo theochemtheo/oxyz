@@ -95,6 +95,18 @@ pub enum ExtxyzError {
     )]
     RandomAccessUnsupported,
 
+    #[error("frame is missing required column {name:?}; extxyz needs both 'species' and 'pos'")]
+    MissingRequiredColumn { name: &'static str },
+
+    #[error("append mode is not supported for {codec} output")]
+    AppendUnsupported { codec: &'static str },
+
+    #[error("writing zstd (.zst) output is not yet supported")]
+    ZstdWriteUnsupported,
+
+    #[error("compression level {level} is out of range; expected 0..=9")]
+    InvalidCompressionLevel { level: i32 },
+
     #[error(transparent)]
     Batch(#[from] BatchError),
 }

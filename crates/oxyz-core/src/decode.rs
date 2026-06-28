@@ -48,7 +48,7 @@ pub enum Compression {
 /// `TarGzip`) carry members and accept a `member` selector; the rest are single
 /// streams and reject one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Codec {
+pub(crate) enum Codec {
     Plain,
     Gzip,
     Zstd,
@@ -58,8 +58,21 @@ enum Codec {
 }
 
 impl Codec {
-    fn is_archive(self) -> bool {
+    pub(crate) fn is_archive(self) -> bool {
         matches!(self, Codec::Zip | Codec::Tar | Codec::TarGzip)
+    }
+}
+
+/// Resolve the codec for *writing*. Unlike [`detect`], there are no bytes to
+/// sniff (the file may not exist yet), so `Infer` reads the extension only and
+/// falls back to [`Codec::Plain`] — including for stdout (`-`), which has none.
+pub(crate) fn detect_for_write(path: &Path, compression: Compression) -> Codec {
+    match compression {
+        Compression::None => Codec::Plain,
+        Compression::Gzip => Codec::Gzip,
+        Compression::Zstd => Codec::Zstd,
+        Compression::Zip => Codec::Zip,
+        Compression::Infer => detect_by_extension(path).unwrap_or(Codec::Plain),
     }
 }
 
@@ -113,7 +126,7 @@ fn detect(path: &Path, compression: Compression) -> Result<Codec> {
     }
 }
 
-fn detect_by_extension(path: &Path) -> Option<Codec> {
+pub(crate) fn detect_by_extension(path: &Path) -> Option<Codec> {
     let name = path.file_name()?.to_str()?.to_ascii_lowercase();
     Some(if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
         Codec::TarGzip
@@ -203,7 +216,7 @@ impl Read for MultiFrameZstd {
     }
 }
 
-fn is_extxyz(name: &str) -> bool {
+pub(crate) fn is_extxyz(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     lower.ends_with(".xyz") || lower.ends_with(".extxyz")
 }

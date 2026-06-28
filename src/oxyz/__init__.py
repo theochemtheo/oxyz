@@ -31,6 +31,7 @@ from oxyz._schema import (
     Schema,
     infer_schema,
 )
+from oxyz._write import Writer, write
 
 __all__ = [
     "Batch",
@@ -47,6 +48,7 @@ __all__ = [
     "MetadataVariant",
     "ParseError",
     "Schema",
+    "Writer",
     "infer_schema",
     "iter_batches",
     "iter_frames",
@@ -54,4 +56,5 @@ __all__ = [
     "read_first",
     "read_frames",
     "scan",
+    "write",
 ]
