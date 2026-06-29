@@ -32,6 +32,7 @@ def write(
     append: bool = False,
     compression: Compression = "infer",
     level: int | None = None,
+    threads: int | None = None,
 ) -> None:
     """Write frames to `path`, encoding from the path's extension (overridable).
 
@@ -48,9 +49,13 @@ def write(
     `level` (`0..=9`) tunes the deflate codecs; `append=True` adds to an existing
     file for the formats that allow it (plain, gzip), and is rejected for the
     archive codecs and for stdout. Writing `.zst` is not yet supported.
+
+    `threads` spreads serialisation over workers — `None` (the default) uses
+    every core, `1` is serial. The output bytes are identical either way; the
+    cost is peak memory, since the frames are serialised before being written.
     """
     payloads = [_payload(item) for item in _items(obj)]
-    _rust.write(str(path), payloads, compression, level, append)
+    _rust.write(str(path), payloads, compression, level, append, threads)
 
 
 class Writer:
@@ -60,6 +65,12 @@ class Writer:
 
     Options match `write`; the dispatch is the same, so `.write` also takes a
     single `Frame`/`ase.Atoms` or an iterable mixing them.
+
+    `batch` trades a little memory for serialisation throughput: with
+    `batch=None` (the default) each frame streams straight out in constant
+    memory; with `batch=n` frames are buffered `n` at a time and each full batch
+    is serialised in parallel before being written. The output is identical;
+    peak extra memory is one batch.
     """
 
     def __init__(
@@ -69,8 +80,9 @@ class Writer:
         append: bool = False,
         compression: Compression = "infer",
         level: int | None = None,
+        batch: int | None = None,
     ) -> None:
-        self._inner = _rust.FrameWriter(str(path), compression, level, append)
+        self._inner = _rust.FrameWriter(str(path), compression, level, append, batch)
 
     def write(self, obj: Writable | Iterable[Writable]) -> None:
         for item in _items(obj):

@@ -8,6 +8,8 @@ pub mod schema;
 
 pub use batch::{Batch, BatchBuilder, BatchError};
 pub use decode::{Compression, DecodedReader, is_compressed, open_decoded};
+#[cfg(feature = "parallel")]
+pub use encode::write_frames_parallel;
 pub use encode::{FrameSink, write_frame, write_frames};
 pub use extxyz::{
     BatchIter, ExtxyzError, FrameIter, IndexedFrames, infer_schema, infer_schema_from,

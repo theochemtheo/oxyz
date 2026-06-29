@@ -12,7 +12,7 @@ use std::{
 
 use oxyz_core::{
     Column, ColumnData, Compression, ExtxyzError, Frame, FrameSink, Value, read_frames,
-    write_frames,
+    write_frames, write_frames_parallel,
 };
 use proptest::prelude::*;
 
@@ -134,6 +134,118 @@ fn out_of_range_level_is_refused() {
     ));
 }
 
+// --- Parallel parity --------------------------------------------------------
+
+/// `count` distinct canonically-ordered frames, enough to span several chunks
+/// at any realistic thread count, with per-frame-varying data so a reordering
+/// bug would show.
+fn many_frames(count: usize) -> Vec<Frame> {
+    (0..count)
+        .map(|i| {
+            let f = i as f64;
+            Frame {
+                n_atoms: 2,
+                columns: vec![
+                    col(
+                        "species",
+                        1,
+                        ColumnData::Str(vec!["Si".to_owned(), "O".to_owned()]),
+                    ),
+                    col(
+                        "pos",
+                        3,
+                        ColumnData::Real(vec![f, 1.5, -2.25, 3.5 + f, 4.0, 5.0]),
+                    ),
+                    col("tag", 1, ColumnData::Int(vec![i as i64, -(i as i64)])),
+                ],
+                metadata: vec![("energy".to_owned(), Value::Real(-12.5 * f))],
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn parallel_write_is_byte_identical_to_serial() {
+    let frames = many_frames(200);
+    // One path per codec, reused across serial and parallel: the archive codecs
+    // embed the file name in their header, so byte-identity is only meaningful
+    // for the same path.
+    for name in ["p.xyz", "p.xyz.gz", "p.xyz.zip", "p.tar", "p.tar.gz"] {
+        let path = temp_path(name);
+        write_frames(&path, &frames, Compression::Infer, None, false).unwrap();
+        let serial_bytes = fs::read(&path).unwrap();
+
+        for threads in [None, Some(1), Some(2), Some(8)] {
+            write_frames_parallel(&path, &frames, Compression::Infer, None, false, threads)
+                .unwrap();
+            assert_eq!(
+                fs::read(&path).unwrap(),
+                serial_bytes,
+                "parallel bytes differ from serial for {name} at threads={threads:?}"
+            );
+        }
+        fs::remove_file(&path).unwrap();
+    }
+}
+
+#[test]
+fn parallel_write_reports_the_first_invalid_frame_and_leaves_no_file() {
+    // A good prefix, one frame missing `pos` partway through, more good frames:
+    // the reported error must be that frame's, the same MissingRequiredColumn the
+    // serial writer raises, and the output file must not exist.
+    let mut frames = many_frames(50);
+    frames[20] = Frame {
+        n_atoms: 1,
+        columns: vec![col("species", 1, ColumnData::Str(vec!["H".to_owned()]))],
+        metadata: vec![],
+    };
+
+    let serial = temp_path("bad_serial.xyz");
+    let serial_err = write_frames(&serial, &frames, Compression::Infer, None, false).unwrap_err();
+    assert!(matches!(
+        serial_err,
+        ExtxyzError::MissingRequiredColumn { name: "pos" }
+    ));
+    let _ = fs::remove_file(&serial);
+
+    let path = temp_path("bad_parallel.xyz");
+    let err =
+        write_frames_parallel(&path, &frames, Compression::Infer, None, false, None).unwrap_err();
+    assert!(matches!(
+        err,
+        ExtxyzError::MissingRequiredColumn { name: "pos" }
+    ));
+    assert!(!path.exists(), "a rejected write must leave no output file");
+}
+
+#[test]
+fn batched_sink_writes_match_a_serial_whole_file() {
+    // The Writer(batch=N) path: flush frames in fixed-size batches through
+    // write_batch_parallel, and the file must equal a one-shot serial write.
+    let frames = many_frames(100);
+    for name in ["batch.xyz", "batch.xyz.gz"] {
+        let serial = temp_path(name);
+        write_frames(&serial, &frames, Compression::Infer, None, false).unwrap();
+        let serial_bytes = fs::read(&serial).unwrap();
+        fs::remove_file(&serial).unwrap();
+
+        for batch in [1usize, 7, 100, 256] {
+            let path = temp_path(name);
+            let mut sink = FrameSink::create(&path, Compression::Infer, None, false).unwrap();
+            for chunk in frames.chunks(batch) {
+                sink.write_batch_parallel(chunk, None).unwrap();
+            }
+            sink.finish().unwrap();
+            assert_eq!(
+                fs::read(&path).unwrap(),
+                serial_bytes,
+                "batched write differs from serial for {name} at batch={batch}"
+            );
+            fs::remove_file(&path).unwrap();
+        }
+    }
+}
+
 // --- Lossless round-trip invariant -----------------------------------------
 
 /// A short species token (non-empty, no whitespace, a real chemical symbol so a
@@ -192,5 +304,27 @@ proptest! {
             .expect("written frame must re-parse");
         prop_assert_eq!(reparsed.len(), 1);
         prop_assert_eq!(&reparsed[0], &frame);
+    }
+
+    /// Parallel serialisation reproduces the serial bytes for any frame list,
+    /// at any thread count — the byte-parity promise the codec tests check on a
+    /// fixed corpus, generalised.
+    #[test]
+    fn parallel_serialisation_matches_serial(
+        frames in prop::collection::vec(frame_strategy(), 0..40),
+        threads in prop::option::of(1usize..6),
+    ) {
+        let serial = temp_path("prop_serial.xyz");
+        write_frames(&serial, &frames, Compression::Infer, None, false).unwrap();
+        let serial_bytes = fs::read(&serial).unwrap();
+        fs::remove_file(&serial).unwrap();
+
+        let parallel = temp_path("prop_parallel.xyz");
+        write_frames_parallel(&parallel, &frames, Compression::Infer, None, false, threads)
+            .unwrap();
+        let parallel_bytes = fs::read(&parallel).unwrap();
+        fs::remove_file(&parallel).unwrap();
+
+        prop_assert_eq!(parallel_bytes, serial_bytes);
     }
 }

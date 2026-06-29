@@ -44,6 +44,63 @@ pub fn write_frames(
     sink.finish()
 }
 
+/// [`write_frames`] with the per-frame serialisation spread over `threads`
+/// workers (`None`: every core, `Some(1)`: serial). Output bytes are identical
+/// to [`write_frames`] for every codec — only serialisation parallelises; the
+/// single output stream and any compression stay serial.
+///
+/// Errors match the serial writer: the first frame in order missing
+/// `species`/`pos` is reported. Frames are serialised *before* the sink is
+/// opened, so a rejected frame leaves no output file behind.
+#[cfg(feature = "parallel")]
+pub fn write_frames_parallel(
+    path: &Path,
+    frames: &[Frame],
+    compression: Compression,
+    level: Option<i32>,
+    append: bool,
+    threads: Option<usize>,
+) -> Result<()> {
+    let buffers = serialise_parallel(frames, threads)?;
+    let mut sink = FrameSink::create(path, compression, level, append)?;
+    for buf in &buffers {
+        sink.write_serialized(buf)?;
+    }
+    sink.finish()
+}
+
+/// Serialise `frames` to per-chunk byte buffers on a rayon pool, in frame order.
+/// The first frame (in order) that cannot be serialised is the reported error,
+/// matching the serial writer's precedence.
+#[cfg(feature = "parallel")]
+fn serialise_parallel(frames: &[Frame], threads: Option<usize>) -> Result<Vec<Vec<u8>>> {
+    use rayon::prelude::*;
+
+    // A few chunks per thread amortises the per-chunk buffer while leaving rayon
+    // room to balance — the same split the parallel reader uses.
+    crate::extxyz::with_pool(threads, || {
+        let chunk_size = frames
+            .len()
+            .div_ceil(rayon::current_num_threads() * 4)
+            .max(1);
+        frames
+            .par_chunks(chunk_size)
+            .map(serialise_chunk)
+            .collect::<Vec<Result<Vec<u8>>>>()
+    })?
+    .into_iter()
+    .collect()
+}
+
+#[cfg(feature = "parallel")]
+fn serialise_chunk(chunk: &[Frame]) -> Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    for frame in chunk {
+        write_frame(&mut buf, frame)?;
+    }
+    Ok(buf)
+}
+
 /// Serialise one frame to `out` as an extxyz text block (count line, comment
 /// line, then one line per atom). The pure serialiser, shared by every sink.
 pub fn write_frame<W: Write>(out: &mut W, frame: &Frame) -> Result<()> {
@@ -343,6 +400,30 @@ impl FrameSink {
             Inner::Stream(Stream::Gzip(w)) => write_frame(w, frame),
             Inner::Archive { buf, .. } => write_frame(buf, frame),
         }
+    }
+
+    /// Write an already-serialised block (the bytes [`write_frame`] produces) to
+    /// the sink. The parallel paths serialise off the I/O thread, then hand the
+    /// ordered bytes here.
+    fn write_serialized(&mut self, bytes: &[u8]) -> Result<()> {
+        match &mut self.inner {
+            Inner::Stream(Stream::Plain(w)) => w.write_all(bytes)?,
+            Inner::Stream(Stream::Gzip(w)) => w.write_all(bytes)?,
+            Inner::Archive { buf, .. } => buf.extend_from_slice(bytes),
+        }
+        Ok(())
+    }
+
+    /// Serialise `frames` in parallel and write them in order. The bounded-memory
+    /// batch path behind `Writer(batch=N)`: peak extra memory is the batch's
+    /// serialised text, not the whole file. Output is identical to writing the
+    /// frames one by one with [`write`](Self::write).
+    #[cfg(feature = "parallel")]
+    pub fn write_batch_parallel(&mut self, frames: &[Frame], threads: Option<usize>) -> Result<()> {
+        for buf in &serialise_parallel(frames, threads)? {
+            self.write_serialized(buf)?;
+        }
+        Ok(())
     }
 
     pub fn finish(self) -> Result<()> {
