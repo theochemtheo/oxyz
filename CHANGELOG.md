@@ -24,7 +24,11 @@ recorded here.
   onto an existing plain or gzip file (archives and stdout reject it).
   `oxyz.Writer` is the incremental, constant-memory form (a context manager),
   and `oxyz.ase.from_atoms` is the inverse of `to_atoms`. Writing `.zst` is not
-  yet supported.
+  yet supported. Serialisation runs across cores by default — `threads=` tunes
+  it (`None` for every core, `1` for serial), with output bytes identical at any
+  count; only serialisation parallelises, the output stream stays serial.
+  `oxyz.Writer(path, batch=n)` keeps the incremental form but serialises `n`
+  frames at a time in parallel, trading one batch of memory for throughput.
 - Reading from compressed files. Every reader (`read_frames`, `iter_frames`,
   `read_batch`, `iter_batches`, `read_first`, `scan`, `infer_schema`, the
   `oxyz.ase` / `oxyz.metatomic` / `oxyz.torch_sim` converters, and the `oxyz`

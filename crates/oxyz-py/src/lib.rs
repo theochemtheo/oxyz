@@ -12,7 +12,7 @@ use pyo3::{
 use oxyz_core::schema::{ColumnSchema, MetadataSchema, Schema, ValueType};
 use oxyz_core::{
     Batch, Column, ColumnData, ColumnKind, Compression, DecodedReader, ExtxyzError, Frame,
-    FrameSink, Value, open_decoded, write_frames,
+    FrameSink, Value, open_decoded, write_frames, write_frames_parallel,
 };
 
 /// Map the Python `compression` string to the core selector.
@@ -513,9 +513,11 @@ fn columns_to_pydict(py: Python<'_>, columns: Vec<Column>) -> PyResult<Bound<'_,
 ///
 /// Frames are converted to the core model while the GIL is held, then the encode
 /// and I/O run with it released. `level` is `0..=9` (codec default when `None`);
-/// `append` adds to an existing file where the codec allows it.
+/// `append` adds to an existing file where the codec allows it. `threads`
+/// spreads serialisation over workers (`None`: every core, `1`: serial); output
+/// bytes are identical regardless.
 #[pyfunction]
-#[pyo3(signature = (path, frames, compression="infer", level=None, append=false))]
+#[pyo3(signature = (path, frames, compression="infer", level=None, append=false, threads=None))]
 fn write(
     py: Python<'_>,
     path: PathBuf,
@@ -523,49 +525,102 @@ fn write(
     compression: &str,
     level: Option<i32>,
     append: bool,
+    threads: Option<usize>,
 ) -> PyResult<()> {
     let compression = parse_compression(compression)?;
     let frames = frames
         .iter()
         .map(pydict_to_frame)
         .collect::<PyResult<Vec<_>>>()?;
-    py.detach(|| write_frames(&path, &frames, compression, level, append))
-        .map_err(extxyz_error_to_py)
+    py.detach(|| match threads {
+        Some(1) => write_frames(&path, &frames, compression, level, append),
+        _ => write_frames_parallel(&path, &frames, compression, level, append, threads),
+    })
+    .map_err(extxyz_error_to_py)
 }
 
 /// Incremental writer: build it, `write` frames as they come, then `close`.
 /// Backs the `oxyz.Writer` context manager.
+///
+/// `batch=None` streams each frame straight to the sink in constant memory.
+/// `batch=Some(n)` buffers up to `n` frames and serialises each full batch in
+/// parallel before writing it — bounded extra memory (one batch), output bytes
+/// unchanged.
 #[pyclass]
 struct FrameWriter {
     // `None` once closed, so a double close or a write-after-close is caught.
     sink: Option<FrameSink>,
+    batch: Option<usize>,
+    buffer: Vec<Frame>,
 }
 
 #[pymethods]
 impl FrameWriter {
     #[new]
-    #[pyo3(signature = (path, compression="infer", level=None, append=false))]
-    fn new(path: PathBuf, compression: &str, level: Option<i32>, append: bool) -> PyResult<Self> {
+    #[pyo3(signature = (path, compression="infer", level=None, append=false, batch=None))]
+    fn new(
+        path: PathBuf,
+        compression: &str,
+        level: Option<i32>,
+        append: bool,
+        batch: Option<usize>,
+    ) -> PyResult<Self> {
+        if batch == Some(0) {
+            return Err(PyValueError::new_err("Writer batch must be at least 1"));
+        }
         let compression = parse_compression(compression)?;
         let sink =
             FrameSink::create(&path, compression, level, append).map_err(extxyz_error_to_py)?;
-        Ok(FrameWriter { sink: Some(sink) })
+        Ok(FrameWriter {
+            sink: Some(sink),
+            batch,
+            buffer: Vec::new(),
+        })
     }
 
     fn write(&mut self, py: Python<'_>, frame: Bound<'_, PyDict>) -> PyResult<()> {
         let frame = pydict_to_frame(&frame)?;
-        let sink = self
-            .sink
-            .as_mut()
-            .ok_or_else(|| PyValueError::new_err("write on a closed Writer"))?;
-        py.detach(|| sink.write(&frame)).map_err(extxyz_error_to_py)
+        match self.batch {
+            None => {
+                let sink = self.sink_mut()?;
+                py.detach(|| sink.write(&frame)).map_err(extxyz_error_to_py)
+            }
+            Some(batch) => {
+                self.buffer.push(frame);
+                if self.buffer.len() >= batch {
+                    self.flush(py)?;
+                }
+                Ok(())
+            }
+        }
     }
 
     fn close(&mut self, py: Python<'_>) -> PyResult<()> {
+        self.flush(py)?;
         if let Some(sink) = self.sink.take() {
             py.detach(|| sink.finish()).map_err(extxyz_error_to_py)?;
         }
         Ok(())
+    }
+}
+
+impl FrameWriter {
+    fn sink_mut(&mut self) -> PyResult<&mut FrameSink> {
+        self.sink
+            .as_mut()
+            .ok_or_else(|| PyValueError::new_err("write on a closed Writer"))
+    }
+
+    /// Serialise and write any buffered frames (batch mode), then clear the
+    /// buffer. A no-op when nothing is buffered.
+    fn flush(&mut self, py: Python<'_>) -> PyResult<()> {
+        if self.buffer.is_empty() {
+            return Ok(());
+        }
+        let buffer = std::mem::take(&mut self.buffer);
+        let sink = self.sink_mut()?;
+        py.detach(|| sink.write_batch_parallel(&buffer, None))
+            .map_err(extxyz_error_to_py)
     }
 }
 

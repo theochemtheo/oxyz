@@ -340,8 +340,8 @@ oxyz.infer_schema(path)                      -> Schema
 
 # Every reader above also takes compression="infer" and member=None.
 
-oxyz.write(path, obj, *, append=False, compression="infer", level=None) -> None
-oxyz.Writer(path, *, append=False, compression="infer", level=None)     # incremental, a context manager
+oxyz.write(path, obj, *, append=False, compression="infer", level=None, threads=None) -> None
+oxyz.Writer(path, *, append=False, compression="infer", level=None, batch=None)   # incremental, a context manager
 
 oxyz.ase.read(path, index=None, *, format=None)  -> Atoms | list[Atoms]  # index=None: last frame
 oxyz.ase.iread(path, index=":", *, format=None)  -> Iterator[Atoms]
@@ -407,6 +407,13 @@ every `f64` bit for bit; the output is compact rather than column-aligned.
 Columns are written `species`, `pos`, then the rest; the comment line is
 `Lattice`, `pbc`, `Properties`, then the remaining metadata. A frame without
 both a `species` and a `pos` column is rejected.
+
+As with the readers, `threads` is a knob: `oxyz.write` serialises across cores
+by default and the output bytes are identical at any thread count (only
+serialisation parallelises; the output stream stays serial). `Writer` streams in
+constant memory; `Writer(path, batch=n)` keeps the incremental form but
+serialises `n` frames at a time in parallel, trading one batch of memory for
+throughput.
 
 The writable codecs are plain, `.gz`, `.zip`, `.tar`, and `.tar.gz`; `level`
 (`0..=9`) tunes the deflate-based ones. `append=True` adds to an existing file

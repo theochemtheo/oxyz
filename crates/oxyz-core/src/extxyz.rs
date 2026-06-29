@@ -717,7 +717,10 @@ fn run_pipeline<R: BufRead + Send>(
 /// Run `op` on a pool of exactly `threads` workers (`None`: the global
 /// all-core pool).
 #[cfg(feature = "parallel")]
-fn with_pool<T: Send>(threads: Option<usize>, op: impl FnOnce() -> T + Send) -> Result<T> {
+pub(crate) fn with_pool<T: Send>(
+    threads: Option<usize>,
+    op: impl FnOnce() -> T + Send,
+) -> Result<T> {
     match threads {
         None => Ok(op()),
         Some(threads) => Ok(rayon::ThreadPoolBuilder::new()

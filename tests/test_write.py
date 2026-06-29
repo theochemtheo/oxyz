@@ -206,6 +206,42 @@ def test_writer_matches_one_shot(tmp_path: Path) -> None:
     assert incremental.read_text() == one_shot.read_text()
 
 
+@pytest.mark.parametrize("suffix", ["xyz", "xyz.gz", "xyz.zip", "tar.gz"])
+def test_threads_produce_identical_bytes(suffix: str, tmp_path: Path) -> None:
+    # The parity promise at the Python surface: output is independent of the
+    # thread count, byte for byte, for every codec.
+    frames = oxyz.read_frames(DATA_DIR / "two_frame_same_schema.xyz") * 60
+    # One path, reused: the archive codecs embed the file name in their header,
+    # so byte-identity is only meaningful for the same path.
+    out = tmp_path / f"frames.{suffix}"
+    oxyz.write(out, frames, threads=1)
+    reference = out.read_bytes()
+    for threads in (None, 2, 8):
+        oxyz.write(out, frames, threads=threads)
+        assert out.read_bytes() == reference, f"threads={threads}"
+    assert_frames_equivalent(frames, oxyz.read_frames(out))
+
+
+@pytest.mark.parametrize("batch", [1, 7, 1000])
+def test_writer_batch_matches_streaming(batch: int, tmp_path: Path) -> None:
+    frames = oxyz.read_frames(DATA_DIR / "two_frame_same_schema.xyz") * 40
+    streamed = tmp_path / "stream.extxyz"
+    batched = tmp_path / "batch.extxyz"
+
+    with oxyz.Writer(streamed) as writer:
+        for frame in frames:
+            writer.write(frame)
+    with oxyz.Writer(batched, batch=batch) as writer:
+        for frame in frames:
+            writer.write(frame)
+    assert batched.read_bytes() == streamed.read_bytes()
+
+
+def test_writer_rejects_zero_batch(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="batch"):
+        oxyz.Writer(tmp_path / "x.extxyz", batch=0)
+
+
 # --- ASE equivalence -------------------------------------------------------
 
 ase_only = pytest.mark.skipif(not has_ase, reason="ase not installed")

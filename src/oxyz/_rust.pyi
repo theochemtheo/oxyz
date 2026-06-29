@@ -136,6 +136,7 @@ def write(
     compression: str = "infer",
     level: int | None = None,
     append: bool = False,
+    threads: int | None = None,
 ) -> None: ...
 
 class FrameWriter:
@@ -145,6 +146,7 @@ class FrameWriter:
         compression: str = "infer",
         level: int | None = None,
         append: bool = False,
+        batch: int | None = None,
     ) -> None: ...
     def write(self, frame: FrameData) -> None: ...
     def close(self) -> None: ...
