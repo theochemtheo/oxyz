@@ -31,6 +31,10 @@ use crate::extxyz::{ExtxyzError, Result};
 /// `Sync` as well as `Send` so the binding can hold one in a `#[pyclass]`.
 pub type DecodedReader = Box<dyn BufRead + Send + Sync>;
 
+/// A raw, undecoded byte source — a file, or a remote stream from the binding.
+/// `Send + Sync` so it can cross into the codec wrappers and the pyclass.
+pub type ByteSource = Box<dyn Read + Send + Sync>;
+
 /// How to interpret a read source. `Infer` reads the extension, falling back to
 /// a magic-byte sniff; the rest force a codec regardless of the name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -48,7 +52,7 @@ pub enum Compression {
 /// `TarGzip`) carry members and accept a `member` selector; the rest are single
 /// streams and reject one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Codec {
+pub enum Codec {
     Plain,
     Gzip,
     Zstd,
@@ -94,16 +98,26 @@ pub fn open_decoded(
     }
 
     match codec {
-        Codec::Plain => Ok(Box::new(BufReader::new(File::open(path)?))),
-        Codec::Gzip => Ok(Box::new(BufReader::new(MultiGzDecoder::new(File::open(
-            path,
-        )?)))),
-        Codec::Zstd => Ok(Box::new(BufReader::new(MultiFrameZstd::new(File::open(
-            path,
-        )?)?))),
+        Codec::Plain => wrap_stream(Box::new(File::open(path)?), Codec::Plain),
+        Codec::Gzip => wrap_stream(Box::new(File::open(path)?), Codec::Gzip),
+        Codec::Zstd => wrap_stream(Box::new(File::open(path)?), Codec::Zstd),
         Codec::Zip => open_zip_member(path, member),
         Codec::Tar => open_tar_member(path, member, false),
         Codec::TarGzip => open_tar_member(path, member, true),
+    }
+}
+
+/// Wrap an already-opened raw byte source in a single-stream codec. Archive
+/// codecs (`Zip`/`Tar`/`TarGzip`) are not streams and are rejected — use
+/// [`wrap_zip`] / [`wrap_tar`].
+pub fn wrap_stream(source: ByteSource, codec: Codec) -> Result<DecodedReader> {
+    match codec {
+        Codec::Plain => Ok(Box::new(BufReader::new(source))),
+        Codec::Gzip => Ok(Box::new(BufReader::new(MultiGzDecoder::new(source)))),
+        Codec::Zstd => Ok(Box::new(BufReader::new(MultiFrameZstd::from_source(
+            source,
+        )?))),
+        Codec::Zip | Codec::Tar | Codec::TarGzip => Err(ExtxyzError::MemberOnNonArchive),
     }
 }
 
@@ -175,8 +189,7 @@ struct MultiFrameZstd {
 }
 
 impl MultiFrameZstd {
-    fn new(file: File) -> Result<Self> {
-        let source: ZstdSource = Box::new(file);
+    fn from_source(source: ZstdSource) -> Result<Self> {
         Ok(MultiFrameZstd {
             decoder: Some(zstd_decoder(source)?),
         })

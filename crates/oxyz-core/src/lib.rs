@@ -7,7 +7,9 @@ pub mod model;
 pub mod schema;
 
 pub use batch::{Batch, BatchBuilder, BatchError};
-pub use decode::{Compression, DecodedReader, is_compressed, open_decoded};
+pub use decode::{
+    ByteSource, Codec, Compression, DecodedReader, is_compressed, open_decoded, wrap_stream,
+};
 #[cfg(feature = "parallel")]
 pub use encode::write_frames_parallel;
 pub use encode::{FrameSink, write_frame, write_frames};
