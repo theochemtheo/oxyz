@@ -1,8 +1,22 @@
 from __future__ import annotations
 
-from typing import Any
+import uuid
+from collections.abc import Callable
+from typing import Any, NamedTuple
 
 import pytest
+
+
+class S3Fixture(NamedTuple):
+    """A per-test bucket on the moto server.
+
+    ``put(key, data)`` uploads bytes, ``url(key)`` is the ``s3://`` URL for that
+    key, and ``options`` is the storage_options dict for oxyz read functions.
+    """
+
+    put: Callable[[str, bytes], None]
+    options: dict[str, Any]
+    url: Callable[[str], str]
 
 
 @pytest.fixture(scope="session")
@@ -22,14 +36,11 @@ def s3_server():
 
 
 @pytest.fixture
-def s3_store(s3_server: str):
-    """Fresh S3 bucket on the moto server, plus a put() helper and options dict.
+def s3_store(s3_server: str) -> S3Fixture:
+    """A fresh, uniquely-named bucket on the moto server for one test.
 
-    Returns ``(put, options)`` where:
-    - ``put(key, data)`` uploads bytes to bucket ``test`` via boto3.
-    - ``options`` is the storage_options dict to pass to oxyz read functions.
-
-    A new bucket named ``test`` is created for each test (boto3 idempotent).
+    Each test gets its own bucket, so objects never leak between tests sharing
+    the session-scoped server.
     """
     boto3 = pytest.importorskip("boto3")
     pytest.importorskip("obstore")
@@ -53,9 +64,10 @@ def s3_store(s3_server: str):
         aws_access_key_id="test",
         aws_secret_access_key="test",
     )
-    client.create_bucket(Bucket="test")
+    bucket = f"test-{uuid.uuid4().hex}"
+    client.create_bucket(Bucket=bucket)
 
     def put(key: str, data: bytes) -> None:
-        client.put_object(Bucket="test", Key=key, Body=data)
+        client.put_object(Bucket=bucket, Key=key, Body=data)
 
-    return put, options
+    return S3Fixture(put=put, options=options, url=lambda key: f"s3://{bucket}/{key}")
