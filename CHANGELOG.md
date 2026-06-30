@@ -10,14 +10,26 @@ recorded here.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-30
+
 ### Added
 
-- Read extxyz directly from S3-compatible object stores: `read_frames`,
-  `iter_frames`, `scan`, `infer_schema`, the batch readers, and
-  `oxyz.ase.read`/`iread` accept `s3://`/`gs://`/`az://` URLs with the new
-  `oxyz[s3]` extra. Endpoint and credentials via `storage_options=` or `AWS_*`
-  env vars; all codecs and archive `member=` selection supported. `oxyz scan`
-  gains `--storage-option`.
+- Reading from compressed files. Every reader (`read_frames`, `iter_frames`,
+  `read_batch`, `iter_batches`, `read_first`, `scan`, `infer_schema`, the
+  `oxyz.ase` / `oxyz.metatomic` / `oxyz.torch_sim` converters, and the `oxyz`
+  CLI) now accepts `.gz`, `.tar.gz`, `.zip`, `.zst` and `.tar` paths and decodes
+  them on the fly — `read_frames("run.xyz.gz")` just works, with no separate
+  decompression step. Decoding streams, so reads stay parallel without
+  decompressing to a temporary file or holding the whole file in memory; a bare
+  `.gz` with several concatenated members is fully read. `compression=` forces a
+  codec (`"infer"` default, or `"none"`/`"gzip"`/`"zstd"`/`"zip"`) and `member=`
+  selects one entry from a multi-member archive (which otherwise errors, listing
+  its members). A compressed source cannot be seeked, so random-access
+  strategies — `iter_batches` with `shuffle`, `atoms_per_batch`, or
+  `memory_scales_with`, and reverse/negative ASE indices — either fall back to a
+  full in-memory read (the ASE index path) or raise a clear error pointing at
+  the limitation. Decoders are pure Rust (`flate2`, `ruzstd`, `zip`, `tar`), so
+  the wheel gains no system dependencies.
 - Writing extxyz. `oxyz.write(path, obj, ...)` takes a `Frame`, an `ase.Atoms`,
   or an iterable mixing them and writes (ext)xyz, removing the most common reason
   to keep ASE in a read → filter → write workflow. Reals are written
@@ -35,22 +47,12 @@ recorded here.
   count; only serialisation parallelises, the output stream stays serial.
   `oxyz.Writer(path, batch=n)` keeps the incremental form but serialises `n`
   frames at a time in parallel, trading one batch of memory for throughput.
-- Reading from compressed files. Every reader (`read_frames`, `iter_frames`,
-  `read_batch`, `iter_batches`, `read_first`, `scan`, `infer_schema`, the
-  `oxyz.ase` / `oxyz.metatomic` / `oxyz.torch_sim` converters, and the `oxyz`
-  CLI) now accepts `.gz`, `.tar.gz`, `.zip`, `.zst` and `.tar` paths and decodes
-  them on the fly — `read_frames("run.xyz.gz")` just works, with no separate
-  decompression step. Decoding streams, so reads stay parallel without
-  decompressing to a temporary file or holding the whole file in memory; a bare
-  `.gz` with several concatenated members is fully read. `compression=` forces a
-  codec (`"infer"` default, or `"none"`/`"gzip"`/`"zstd"`/`"zip"`) and `member=`
-  selects one entry from a multi-member archive (which otherwise errors, listing
-  its members). A compressed source cannot be seeked, so random-access
-  strategies — `iter_batches` with `shuffle`, `atoms_per_batch`, or
-  `memory_scales_with`, and reverse/negative ASE indices — either fall back to a
-  full in-memory read (the ASE index path) or raise a clear error pointing at
-  the limitation. Decoders are pure Rust (`flate2`, `ruzstd`, `zip`, `tar`), so
-  the wheel gains no system dependencies.
+- Read extxyz directly from S3-compatible object stores: `read_frames`,
+  `iter_frames`, `scan`, `infer_schema`, the batch readers, and
+  `oxyz.ase.read`/`iread` accept `s3://`/`gs://`/`az://` URLs with the new
+  `oxyz[s3]` extra. Endpoint and credentials via `storage_options=` or `AWS_*`
+  env vars; all codecs and archive `member=` selection supported. `oxyz scan`
+  gains `--storage-option`.
 
 ## [0.3.0] - 2026-06-27
 
@@ -151,6 +153,7 @@ for reading atomistic-simulation datasets into numpy or ASE.
 - abi3 wheels for CPython 3.11 and newer on Linux (x86_64, aarch64), macOS
   (arm64, x86_64), and Windows (x64).
 
+[0.4.0]: https://github.com/theochemtheo/oxyz/releases/tag/v0.4.0
 [0.3.0]: https://github.com/theochemtheo/oxyz/releases/tag/v0.3.0
 [0.2.0]: https://github.com/theochemtheo/oxyz/releases/tag/v0.2.0
 [0.1.0]: https://github.com/theochemtheo/oxyz/releases/tag/v0.1.0
