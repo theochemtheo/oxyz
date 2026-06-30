@@ -121,3 +121,24 @@ def test_iter_batches_remote_rejects_random_access(monkeypatch):
     monkeypatch.setattr(oxyz._remote, "is_remote", lambda p: True)
     with pytest.raises(ValueError, match="randomly accessed"):
         list(oxyz.iter_batches("s3://bucket/x.xyz", frames_per_batch=2, shuffle=True))
+
+
+def test_ase_read_routes_remote(monkeypatch):
+    pytest.importorskip("ase")
+    import oxyz.ase
+
+    path = Path("tests/data/minimal_periodic.extxyz")
+    blob = path.read_bytes()
+
+    def fake_open_source(p, *, compression, member, storage_options):
+        from oxyz._remote import RemoteSource
+
+        return RemoteSource(obj=iter([blob]), codec="plain", member=None)
+
+    monkeypatch.setattr(oxyz._remote, "is_remote", lambda p: True)
+    monkeypatch.setattr(oxyz._remote, "open_source", fake_open_source)
+
+    # index=0 (forward) and index=-1 (reverse fallback) both work remotely.
+    first = oxyz.ase.read("s3://bucket/minimal_periodic.extxyz", index=0)
+    last = oxyz.ase.read("s3://bucket/minimal_periodic.extxyz", index=-1)
+    assert len(first) > 0 and len(last) > 0

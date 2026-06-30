@@ -23,6 +23,7 @@ import numpy as np
 
 from oxyz._convert import UnknownSpeciesError, species_to_numbers
 from oxyz._frames import ColumnValues, Compression, Frame, MetadataValue
+from oxyz._remote import StorageOptions
 from oxyz._select import frames_for_read, nth_frame, parse_index, sliced_frames
 
 try:
@@ -198,6 +199,7 @@ def read(
     format: str | None = ...,
     compression: Compression = ...,
     member: str | None = ...,
+    storage_options: StorageOptions | None = ...,
 ) -> Atoms: ...
 
 
@@ -209,6 +211,7 @@ def read(
     format: str | None = ...,
     compression: Compression = ...,
     member: str | None = ...,
+    storage_options: StorageOptions | None = ...,
 ) -> list[Atoms]: ...
 
 
@@ -220,6 +223,7 @@ def read(
     format: str | None = ...,
     compression: Compression = ...,
     member: str | None = ...,
+    storage_options: StorageOptions | None = ...,
 ) -> Atoms | list[Atoms]: ...
 
 
@@ -230,6 +234,7 @@ def read(
     format: str | None = None,
     compression: Compression = "infer",
     member: str | None = None,
+    storage_options: StorageOptions | None = None,
 ) -> Atoms | list[Atoms]:
     """Drop-in for `ase.io.read` on extxyz files; full ASE index grammar.
 
@@ -242,15 +247,32 @@ def read(
     `compression` and `member` are as in `oxyz.read_frames`. A compressed source
     cannot seek, so a negative or reverse index reads the whole file and indexes
     in memory (as ASE does), forgoing the partial-read shortcut.
+
+    Remote URLs (``s3://``, ``gs://``, ``az://``) are supported; pass
+    ``storage_options`` to supply endpoint/credentials. Remote sources are
+    non-seekable, so negative or reverse indices read the whole stream in memory,
+    the same as compressed local files.
     """
     _check_format(format)
     index = parse_index(-1 if index is None else index)
     if isinstance(index, int):
-        return to_atoms(nth_frame(path, index, compression=compression, member=member))
+        return to_atoms(
+            nth_frame(
+                path,
+                index,
+                compression=compression,
+                member=member,
+                storage_options=storage_options,
+            )
+        )
     return [
         to_atoms(frame)
         for frame in frames_for_read(
-            path, index, compression=compression, member=member
+            path,
+            index,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
         )
     ]
 
@@ -262,17 +284,34 @@ def iread(
     format: str | None = None,
     compression: Compression = "infer",
     member: str | None = None,
+    storage_options: StorageOptions | None = None,
 ) -> Iterator[Atoms]:
     """Drop-in for `ase.io.iread` on extxyz files: yields one Atoms at a time."""
     _check_format(format)
     index = parse_index(index)
     if isinstance(index, int):
         return iter(
-            (to_atoms(nth_frame(path, index, compression=compression, member=member)),)
+            (
+                to_atoms(
+                    nth_frame(
+                        path,
+                        index,
+                        compression=compression,
+                        member=member,
+                        storage_options=storage_options,
+                    )
+                ),
+            )
         )
     return (
         to_atoms(frame)
-        for frame in sliced_frames(path, index, compression=compression, member=member)
+        for frame in sliced_frames(
+            path,
+            index,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
     )
 
 

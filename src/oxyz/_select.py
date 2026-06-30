@@ -14,6 +14,7 @@ from itertools import islice
 from pathlib import Path
 
 import oxyz._rust as _rust
+from oxyz import _remote
 from oxyz._frames import (
     Compression,
     Frame,
@@ -22,6 +23,13 @@ from oxyz._frames import (
     read_frames,
     read_frames_sliced,
 )
+
+
+def _is_streaming_only(path: str | Path, compression: Compression) -> bool:
+    """A source that cannot seek: a remote URL, or a compressed local file."""
+    if _remote.is_remote(path):
+        return True
+    return _rust.is_compressed(str(path), compression)
 
 
 def parse_index(index: int | str | slice) -> int | slice:
@@ -53,15 +61,22 @@ def nth_frame(
     *,
     compression: Compression = "infer",
     member: str | None = None,
+    storage_options: _remote.StorageOptions | None = None,
 ) -> Frame:
     """Frame `index`; negatives resolve via a scan and seek, not a full parse.
 
     A compressed source cannot seek, so a negative index there reads the whole
     file and indexes in memory (as ASE does), losing the partial-read shortcut.
+    A remote URL is likewise non-seekable and takes the same in-memory path.
     """
     if index < 0:
-        if _rust.is_compressed(str(path), compression):
-            frames = read_frames(path, compression=compression, member=member)
+        if _is_streaming_only(path, compression):
+            frames = read_frames(
+                path,
+                compression=compression,
+                member=member,
+                storage_options=storage_options,
+            )
             if index + len(frames) < 0:
                 raise IndexError(
                     f"frame {index} out of range: file has {len(frames)} frames"
@@ -76,7 +91,16 @@ def nth_frame(
         return indexed.get(index + len(indexed))
 
     frame = next(
-        islice(iter_frames(path, compression=compression, member=member), index, None),
+        islice(
+            iter_frames(
+                path,
+                compression=compression,
+                member=member,
+                storage_options=storage_options,
+            ),
+            index,
+            None,
+        ),
         None,
     )
     if frame is None:
@@ -100,6 +124,7 @@ def frames_for_read(
     *,
     compression: Compression = "infer",
     member: str | None = None,
+    storage_options: _remote.StorageOptions | None = None,
 ) -> Iterable[Frame]:
     """Frames for an eager list read.
 
@@ -116,8 +141,15 @@ def frames_for_read(
             threads,
             compression=compression,
             member=member,
+            storage_options=storage_options,
         )
-    return sliced_frames(path, frames, compression=compression, member=member)
+    return sliced_frames(
+        path,
+        frames,
+        compression=compression,
+        member=member,
+        storage_options=storage_options,
+    )
 
 
 def sliced_frames(
@@ -126,19 +158,30 @@ def sliced_frames(
     *,
     compression: Compression = "infer",
     member: str | None = None,
+    storage_options: _remote.StorageOptions | None = None,
 ) -> Iterator[Frame]:
     """Forward slices stream; negative bounds or steps go via the index (or, on a
-    compressed source, via a full in-memory read)."""
+    compressed or remote source, via a full in-memory read)."""
     if is_forward(frames):
         return islice(
-            iter_frames(path, compression=compression, member=member),
+            iter_frames(
+                path,
+                compression=compression,
+                member=member,
+                storage_options=storage_options,
+            ),
             frames.start,
             frames.stop,
             frames.step,
         )
 
-    if _rust.is_compressed(str(path), compression):
-        in_memory = read_frames(path, compression=compression, member=member)
+    if _is_streaming_only(path, compression):
+        in_memory = read_frames(
+            path,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
         return (in_memory[i] for i in range(*frames.indices(len(in_memory))))
 
     _reject_member_on_plain(member)
