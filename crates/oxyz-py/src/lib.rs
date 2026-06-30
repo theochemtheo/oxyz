@@ -877,7 +877,7 @@ impl Read for PyChunkReader {
             }
             let next = Python::attach(|py| match self.iter.bind(py).call_method0("__next__") {
                 Ok(obj) => obj
-                    .downcast::<PyBytes>()
+                    .cast::<PyBytes>()
                     .map(|b| Some(b.as_bytes().to_vec()))
                     .map_err(|_| std::io::Error::other("remote stream yielded a non-bytes chunk")),
                 Err(err) if err.is_instance_of::<pyo3::exceptions::PyStopIteration>(py) => Ok(None),
@@ -913,6 +913,11 @@ impl Read for PySeekReader {
                 .cast::<PyBytes>()
                 .map_err(|_| std::io::Error::other("read() did not return bytes"))?;
             let data = bytes.as_bytes();
+            if data.len() > out.len() {
+                return Err(std::io::Error::other(
+                    "read() returned more bytes than requested",
+                ));
+            }
             out[..data.len()].copy_from_slice(data);
             Ok(data.len())
         })
@@ -956,7 +961,8 @@ fn build_decoded(
             let codec = match codec {
                 "plain" => Codec::Plain,
                 "gzip" => Codec::Gzip,
-                _ => Codec::Zstd,
+                "zstd" => Codec::Zstd,
+                _ => unreachable!("outer match limits codec to plain/gzip/zstd"),
             };
             let reader: ByteSource = Box::new(PyChunkReader::new(source.clone().unbind()));
             wrap_stream(reader, codec).map_err(extxyz_error_to_py)

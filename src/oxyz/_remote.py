@@ -118,6 +118,7 @@ def _split_url(url: str) -> tuple[str, str, str]:
 
 
 def _build_store(bucket_url: str, storage_options: StorageOptions | None) -> Any:
+    _import_obstore()
     from obstore.store import from_url
 
     raw: dict[str, Any] = dict(storage_options or {})

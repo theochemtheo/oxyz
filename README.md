@@ -410,7 +410,9 @@ oxyz.read_frames(
 )
 ```
 
-`gs://` and `az://` work the same way. Compression (`.gz`, `.zst`, `.tar.gz`,
+`gs://` and `az://` are routed through the same obstore mechanism; they are
+supported in principle but are not covered by oxyz's own integration tests, so
+treat them as best-effort. Compression (`.gz`, `.zst`, `.tar.gz`,
 `.zip`) and archive `member=` selection apply as for local files. A remote
 stream cannot seek, so random-access batch strategies (`shuffle`,
 `atoms_per_batch`, `memory_scales_with`) need a local copy.
