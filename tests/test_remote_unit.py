@@ -142,3 +142,37 @@ def test_ase_read_routes_remote(monkeypatch):
     first = oxyz.ase.read("s3://bucket/minimal_periodic.extxyz", index=0)
     last = oxyz.ase.read("s3://bucket/minimal_periodic.extxyz", index=-1)
     assert len(first) > 0 and len(last) > 0
+
+
+def test_cli_storage_option_parsing(monkeypatch, capsys):
+    import oxyz._cli as cli
+
+    path = Path("tests/data/minimal_periodic.extxyz")
+    blob = path.read_bytes()
+    seen = {}
+
+    def fake_open_source(p, *, compression, member, storage_options):
+        from oxyz._remote import RemoteSource
+
+        seen["storage_options"] = storage_options
+        return RemoteSource(obj=iter([blob]), codec="plain", member=None)
+
+    monkeypatch.setattr(oxyz._remote, "is_remote", lambda p: True)
+    monkeypatch.setattr(oxyz._remote, "open_source", fake_open_source)
+
+    rc = cli.main(
+        [
+            "scan",
+            "s3://bucket/minimal_periodic.extxyz",
+            "--no-schema",
+            "--storage-option",
+            "endpoint=http://localhost:9000",
+            "--storage-option",
+            "region=us-east-1",
+        ]
+    )
+    assert rc == 0
+    assert seen["storage_options"] == {
+        "endpoint": "http://localhost:9000",
+        "region": "us-east-1",
+    }

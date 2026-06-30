@@ -79,21 +79,48 @@ def _add_scan_parser(subparsers: argparse._SubParsersAction) -> None:
         default=None,
         help="entry to read from a multi-member archive (.zip/.tar/.tar.gz)",
     )
+    scan_parser.add_argument(
+        "--storage-option",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        dest="storage_options",
+        help="remote store option (repeatable), e.g. endpoint=..., region=...",
+    )
     scan_parser.set_defaults(func=_cmd_scan)
+
+
+def _parse_storage_options(items: list[str]) -> dict[str, str] | None:
+    if not items:
+        return None
+    options: dict[str, str] = {}
+    for item in items:
+        key, sep, value = item.partition("=")
+        if not sep:
+            raise ValueError(f"--storage-option must be KEY=VALUE, got {item!r}")
+        options[key] = value
+    return options
 
 
 def _cmd_scan(args: argparse.Namespace) -> int:
     # The schema pass keeps the per-frame atom counts, so it yields the same
     # distribution stats as scan -- run only one. --no-schema wants no parse
     # at all, so it falls back to the cheap structural scan.
+    storage_options = _parse_storage_options(args.storage_options)
     if args.no_schema:
         stats: StatsSource = scan(
-            args.path, compression=args.compression, member=args.member
+            args.path,
+            compression=args.compression,
+            member=args.member,
+            storage_options=storage_options,
         )
         schema = None
     else:
         schema = infer_schema(
-            args.path, compression=args.compression, member=args.member
+            args.path,
+            compression=args.compression,
+            member=args.member,
+            storage_options=storage_options,
         )
         stats = schema
     if args.json:
