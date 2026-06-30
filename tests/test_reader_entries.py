@@ -8,6 +8,8 @@ import tarfile
 import zipfile
 from pathlib import Path
 
+import pytest
+
 import oxyz._rust as _rust
 
 DATA = Path(__file__).parent / "data"
@@ -117,3 +119,19 @@ def test_detect_codec():
     assert _rust.detect_codec("a.zip", None) == "zip"
     assert _rust.detect_codec("blob", b"PK\x03\x04") == "zip"
     assert _rust.detect_codec("blob", b"hello") == "plain"
+
+
+def test_read_frames_reader_member_on_stream_codec_raises():
+    with pytest.raises(ValueError, match="archive"):
+        _rust.read_frames_reader(chunks(b"dummy"), "plain", "inner.xyz", None)
+
+
+def test_read_frames_reader_unsupported_codec_raises():
+    with pytest.raises(ValueError, match="codec"):
+        _rust.read_frames_reader(chunks(b"dummy"), "bogus", None, None)
+
+
+def test_read_frames_reader_non_bytes_chunk_raises():
+    # A source yielding a non-bytes chunk surfaces as an I/O error, not a panic.
+    with pytest.raises(OSError):
+        _rust.read_frames_reader(iter(["not bytes"]), "plain", None, None)

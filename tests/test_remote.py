@@ -24,11 +24,6 @@ def _url(key: str) -> str:
     return f"s3://test/{key}"
 
 
-# ---------------------------------------------------------------------------
-# plain + gzip
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     ("key", "body"),
     [
@@ -45,11 +40,6 @@ def test_read_frames_remote_matches_local(s3_store, key, body):
     assert remote[0].n_atoms == local[0].n_atoms
 
 
-# ---------------------------------------------------------------------------
-# zip
-# ---------------------------------------------------------------------------
-
-
 def test_read_frames_remote_zip(s3_store):
     put, options = s3_store
     buf = io.BytesIO()
@@ -59,11 +49,6 @@ def test_read_frames_remote_zip(s3_store):
     remote = oxyz.read_frames(_url("train.zip"), storage_options=options)
     local = oxyz.read_frames(str(DATA / "minimal_periodic.extxyz"))
     assert len(remote) == len(local)
-
-
-# ---------------------------------------------------------------------------
-# tar.gz with member=
-# ---------------------------------------------------------------------------
 
 
 def test_read_frames_remote_targz_member(s3_store):
@@ -82,11 +67,6 @@ def test_read_frames_remote_targz_member(s3_store):
     assert len(remote) == len(local)
 
 
-# ---------------------------------------------------------------------------
-# iter_frames / scan / infer_schema / read_batch
-# ---------------------------------------------------------------------------
-
-
 def test_iter_scan_schema_remote(s3_store):
     put, options = s3_store
     put("train.extxyz", KEY_DATA)
@@ -95,11 +75,6 @@ def test_iter_scan_schema_remote(s3_store):
     assert oxyz.scan(url, storage_options=options).n_frames > 0
     assert oxyz.infer_schema(url, storage_options=options).n_frames > 0
     assert oxyz.read_batch(url, storage_options=options).n_frames > 0
-
-
-# ---------------------------------------------------------------------------
-# oxyz.ase forward + reverse index
-# ---------------------------------------------------------------------------
 
 
 def test_ase_read_remote(s3_store):
@@ -111,11 +86,6 @@ def test_ase_read_remote(s3_store):
     url = _url("train.extxyz")
     assert len(oxyz.ase.read(url, index=0, storage_options=options)) > 0
     assert len(oxyz.ase.read(url, index=-1, storage_options=options)) > 0
-
-
-# ---------------------------------------------------------------------------
-# missing object raises
-# ---------------------------------------------------------------------------
 
 
 def test_missing_object_raises(s3_store):

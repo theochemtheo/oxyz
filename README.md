@@ -39,6 +39,7 @@ pip install oxyz                # numpy is the only dependency
 pip install "oxyz[ase]"         # adds ASE conversion (ase >=3.23,<4)
 pip install "oxyz[metatomic]"   # adds metatomic.torch.System reading (torch >=2)
 pip install "oxyz[torch-sim]"   # adds torch_sim.SimState reading (torch >=2)
+pip install "oxyz[s3]"          # adds obstore for reading from S3-compatible URLs
 ```
 
 Wheels cover CPython ≥3.12 on Linux (x86_64, aarch64), macOS (arm64,
@@ -390,11 +391,7 @@ decompress the file first if you need them.
 
 `read_frames`, `iter_frames`, `scan`, `infer_schema`, the batch readers, and
 `oxyz.ase.read`/`iread` accept S3-compatible URLs when the `s3` extra is
-installed:
-
-```sh
-pip install "oxyz[s3]"   # adds obstore
-```
+installed (see [Install](#install)):
 
 ```python
 frames = oxyz.read_frames("s3://bucket/train.extxyz.gz")

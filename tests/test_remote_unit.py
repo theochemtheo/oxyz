@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -176,3 +177,78 @@ def test_cli_storage_option_parsing(monkeypatch, capsys):
         "endpoint": "http://localhost:9000",
         "region": "us-east-1",
     }
+
+
+def test_import_obstore_missing_raises(monkeypatch):
+    # A None entry in sys.modules makes `import obstore` raise ImportError,
+    # exercising the real _import_obstore body (not the monkeypatched stub).
+    monkeypatch.setitem(sys.modules, "obstore", None)
+    with pytest.raises(ImportError, match=r"oxyz\[s3\]"):
+        _remote._import_obstore()
+
+
+def test_split_url_parses_and_requires_key():
+    assert _remote._split_url("s3://bucket/path/to/x.xyz") == (
+        "s3",
+        "s3://bucket",
+        "path/to/x.xyz",
+    )
+    with pytest.raises(ValueError, match="no object path"):
+        _remote._split_url("s3://bucket")
+    with pytest.raises(ValueError, match="no object path"):
+        _remote._split_url("s3://bucket/")
+
+
+def test_resolve_codec_explicit_compression_skips_sniff():
+    # Explicit compression returns without touching the store (obstore is None).
+    assert _remote._resolve_codec(None, None, "train.xyz", "none") == "plain"
+    assert _remote._resolve_codec(None, None, "train.xyz", "gzip") == "gzip"
+
+
+def test_resolve_codec_infers_from_magic_bytes():
+    class FakeObstore:
+        @staticmethod
+        def get_range(store, key, *, start, length):
+            return b"\x1f\x8b\x08\x00"  # gzip magic, extension says nothing
+
+    assert _remote._resolve_codec(FakeObstore, object(), "blob", "infer") == "gzip"
+
+
+def test_readable_bytes_adapter_returns_plain_bytes():
+    class FakeReader:
+        def __init__(self) -> None:
+            self.pos = 0
+
+        def read(self, n: int = -1) -> object:
+            return memoryview(b"abc")  # a buffer, not plain bytes
+
+        def seek(self, pos: int, whence: int = 0) -> int:
+            self.pos = pos
+            return pos
+
+        def tell(self) -> int:
+            return self.pos
+
+    adapter = _remote._ReadableBytesAdapter(FakeReader())
+    out = adapter.read(3)
+    assert isinstance(out, bytes) and out == b"abc"
+    assert adapter.seek(5) == 5
+    assert adapter.tell() == 5
+    assert adapter.seekable() is True
+
+
+def test_readable_bytes_adapter_handles_none_eof():
+    class NoneReader:
+        def read(self, n: int = -1) -> None:
+            return None
+
+    assert _remote._ReadableBytesAdapter(NoneReader()).read() == b""
+
+
+def test_parse_storage_options_rejects_malformed():
+    import oxyz._cli as cli
+
+    assert cli._parse_storage_options([]) is None
+    assert cli._parse_storage_options(["region=us-east-1"]) == {"region": "us-east-1"}
+    with pytest.raises(ValueError, match="KEY=VALUE"):
+        cli._parse_storage_options(["noequals"])

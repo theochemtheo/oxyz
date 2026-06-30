@@ -91,3 +91,21 @@ fn detect_codec_name_by_extension_and_magic() {
     assert_eq!(detect_codec_name("blob", Some(b"hello")), "plain");
     assert_eq!(detect_codec_name("blob", None), "plain");
 }
+
+#[test]
+fn detect_codec_name_handles_bare_tar() {
+    assert_eq!(detect_codec_name("archive.tar", None), "tar");
+}
+
+#[test]
+fn wrap_tar_member_not_found_is_an_error() {
+    let bytes = tar_two_members();
+    let factory = move || Ok(Box::new(Cursor::new(bytes.clone())) as Box<dyn std::io::Read + Send>);
+    assert!(oxyz_core::decode::wrap_tar(factory, Some("missing.xyz"), false).is_err());
+}
+
+#[test]
+fn wrap_zip_member_not_found_is_an_error() {
+    let bytes = zip_two_members();
+    assert!(oxyz_core::decode::wrap_zip(Cursor::new(bytes), Some("missing.xyz")).is_err());
+}
