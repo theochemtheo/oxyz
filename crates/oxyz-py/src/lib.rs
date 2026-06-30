@@ -1,3 +1,4 @@
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 
 use ndarray::Array2;
@@ -6,13 +7,14 @@ use pyo3::{
     create_exception,
     exceptions::{PyIndexError, PyOSError, PyTypeError, PyValueError},
     prelude::*,
-    types::{PyDict, PyList, PyString, PyTuple},
+    types::{PyBytes, PyDict, PyList, PyString, PyTuple},
 };
 
 use oxyz_core::schema::{ColumnSchema, MetadataSchema, Schema, ValueType};
 use oxyz_core::{
-    Batch, Column, ColumnData, ColumnKind, Compression, DecodedReader, ExtxyzError, Frame,
-    FrameSink, Value, open_decoded, write_frames, write_frames_parallel,
+    Batch, ByteSource, Codec, Column, ColumnData, ColumnKind, Compression, DecodedReader,
+    ExtxyzError, Frame, FrameSink, Value, open_decoded, wrap_stream, write_frames,
+    write_frames_parallel,
 };
 
 /// Map the Python `compression` string to the core selector.
@@ -751,6 +753,136 @@ fn py_to_value(value: &Bound<'_, PyAny>) -> PyResult<Value> {
     )))
 }
 
+/// A Rust `Read` over a Python iterator of `bytes` (e.g. obstore's
+/// `GetResult.stream()`). Each refill calls `__next__` under the GIL; the parser
+/// runs with the GIL released and reacquires here per chunk — negligible against
+/// network latency. `Send + Sync` because `Py<PyAny>` is, and the single
+/// consumer means the reacquire is never contended.
+struct PyChunkReader {
+    iter: Py<PyAny>,
+    current: Cursor<Vec<u8>>,
+    done: bool,
+}
+
+impl PyChunkReader {
+    fn new(iter: Py<PyAny>) -> Self {
+        PyChunkReader {
+            iter,
+            current: Cursor::new(Vec::new()),
+            done: false,
+        }
+    }
+}
+
+impl Read for PyChunkReader {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        loop {
+            let read = self.current.read(out)?;
+            if read > 0 {
+                return Ok(read);
+            }
+            if self.done {
+                return Ok(0);
+            }
+            let next = Python::attach(|py| match self.iter.bind(py).call_method0("__next__") {
+                Ok(obj) => obj
+                    .downcast::<PyBytes>()
+                    .map(|b| Some(b.as_bytes().to_vec()))
+                    .map_err(|_| std::io::Error::other("remote stream yielded a non-bytes chunk")),
+                Err(err) if err.is_instance_of::<pyo3::exceptions::PyStopIteration>(py) => Ok(None),
+                Err(err) => Err(std::io::Error::other(err.to_string())),
+            })?;
+            match next {
+                Some(chunk) => self.current = Cursor::new(chunk),
+                None => {
+                    self.done = true;
+                    return Ok(0);
+                }
+            }
+        }
+    }
+}
+
+/// Assemble a `DecodedReader` from a Python source object and a resolved codec.
+/// `"plain"/"gzip"/"zstd"` → `source` is a bytes-iterator. (`"tar"/"tar.gz"/"zip"`
+/// handled in a later task.)
+fn build_decoded(
+    source: &Bound<'_, PyAny>,
+    codec: &str,
+    member: Option<&str>,
+) -> PyResult<DecodedReader> {
+    match codec {
+        "plain" | "gzip" | "zstd" => {
+            if member.is_some() {
+                return Err(PyValueError::new_err(
+                    "member= is only valid for an archive (.zip/.tar/.tar.gz) source",
+                ));
+            }
+            let codec = match codec {
+                "plain" => Codec::Plain,
+                "gzip" => Codec::Gzip,
+                _ => Codec::Zstd,
+            };
+            let reader: ByteSource = Box::new(PyChunkReader::new(source.clone().unbind()));
+            wrap_stream(reader, codec).map_err(extxyz_error_to_py)
+        }
+        other => Err(PyValueError::new_err(format!(
+            "unsupported remote codec {other:?}"
+        ))),
+    }
+}
+
+/// Read every frame from a Python bytes-iterator source, as a list of per-frame dicts.
+///
+/// `source` must be an iterator yielding `bytes` objects. `codec` is one of
+/// `"plain"`, `"gzip"`, `"zstd"`. `threads=None` parses on every core;
+/// `threads=1` is the exact serial path. Output is identical either way.
+#[pyfunction]
+#[pyo3(signature = (source, codec, member=None, threads=None))]
+fn read_frames_reader<'py>(
+    py: Python<'py>,
+    source: Bound<'py, PyAny>,
+    codec: &str,
+    member: Option<String>,
+    threads: Option<usize>,
+) -> PyResult<Bound<'py, PyList>> {
+    let reader = build_decoded(&source, codec, member.as_deref())?;
+    let frames = py
+        .detach(move || match threads {
+            Some(1) => oxyz_core::iter_frames_from(reader)?.collect(),
+            _ => oxyz_core::read_frames_parallel_from(reader, threads),
+        })
+        .map_err(extxyz_error_to_py)?;
+    let dicts = frames
+        .into_iter()
+        .map(|frame| frame_to_pydict(py, frame))
+        .collect::<PyResult<Vec<_>>>()?;
+    PyList::new(py, dicts)
+}
+
+/// Read the first frame from a Python bytes-iterator source.
+///
+/// `source` must be an iterator yielding `bytes` objects. `codec` is one of
+/// `"plain"`, `"gzip"`, `"zstd"`.
+#[pyfunction]
+#[pyo3(signature = (source, codec, member=None))]
+fn read_first_frame_reader<'py>(
+    py: Python<'py>,
+    source: Bound<'py, PyAny>,
+    codec: &str,
+    member: Option<String>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let reader = build_decoded(&source, codec, member.as_deref())?;
+    let frame = py
+        .detach(move || {
+            oxyz_core::iter_frames_from(reader)?
+                .next()
+                .unwrap_or(Err(ExtxyzError::MissingLine("atom count")))
+        })
+        .map_err(extxyz_error_to_py)?;
+    frame_to_pydict(py, frame)
+}
+
 create_exception!(
     _rust,
     ParseError,
@@ -853,6 +985,8 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(scan, m)?)?;
     m.add_function(wrap_pyfunction!(is_compressed, m)?)?;
     m.add_function(wrap_pyfunction!(write, m)?)?;
+    m.add_function(wrap_pyfunction!(read_frames_reader, m)?)?;
+    m.add_function(wrap_pyfunction!(read_first_frame_reader, m)?)?;
     m.add_class::<FrameIter>()?;
     m.add_class::<IndexedFrames>()?;
     m.add_class::<BatchIter>()?;

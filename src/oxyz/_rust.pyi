@@ -130,6 +130,20 @@ def scan(
     member: str | None = None,
 ) -> ScanData: ...
 def is_compressed(path: str, compression: str = "infer") -> bool: ...
+
+# Reader entries: source is any iterator yielding bytes (e.g. obstore's stream).
+# codec is one of "plain", "gzip", "zstd"; member is reserved for archive codecs.
+def read_frames_reader(
+    source: object,
+    codec: str,
+    member: str | None = None,
+    threads: int | None = None,
+) -> list[FrameData]: ...
+def read_first_frame_reader(
+    source: object,
+    codec: str,
+    member: str | None = None,
+) -> FrameData: ...
 def write(
     path: str,
     frames: list[FrameData],
