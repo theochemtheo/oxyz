@@ -12,6 +12,12 @@ recorded here.
 
 ### Added
 
+- Read extxyz directly from S3-compatible object stores: `read_frames`,
+  `iter_frames`, `scan`, `infer_schema`, the batch readers, and
+  `oxyz.ase.read`/`iread` accept `s3://`/`gs://`/`az://` URLs with the new
+  `oxyz[s3]` extra. Endpoint and credentials via `storage_options=` or `AWS_*`
+  env vars; all codecs and archive `member=` selection supported. `oxyz scan`
+  gains `--storage-option`.
 - Writing extxyz. `oxyz.write(path, obj, ...)` takes a `Frame`, an `ase.Atoms`,
   or an iterable mixing them and writes (ext)xyz, removing the most common reason
   to keep ASE in a read → filter → write workflow. Reals are written

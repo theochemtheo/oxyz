@@ -386,6 +386,35 @@ reverse or negative ASE indices — either read the whole file into memory (the
 ASE index path, as ASE itself does) or raise pointing at the limitation;
 decompress the file first if you need them.
 
+### Reading from object storage
+
+`read_frames`, `iter_frames`, `scan`, `infer_schema`, the batch readers, and
+`oxyz.ase.read`/`iread` accept S3-compatible URLs when the `s3` extra is
+installed:
+
+```sh
+pip install "oxyz[s3]"   # adds obstore
+```
+
+```python
+frames = oxyz.read_frames("s3://bucket/train.extxyz.gz")
+```
+
+Credentials and endpoint come from `AWS_*` environment variables by default;
+pass `storage_options=` to point at a non-AWS store (MinIO, R2, Ceph):
+
+```python
+oxyz.read_frames(
+    "s3://bucket/train.extxyz",
+    storage_options={"endpoint": "https://minio.example", "region": "us-east-1"},
+)
+```
+
+`gs://` and `az://` work the same way. Compression (`.gz`, `.zst`, `.tar.gz`,
+`.zip`) and archive `member=` selection apply as for local files. A remote
+stream cannot seek, so random-access batch strategies (`shuffle`,
+`atoms_per_batch`, `memory_scales_with`) need a local copy.
+
 ### Writing
 
 `oxyz.write` is the inverse of the readers: it takes a `Frame`, an `ase.Atoms`,
