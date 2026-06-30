@@ -54,3 +54,23 @@ fn wrap_tar_selects_named_member() {
     std::io::Read::read_to_string(&mut reader, &mut out).unwrap();
     assert_eq!(out, "beta");
 }
+
+fn zip_two_members() -> Vec<u8> {
+    use zip::write::SimpleFileOptions;
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default();
+    for (name, body) in [("a.txt", "alpha"), ("b.xyz", "beta")] {
+        writer.start_file(name, options).unwrap();
+        std::io::Write::write_all(&mut writer, body.as_bytes()).unwrap();
+    }
+    writer.finish().unwrap().into_inner()
+}
+
+#[test]
+fn wrap_zip_selects_named_member() {
+    let bytes = zip_two_members();
+    let mut reader = oxyz_core::decode::wrap_zip(Cursor::new(bytes), Some("b.xyz")).unwrap();
+    let mut out = String::new();
+    std::io::Read::read_to_string(&mut reader, &mut out).unwrap();
+    assert_eq!(out, "beta");
+}

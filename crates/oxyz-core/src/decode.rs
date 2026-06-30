@@ -12,7 +12,7 @@
 
 use std::{
     fs::File,
-    io::{self, BufRead, BufReader, Cursor, Read},
+    io::{self, BufRead, BufReader, Cursor, Read, Seek},
     path::Path,
     sync::{
         Arc, Mutex,
@@ -101,7 +101,7 @@ pub fn open_decoded(
         Codec::Plain => wrap_stream(Box::new(File::open(path)?), Codec::Plain),
         Codec::Gzip => wrap_stream(Box::new(File::open(path)?), Codec::Gzip),
         Codec::Zstd => wrap_stream(Box::new(File::open(path)?), Codec::Zstd),
-        Codec::Zip => open_zip_member(path, member),
+        Codec::Zip => wrap_zip(File::open(path)?, member),
         Codec::Tar => {
             let path = path.to_owned();
             wrap_tar(
@@ -274,8 +274,13 @@ fn resolve_member(names: &[String], member: Option<&str>) -> Result<String> {
     }
 }
 
-fn open_zip_member(path: &Path, member: Option<&str>) -> Result<DecodedReader> {
-    let mut archive = zip::ZipArchive::new(File::open(path)?).map_err(zip_error)?;
+/// Stream one member of a zip from a seekable source (the central directory is
+/// at the end, so `Seek` is required — a plain stream cannot back this).
+pub fn wrap_zip<R>(source: R, member: Option<&str>) -> Result<DecodedReader>
+where
+    R: Read + Seek + Send + 'static,
+{
+    let mut archive = zip::ZipArchive::new(source).map_err(zip_error)?;
     let names: Vec<String> = archive
         .file_names()
         .filter(|name| !name.ends_with('/'))
