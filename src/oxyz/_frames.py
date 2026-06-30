@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 
 import oxyz._rust as _rust
+from oxyz import _remote
 
 if TYPE_CHECKING:
     from ase import Atoms
@@ -47,6 +48,7 @@ def read_first(
     *,
     compression: Compression = "infer",
     member: str | None = None,
+    storage_options: _remote.StorageOptions | None = None,
 ) -> Frame:
     """Read only the first frame, stopping there.
 
@@ -55,7 +57,21 @@ def read_first(
     A compressed path (`.gz`, `.zst`, `.zip`, `.tar.gz`, `.tar`) is decoded on
     the fly; `compression` overrides the codec and `member` names one entry in a
     multi-member archive. See `read_frames` for details.
+
+    A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through
+    the same parser (needs the ``oxyz[s3]`` extra); ``storage_options`` passes
+    endpoint/credentials to the store, falling back to ``AWS_*`` env vars.
     """
+    if _remote.is_remote(path):
+        src = _remote.open_source(
+            path,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
+        return _frame_from_data(
+            _rust.read_first_frame_reader(src.obj, src.codec, src.member)
+        )
     return _frame_from_data(_rust.read_first_frame(str(path), compression, member))
 
 
@@ -72,6 +88,7 @@ def read_frames(
     threads: int | None = None,
     compression: Compression = "infer",
     member: str | None = None,
+    storage_options: _remote.StorageOptions | None = None,
 ) -> list[Frame]:
     """Read every frame. Parses on all cores by default; `threads=1` streams
     serially. Results and errors are identical regardless of `threads`.
@@ -84,9 +101,22 @@ def read_frames(
     from the name. `member` selects one entry from a `.zip`/`.tar`/`.tar.gz`
     holding more than one; with it omitted, an archive must contain exactly one
     extxyz file.
+
+    A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through
+    the same parser (needs the ``oxyz[s3]`` extra); ``storage_options`` passes
+    endpoint/credentials to the store, falling back to ``AWS_*`` env vars.
     """
     _check_threads(threads)
-    data = _rust.read_frames(str(path), threads, compression, member)
+    if _remote.is_remote(path):
+        src = _remote.open_source(
+            path,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
+        data = _rust.read_frames_reader(src.obj, src.codec, src.member, threads)
+    else:
+        data = _rust.read_frames(str(path), threads, compression, member)
     return [_frame_from_data(frame) for frame in data]
 
 
@@ -97,6 +127,7 @@ def read_frames_sliced(
     *,
     compression: Compression = "infer",
     member: str | None = None,
+    storage_options: _remote.StorageOptions | None = None,
 ) -> list[Frame]:
     """`read_frames`, but apply `frames` before wrapping: parse every frame
     (`threads=None`: all cores), then build `Frame` objects only for those the
@@ -105,8 +136,21 @@ def read_frames_sliced(
     The parallel parse still touches the whole file, but a slice that drops a
     prefix or steps (`read(path, "1000:")`, `"::2"`) no longer pays to wrap the
     frames it immediately discards.
+
+    A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through
+    the same parser (needs the ``oxyz[s3]`` extra); ``storage_options`` passes
+    endpoint/credentials to the store, falling back to ``AWS_*`` env vars.
     """
-    data = _rust.read_frames(str(path), threads, compression, member)
+    if _remote.is_remote(path):
+        src = _remote.open_source(
+            path,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
+        data = _rust.read_frames_reader(src.obj, src.codec, src.member, threads)
+    else:
+        data = _rust.read_frames(str(path), threads, compression, member)
     return [_frame_from_data(frame) for frame in data[frames]]
 
 
@@ -132,6 +176,7 @@ def iter_frames(
     *,
     compression: Compression = "infer",
     member: str | None = None,
+    storage_options: _remote.StorageOptions | None = None,
 ) -> Iterator[Frame]:
     """Stream frames one at a time, in constant memory.
 
@@ -142,8 +187,22 @@ def iter_frames(
 
     A compressed path is decoded while streaming; see `read_frames` for the
     `compression` and `member` options.
+
+    A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through
+    the same parser (needs the ``oxyz[s3]`` extra); ``storage_options`` passes
+    endpoint/credentials to the store, falling back to ``AWS_*`` env vars.
     """
-    for data in _rust.FrameIter(str(path), compression, member):
+    if _remote.is_remote(path):
+        src = _remote.open_source(
+            path,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
+        iterator = _rust.FrameIter.from_reader(src.obj, src.codec, src.member)
+    else:
+        iterator = _rust.FrameIter(str(path), compression, member)
+    for data in iterator:
         yield _frame_from_data(data)
 
 
