@@ -1,7 +1,7 @@
 use std::io::{Cursor, Read};
 
 use flate2::{Compression, write::GzEncoder};
-use oxyz_core::decode::{ByteSource, Codec, wrap_stream};
+use oxyz_core::decode::{ByteSource, Codec, detect_codec_name, wrap_stream};
 
 fn gzip(bytes: &[u8]) -> Vec<u8> {
     use std::io::Write;
@@ -73,4 +73,21 @@ fn wrap_zip_selects_named_member() {
     let mut out = String::new();
     std::io::Read::read_to_string(&mut reader, &mut out).unwrap();
     assert_eq!(out, "beta");
+}
+
+#[test]
+fn detect_codec_name_by_extension_and_magic() {
+    assert_eq!(detect_codec_name("train.xyz", None), "plain");
+    assert_eq!(detect_codec_name("train.xyz.gz", None), "gzip");
+    assert_eq!(detect_codec_name("train.tar.gz", None), "tar.gz");
+    assert_eq!(detect_codec_name("train.extxyz.zst", None), "zstd");
+    assert_eq!(detect_codec_name("archive.zip", None), "zip");
+    // No informative extension: fall back to magic bytes.
+    assert_eq!(
+        detect_codec_name("blob", Some(&[0x1f, 0x8b, 0x00, 0x00])),
+        "gzip"
+    );
+    assert_eq!(detect_codec_name("blob", Some(b"PK\x03\x04")), "zip");
+    assert_eq!(detect_codec_name("blob", Some(b"hello")), "plain");
+    assert_eq!(detect_codec_name("blob", None), "plain");
 }

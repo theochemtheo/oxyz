@@ -8,8 +8,8 @@ pub mod schema;
 
 pub use batch::{Batch, BatchBuilder, BatchError};
 pub use decode::{
-    ByteSource, Codec, Compression, DecodedReader, is_compressed, open_decoded, wrap_stream,
-    wrap_tar, wrap_zip,
+    ByteSource, Codec, Compression, DecodedReader, detect_codec_name, is_compressed, open_decoded,
+    wrap_stream, wrap_tar, wrap_zip,
 };
 #[cfg(feature = "parallel")]
 pub use encode::write_frames_parallel;

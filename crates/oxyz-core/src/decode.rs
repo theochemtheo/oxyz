@@ -65,6 +65,17 @@ impl Codec {
     pub(crate) fn is_archive(self) -> bool {
         matches!(self, Codec::Zip | Codec::Tar | Codec::TarGzip)
     }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Codec::Plain => "plain",
+            Codec::Gzip => "gzip",
+            Codec::Zstd => "zstd",
+            Codec::Zip => "zip",
+            Codec::Tar => "tar",
+            Codec::TarGzip => "tar.gz",
+        }
+    }
 }
 
 /// Resolve the codec for *writing*. Unlike [`detect`], there are no bytes to
@@ -171,15 +182,10 @@ pub(crate) fn detect_by_extension(path: &Path) -> Option<Codec> {
     })
 }
 
-/// Magic-byte fallback for a file whose extension says nothing. A bare `.gz`
-/// magic is reported as `Gzip`, not `TarGzip`: a tar inside cannot be told from
-/// the first bytes, and a plain-gzip read of a tar would surface as a parse
-/// error, not silent corruption.
-fn sniff(path: &Path) -> Result<Codec> {
-    let mut head = [0u8; 4];
-    let read = File::open(path)?.read(&mut head)?;
-    let head = &head[..read];
-    Ok(if head.starts_with(&[0x1f, 0x8b]) {
+/// Magic-byte codec for a head slice (no tar detection — a tar has no magic;
+/// a bare-gzip read of a `.tar.gz` surfaces as a parse error, not corruption).
+fn sniff_bytes(head: &[u8]) -> Codec {
+    if head.starts_with(&[0x1f, 0x8b]) {
         Codec::Gzip
     } else if head.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
         Codec::Zstd
@@ -187,7 +193,27 @@ fn sniff(path: &Path) -> Result<Codec> {
         Codec::Zip
     } else {
         Codec::Plain
-    })
+    }
+}
+
+/// Magic-byte fallback for a file whose extension says nothing. A bare `.gz`
+/// magic is reported as `Gzip`, not `TarGzip`: a tar inside cannot be told from
+/// the first bytes, and a plain-gzip read of a tar would surface as a parse
+/// error, not silent corruption.
+fn sniff(path: &Path) -> Result<Codec> {
+    let mut head = [0u8; 4];
+    let read = File::open(path)?.read(&mut head)?;
+    Ok(sniff_bytes(&head[..read]))
+}
+
+/// Codec for a filename and optional leading bytes — the no-I/O detection the
+/// binding uses for a remote source it cannot cheaply reopen.
+pub fn detect_codec_name(name: &str, head: Option<&[u8]>) -> &'static str {
+    let path = Path::new(name);
+    if let Some(codec) = detect_by_extension(path) {
+        return codec.name();
+    }
+    head.map_or(Codec::Plain, sniff_bytes).name()
 }
 
 /// Source for the zstd decoder: boxed so the leftover stream can be re-wrapped
