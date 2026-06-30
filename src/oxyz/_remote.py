@@ -16,6 +16,33 @@ from urllib.parse import urlsplit
 
 import oxyz._rust as _rust
 
+# Keys belonging to obstore's ClientConfig TypedDict (HTTP transport layer).
+# Anything else in storage_options is treated as store config (S3Config etc.).
+_CLIENT_CONFIG_KEYS: frozenset[str] = frozenset(
+    {
+        "allow_http",
+        "allow_invalid_certificates",
+        "connect_timeout",
+        "default_content_type",
+        "default_headers",
+        "http1_only",
+        "http2_keep_alive_interval",
+        "http2_keep_alive_timeout",
+        "http2_keep_alive_while_idle",
+        "http2_only",
+        "pool_idle_timeout",
+        "pool_max_idle_per_host",
+        "proxy_url",
+        "proxy_ca_certificate",
+        "proxy_excludes",
+        "root_certificate",
+        "randomize_addresses",
+        "read_timeout",
+        "timeout",
+        "user_agent",
+    }
+)
+
 if TYPE_CHECKING:
     from obstore.store import AzureConfig, GCSConfig, S3Config
 
@@ -93,10 +120,21 @@ def _split_url(url: str) -> tuple[str, str, str]:
 def _build_store(bucket_url: str, storage_options: StorageOptions | None) -> Any:
     from obstore.store import from_url
 
+    raw: dict[str, Any] = dict(storage_options or {})
+    # Split transport-layer keys (ClientConfig) from provider-config keys.
+    # obstore's from_url panics if ClientConfig keys land in config=.
+    client: dict[str, Any] = {k: raw.pop(k) for k in _CLIENT_CONFIG_KEYS if k in raw}
     # cfg typed Any so ty doesn't reject plain dict against obstore's overloads
     # (TypedDicts are dicts at runtime; from_url accepts all three at runtime).
-    cfg: Any = dict(storage_options or {})
-    return from_url(bucket_url, config=cfg)
+    cfg: Any = raw
+    # Cast to Any: obstore's per-provider overloads don't express the combined
+    # config + client_options case; the implementation accepts both at runtime.
+    _from_url: Any = from_url
+    return _from_url(
+        bucket_url,
+        config=cfg if cfg else None,
+        client_options=client if client else None,
+    )
 
 
 def _resolve_codec(obstore: Any, store: Any, key: str, compression: str) -> str:
@@ -115,6 +153,34 @@ def _resolve_codec(obstore: Any, store: Any, key: str, compression: str) -> str:
     return codec
 
 
+class _ReadableBytesAdapter:
+    """Wraps obstore's ReadableFile so that read() returns plain bytes.
+
+    obstore.ReadableFile.read() returns obstore.Bytes (a zero-copy buffer).
+    The Rust binding calls .read() and extracts PyBytes — it panics on
+    obstore.Bytes even though it implements the buffer protocol.  Wrapping
+    ensures the return type is always plain Python bytes.
+    """
+
+    __slots__ = ("_inner",)
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    def read(self, n: int = -1) -> bytes:
+        chunk = self._inner.read(n)
+        return bytes(chunk) if chunk is not None else b""
+
+    def seek(self, pos: int, whence: int = 0) -> int:
+        return self._inner.seek(pos, whence)
+
+    def tell(self) -> int:
+        return self._inner.tell()
+
+    def seekable(self) -> bool:
+        return True
+
+
 def open_source(
     path: str | Path,
     *,
@@ -129,7 +195,9 @@ def open_source(
     codec = _resolve_codec(obstore, store, key, compression)
 
     if codec == "zip":
-        obj: Any = obstore.open_reader(store, key)  # seekable ReadableFile
+        # Wrap so that read() returns plain bytes; obstore.ReadableFile.read()
+        # returns obstore.Bytes, which the Rust binding cannot extract.
+        obj: Any = _ReadableBytesAdapter(obstore.open_reader(store, key))
     elif codec in ("tar", "tar.gz"):
         obj = lambda: iter(obstore.get(store, key).stream(min_chunk_size=_CHUNK))  # noqa: E731
     else:

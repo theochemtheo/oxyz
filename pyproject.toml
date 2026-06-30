@@ -59,6 +59,10 @@ metatomic = ["torch>=2", "metatomic-torch"]
 # `torch_sim` package whose `SimState` oxyz.torch_sim targets. Heavier than the
 # other extras (it pulls h5py/tables); only installed when this target is used.
 torch-sim = ["torch>=2", "torch-sim-atomistic"]
+# obstore is the only runtime dep for remote reading; kept optional so the base
+# install stays numpy-only. Floor: 0.11, first release with stable get().stream()
+# and provider config TypedDicts used by this library.
+s3 = ["obstore>=0.11"]
 
 [dependency-groups]
 # Benchmark dependencies live in benchmarks/run.py (PEP 723), not here:
@@ -68,7 +72,9 @@ dev = [
     "matplotlib>=3.10.9",
     "maturin>=1.13.3",
     "metatomic-torch",
-    "obstore>=0.3",
+    "boto3>=1.35",
+    "moto[s3,server]>=5",
+    "obstore>=0.11",
     "prek>=0.4.4",
     "pytest>=9.0.3",
     "pytest-cov>=6",
