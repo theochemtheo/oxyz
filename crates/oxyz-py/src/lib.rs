@@ -70,6 +70,18 @@ impl FrameIter {
             Some(Err(error)) => Err(extxyz_error_to_py(error)),
         }
     }
+
+    #[staticmethod]
+    #[pyo3(signature = (source, codec, member=None))]
+    fn from_reader(
+        source: Bound<'_, PyAny>,
+        codec: &str,
+        member: Option<String>,
+    ) -> PyResult<Self> {
+        let reader = build_decoded(&source, codec, member.as_deref())?;
+        let inner = oxyz_core::iter_frames_from(reader).map_err(extxyz_error_to_py)?;
+        Ok(FrameIter { inner })
+    }
 }
 
 /// Structurally scan the file: `{"offsets": ndarray, "n_atoms": ndarray}`.
@@ -94,7 +106,13 @@ fn scan<'py>(
             }
         })
         .map_err(extxyz_error_to_py)?;
+    scan_index_to_pydict(py, &index)
+}
 
+fn scan_index_to_pydict<'py>(
+    py: Python<'py>,
+    index: &oxyz_core::index::FrameIndex,
+) -> PyResult<Bound<'py, PyDict>> {
     let offsets: Vec<u64> = index.entries().iter().map(|entry| entry.offset).collect();
     // Atom counts as isize (np.intp) so user arithmetic with them does not
     // promote to float64 the way an unsigned dtype would; byte offsets stay u64.
@@ -111,6 +129,65 @@ fn scan<'py>(
         data.set_item("volumes", volumes.to_vec().into_pyarray(py))?;
     }
     Ok(data)
+}
+
+#[pyfunction]
+#[pyo3(signature = (source, codec, with_volume=false, member=None))]
+fn scan_reader<'py>(
+    py: Python<'py>,
+    source: Bound<'py, PyAny>,
+    codec: &str,
+    with_volume: bool,
+    member: Option<String>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let reader = build_decoded(&source, codec, member.as_deref())?;
+    let index = py
+        .detach(move || {
+            if with_volume {
+                oxyz_core::scan_frames_with_volume(reader)
+            } else {
+                oxyz_core::scan_frames(reader)
+            }
+        })
+        .map_err(extxyz_error_to_py)?;
+    scan_index_to_pydict(py, &index)
+}
+
+#[pyfunction]
+#[pyo3(signature = (source, codec, member=None))]
+fn infer_schema_reader<'py>(
+    py: Python<'py>,
+    source: Bound<'py, PyAny>,
+    codec: &str,
+    member: Option<String>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let reader = build_decoded(&source, codec, member.as_deref())?;
+    let schema = py
+        .detach(move || oxyz_core::infer_schema_from(reader))
+        .map_err(extxyz_error_to_py)?;
+    schema_to_pydict(py, &schema)
+}
+
+#[pyfunction]
+#[pyo3(signature = (source, codec, indices=None, threads=None, member=None))]
+fn read_batch_reader<'py>(
+    py: Python<'py>,
+    source: Bound<'py, PyAny>,
+    codec: &str,
+    indices: Option<Vec<usize>>,
+    threads: Option<usize>,
+    member: Option<String>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let reader = build_decoded(&source, codec, member.as_deref())?;
+    let batch = py
+        .detach(move || match (indices, threads) {
+            (None, Some(1)) => oxyz_core::read_all_batch_from(reader),
+            (None, _) => oxyz_core::read_all_batch_parallel_from(reader, threads),
+            (Some(indices), Some(1)) => oxyz_core::read_batch_from(reader, &indices),
+            (Some(indices), _) => oxyz_core::read_batch_parallel_from(reader, &indices, threads),
+        })
+        .map_err(extxyz_error_to_py)?;
+    batch_to_pydict(py, batch)
 }
 
 /// Random-access reader: scans on construction, then `get(i)` seeks and
@@ -223,6 +300,20 @@ impl BatchIter {
             Some(Ok(batch)) => batch_to_pydict(py, batch).map(Some),
             Some(Err(error)) => Err(extxyz_error_to_py(error)),
         }
+    }
+
+    #[staticmethod]
+    #[pyo3(signature = (source, frames_per_batch, codec, member=None))]
+    fn from_reader(
+        source: Bound<'_, PyAny>,
+        frames_per_batch: usize,
+        codec: &str,
+        member: Option<String>,
+    ) -> PyResult<Self> {
+        let reader = build_decoded(&source, codec, member.as_deref())?;
+        let inner =
+            oxyz_core::iter_batches_from(reader, frames_per_batch).map_err(extxyz_error_to_py)?;
+        Ok(BatchIter { inner })
     }
 }
 
@@ -987,6 +1078,9 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(write, m)?)?;
     m.add_function(wrap_pyfunction!(read_frames_reader, m)?)?;
     m.add_function(wrap_pyfunction!(read_first_frame_reader, m)?)?;
+    m.add_function(wrap_pyfunction!(scan_reader, m)?)?;
+    m.add_function(wrap_pyfunction!(infer_schema_reader, m)?)?;
+    m.add_function(wrap_pyfunction!(read_batch_reader, m)?)?;
     m.add_class::<FrameIter>()?;
     m.add_class::<IndexedFrames>()?;
     m.add_class::<BatchIter>()?;

@@ -38,3 +38,41 @@ def test_read_first_frame_reader_plain():
     path = DATA / "minimal_periodic.extxyz"
     frame = _rust.read_first_frame_reader(chunks(path.read_bytes()), "plain", None)
     assert frame["n_atoms"] > 0
+
+
+def test_scan_reader_matches_path():
+    path = DATA / "minimal_periodic.extxyz"
+    blob = path.read_bytes()
+    via_reader = _rust.scan_reader(chunks(blob), "plain", False, None)
+    via_path = _rust.scan(str(path), False, "infer", None)
+    assert list(via_reader["n_atoms"]) == list(via_path["n_atoms"])
+
+
+def test_infer_schema_reader_matches_path():
+    path = DATA / "minimal_periodic.extxyz"
+    via_reader = _rust.infer_schema_reader(chunks(path.read_bytes()), "plain", None)
+    via_path = _rust.infer_schema(str(path), "infer", None)
+    assert via_reader["n_frames"] == via_path["n_frames"]
+    assert via_reader["is_consistent"] == via_path["is_consistent"]
+
+
+def test_read_batch_reader_all_frames():
+    path = DATA / "minimal_periodic.extxyz"
+    batch = _rust.read_batch_reader(
+        chunks(path.read_bytes()), "plain", None, None, None
+    )
+    assert len(batch["offsets"]) >= 2
+
+
+def test_frame_iter_from_reader_streams():
+    path = DATA / "minimal_periodic.extxyz"
+    frames = list(_rust.FrameIter.from_reader(chunks(path.read_bytes()), "plain", None))
+    assert len(frames) == len(_rust.read_frames(str(path), None, "infer", None))
+
+
+def test_batch_iter_from_reader_streams():
+    path = DATA / "minimal_periodic.extxyz"
+    batches = list(
+        _rust.BatchIter.from_reader(chunks(path.read_bytes()), 1, "plain", None)
+    )
+    assert len(batches) >= 1
