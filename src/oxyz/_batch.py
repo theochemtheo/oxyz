@@ -8,6 +8,7 @@ from typing import Literal
 import numpy as np
 
 import oxyz._rust as _rust
+from oxyz import _remote
 from oxyz._frames import ColumnValues, Compression, _check_threads
 
 MemoryScaling = Literal["n_atoms", "n_atoms_x_density"]
@@ -63,6 +64,7 @@ def read_batch(
     threads: int | None = None,
     compression: Compression = "infer",
     member: str | None = None,
+    storage_options: _remote.StorageOptions | None = None,
 ) -> Batch:
     """Gather frames into one batch.
 
@@ -76,8 +78,25 @@ def read_batch(
 
     Works on a compressed source (the selection still streams in one pass);
     `compression` and `member` are as in `read_frames`.
+
+    A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through
+    the same reader (needs the ``oxyz[s3]`` extra); ``storage_options`` passes
+    endpoint/credentials to the store.
     """
     _check_threads(threads)
+    if _remote.is_remote(path):
+        src = _remote.open_source(
+            path,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
+        plan = [int(i) for i in indices] if indices is not None else None
+        data = _rust.read_batch_reader(src.obj, src.codec, plan, threads, src.member)
+        frame_indices: Sequence[int] = (
+            plan if plan is not None else range(len(data["offsets"]) - 1)
+        )
+        return _batch_from_data(data, frame_indices)
     if indices is None:
         data = _rust.read_batch(str(path), None, threads, compression, member)
         return _batch_from_data(data, range(len(data["offsets"]) - 1))
@@ -107,6 +126,7 @@ def iter_batches(
     threads: int | None = None,
     compression: Compression = "infer",
     member: str | None = None,
+    storage_options: _remote.StorageOptions | None = None,
 ) -> Iterator[Batch]:
     """Read a file as a sequence of batches.
 
@@ -168,24 +188,34 @@ def iter_batches(
         raise ValueError("seed requires shuffle=True")
     _check_threads(threads)
 
-    compressed = _rust.is_compressed(str(path), compression)
-    if member is not None and not compressed:
+    remote = _remote.is_remote(path)
+    # A remote URL or a compressed local file is non-seekable, so only the
+    # streaming strategy (frames_per_batch without shuffle) is available; the
+    # index-backed strategies need random access.
+    streaming_only = True if remote else _rust.is_compressed(str(path), compression)
+    if member is not None and not remote and not streaming_only:
         raise ValueError(
             "member= is only valid for an archive (.zip/.tar/.tar.gz) source"
         )
-    if compressed and (
+    if streaming_only and (
         shuffle or atoms_per_batch is not None or memory_scales_with is not None
     ):
         raise ValueError(
-            "a compressed source cannot be randomly accessed: only "
-            "frames_per_batch without shuffle is supported; decompress the file "
-            "first to use shuffle, atoms_per_batch, or memory_scales_with"
+            "a compressed or remote source cannot be randomly accessed: only "
+            "frames_per_batch without shuffle is supported; download the file first "
+            "to use shuffle, atoms_per_batch, or memory_scales_with"
         )
 
-    # The sequential stream covers unshuffled frames_per_batch; a compressed
+    # The sequential stream covers unshuffled frames_per_batch; a streaming-only
     # source must take it (no index), and otherwise it is the serial fast path.
-    if frames_per_batch is not None and not shuffle and (compressed or threads == 1):
-        return _sequential_batches(path, frames_per_batch, compression, member)
+    if (
+        frames_per_batch is not None
+        and not shuffle
+        and (streaming_only or threads == 1)
+    ):
+        return _sequential_batches(
+            path, frames_per_batch, compression, member, storage_options
+        )
     return _planned_batches(
         path,
         frames_per_batch,
@@ -203,10 +233,23 @@ def _sequential_batches(
     frames_per_batch: int,
     compression: Compression = "infer",
     member: str | None = None,
+    storage_options: _remote.StorageOptions | None = None,
 ) -> Iterator[Batch]:
     """Streamed file-order batches: constant memory, no scan."""
+    if _remote.is_remote(path):
+        src = _remote.open_source(
+            path,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
+        iterator = _rust.BatchIter.from_reader(
+            src.obj, frames_per_batch, src.codec, src.member
+        )
+    else:
+        iterator = _rust.BatchIter(str(path), frames_per_batch, compression, member)
     start = 0
-    for data in _rust.BatchIter(str(path), frames_per_batch, compression, member):
+    for data in iterator:
         n_frames = len(data["offsets"]) - 1
         yield _batch_from_data(data, range(start, start + n_frames))
         start += n_frames

@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 
 import oxyz._rust as _rust
+from oxyz import _remote
 from oxyz._frames import Compression
 from oxyz._stats import AtomCountStats
 
@@ -140,6 +141,7 @@ def infer_schema(
     *,
     compression: Compression = "infer",
     member: str | None = None,
+    storage_options: _remote.StorageOptions | None = None,
 ) -> Schema:
     """Fold the whole file into a `Schema` in a single pass.
 
@@ -149,8 +151,21 @@ def infer_schema(
 
     A compressed path is decoded while streaming; `compression` and `member`
     work as in `read_frames`.
+
+    A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through
+    the same parser (needs the ``oxyz[s3]`` extra); ``storage_options`` passes
+    endpoint/credentials to the store.
     """
-    data = _rust.infer_schema(str(path), compression, member)
+    if _remote.is_remote(path):
+        src = _remote.open_source(
+            path,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
+        data = _rust.infer_schema_reader(src.obj, src.codec, src.member)
+    else:
+        data = _rust.infer_schema(str(path), compression, member)
     return Schema(
         n_frames=data["n_frames"],
         total_atoms=data["total_atoms"],
