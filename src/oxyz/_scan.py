@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 
 import oxyz._rust as _rust
+from oxyz import _remote
 from oxyz._frames import Compression
 from oxyz._stats import AtomCountStats
 
@@ -50,6 +51,7 @@ def scan(
     with_volume: bool = False,
     compression: Compression = "infer",
     member: str | None = None,
+    storage_options: _remote.StorageOptions | None = None,
 ) -> FrameIndex:
     """Scan a file's structure without parsing any frame contents.
 
@@ -69,8 +71,21 @@ def scan(
     offsets are into the decompressed stream, so they give no random-access
     speedup on a re-read (which decompresses afresh). `compression` and `member`
     work as in `read_frames`.
+
+    A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through
+    the same scanner (needs the ``oxyz[s3]`` extra); ``storage_options`` passes
+    endpoint/credentials to the store.
     """
-    data = _rust.scan(str(path), with_volume, compression, member)
+    if _remote.is_remote(path):
+        src = _remote.open_source(
+            path,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
+        data = _rust.scan_reader(src.obj, src.codec, with_volume, src.member)
+    else:
+        data = _rust.scan(str(path), with_volume, compression, member)
     return FrameIndex(
         offsets=data["offsets"],
         n_atoms=data["n_atoms"],

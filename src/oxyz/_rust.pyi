@@ -80,6 +80,10 @@ class FrameIter:
     ) -> None: ...
     def __iter__(self) -> FrameIter: ...
     def __next__(self) -> FrameData: ...
+    @staticmethod
+    def from_reader(
+        source: object, codec: str, member: str | None = None
+    ) -> FrameIter: ...
 
 class IndexedFrames:
     def __init__(self, path: str, with_volume: bool = False) -> None: ...
@@ -103,6 +107,13 @@ class BatchIter:
     ) -> None: ...
     def __iter__(self) -> BatchIter: ...
     def __next__(self) -> BatchData: ...
+    @staticmethod
+    def from_reader(
+        source: object,
+        frames_per_batch: int,
+        codec: str,
+        member: str | None = None,
+    ) -> BatchIter: ...
 
 def read_first_frame(
     path: str, compression: str = "infer", member: str | None = None
@@ -130,6 +141,39 @@ def scan(
     member: str | None = None,
 ) -> ScanData: ...
 def is_compressed(path: str, compression: str = "infer") -> bool: ...
+def detect_codec(name: str, head: bytes | None = None) -> str: ...
+
+# Reader entries: source is any iterator yielding bytes (e.g. obstore's stream).
+# codec is one of "plain", "gzip", "zstd", "tar", "tar.gz", "zip".
+def read_frames_reader(
+    source: object,
+    codec: str,
+    member: str | None = None,
+    threads: int | None = None,
+) -> list[FrameData]: ...
+def read_first_frame_reader(
+    source: object,
+    codec: str,
+    member: str | None = None,
+) -> FrameData: ...
+def scan_reader(
+    source: object,
+    codec: str,
+    with_volume: bool = False,
+    member: str | None = None,
+) -> ScanData: ...
+def infer_schema_reader(
+    source: object,
+    codec: str,
+    member: str | None = None,
+) -> SchemaData: ...
+def read_batch_reader(
+    source: object,
+    codec: str,
+    indices: list[int] | None = None,
+    threads: int | None = None,
+    member: str | None = None,
+) -> BatchData: ...
 def write(
     path: str,
     frames: list[FrameData],

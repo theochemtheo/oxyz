@@ -1,3 +1,4 @@
+use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use ndarray::Array2;
@@ -6,13 +7,14 @@ use pyo3::{
     create_exception,
     exceptions::{PyIndexError, PyOSError, PyTypeError, PyValueError},
     prelude::*,
-    types::{PyDict, PyList, PyString, PyTuple},
+    types::{PyBytes, PyDict, PyList, PyString, PyTuple},
 };
 
 use oxyz_core::schema::{ColumnSchema, MetadataSchema, Schema, ValueType};
 use oxyz_core::{
-    Batch, Column, ColumnData, ColumnKind, Compression, DecodedReader, ExtxyzError, Frame,
-    FrameSink, Value, open_decoded, write_frames, write_frames_parallel,
+    Batch, ByteSource, Codec, Column, ColumnData, ColumnKind, Compression, DecodedReader,
+    ExtxyzError, Frame, FrameSink, Value, detect_codec_name, open_decoded, wrap_stream, wrap_tar,
+    wrap_zip, write_frames, write_frames_parallel,
 };
 
 /// Map the Python `compression` string to the core selector.
@@ -68,6 +70,18 @@ impl FrameIter {
             Some(Err(error)) => Err(extxyz_error_to_py(error)),
         }
     }
+
+    #[staticmethod]
+    #[pyo3(signature = (source, codec, member=None))]
+    fn from_reader(
+        source: Bound<'_, PyAny>,
+        codec: &str,
+        member: Option<String>,
+    ) -> PyResult<Self> {
+        let reader = build_decoded(&source, codec, member.as_deref())?;
+        let inner = oxyz_core::iter_frames_from(reader).map_err(extxyz_error_to_py)?;
+        Ok(FrameIter { inner })
+    }
 }
 
 /// Structurally scan the file: `{"offsets": ndarray, "n_atoms": ndarray}`.
@@ -92,7 +106,13 @@ fn scan<'py>(
             }
         })
         .map_err(extxyz_error_to_py)?;
+    scan_index_to_pydict(py, &index)
+}
 
+fn scan_index_to_pydict<'py>(
+    py: Python<'py>,
+    index: &oxyz_core::index::FrameIndex,
+) -> PyResult<Bound<'py, PyDict>> {
     let offsets: Vec<u64> = index.entries().iter().map(|entry| entry.offset).collect();
     // Atom counts as isize (np.intp) so user arithmetic with them does not
     // promote to float64 the way an unsigned dtype would; byte offsets stay u64.
@@ -109,6 +129,65 @@ fn scan<'py>(
         data.set_item("volumes", volumes.to_vec().into_pyarray(py))?;
     }
     Ok(data)
+}
+
+#[pyfunction]
+#[pyo3(signature = (source, codec, with_volume=false, member=None))]
+fn scan_reader<'py>(
+    py: Python<'py>,
+    source: Bound<'py, PyAny>,
+    codec: &str,
+    with_volume: bool,
+    member: Option<String>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let reader = build_decoded(&source, codec, member.as_deref())?;
+    let index = py
+        .detach(move || {
+            if with_volume {
+                oxyz_core::scan_frames_with_volume(reader)
+            } else {
+                oxyz_core::scan_frames(reader)
+            }
+        })
+        .map_err(extxyz_error_to_py)?;
+    scan_index_to_pydict(py, &index)
+}
+
+#[pyfunction]
+#[pyo3(signature = (source, codec, member=None))]
+fn infer_schema_reader<'py>(
+    py: Python<'py>,
+    source: Bound<'py, PyAny>,
+    codec: &str,
+    member: Option<String>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let reader = build_decoded(&source, codec, member.as_deref())?;
+    let schema = py
+        .detach(move || oxyz_core::infer_schema_from(reader))
+        .map_err(extxyz_error_to_py)?;
+    schema_to_pydict(py, &schema)
+}
+
+#[pyfunction]
+#[pyo3(signature = (source, codec, indices=None, threads=None, member=None))]
+fn read_batch_reader<'py>(
+    py: Python<'py>,
+    source: Bound<'py, PyAny>,
+    codec: &str,
+    indices: Option<Vec<usize>>,
+    threads: Option<usize>,
+    member: Option<String>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let reader = build_decoded(&source, codec, member.as_deref())?;
+    let batch = py
+        .detach(move || match (indices, threads) {
+            (None, Some(1)) => oxyz_core::read_all_batch_from(reader),
+            (None, _) => oxyz_core::read_all_batch_parallel_from(reader, threads),
+            (Some(indices), Some(1)) => oxyz_core::read_batch_from(reader, &indices),
+            (Some(indices), _) => oxyz_core::read_batch_parallel_from(reader, &indices, threads),
+        })
+        .map_err(extxyz_error_to_py)?;
+    batch_to_pydict(py, batch)
 }
 
 /// Random-access reader: scans on construction, then `get(i)` seeks and
@@ -221,6 +300,20 @@ impl BatchIter {
             Some(Ok(batch)) => batch_to_pydict(py, batch).map(Some),
             Some(Err(error)) => Err(extxyz_error_to_py(error)),
         }
+    }
+
+    #[staticmethod]
+    #[pyo3(signature = (source, frames_per_batch, codec, member=None))]
+    fn from_reader(
+        source: Bound<'_, PyAny>,
+        frames_per_batch: usize,
+        codec: &str,
+        member: Option<String>,
+    ) -> PyResult<Self> {
+        let reader = build_decoded(&source, codec, member.as_deref())?;
+        let inner =
+            oxyz_core::iter_batches_from(reader, frames_per_batch).map_err(extxyz_error_to_py)?;
+        Ok(BatchIter { inner })
     }
 }
 
@@ -751,6 +844,217 @@ fn py_to_value(value: &Bound<'_, PyAny>) -> PyResult<Value> {
     )))
 }
 
+/// A Rust `Read` over a Python iterator of `bytes` (e.g. obstore's
+/// `GetResult.stream()`). Each refill calls `__next__` under the GIL; the parser
+/// runs with the GIL released and reacquires here per chunk — negligible against
+/// network latency. `Send + Sync` because `Py<PyAny>` is, and the single
+/// consumer means the reacquire is never contended.
+struct PyChunkReader {
+    iter: Py<PyAny>,
+    current: Cursor<Vec<u8>>,
+    done: bool,
+}
+
+impl PyChunkReader {
+    fn new(iter: Py<PyAny>) -> Self {
+        PyChunkReader {
+            iter,
+            current: Cursor::new(Vec::new()),
+            done: false,
+        }
+    }
+}
+
+impl Read for PyChunkReader {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        loop {
+            let read = self.current.read(out)?;
+            if read > 0 {
+                return Ok(read);
+            }
+            if self.done {
+                return Ok(0);
+            }
+            let next = Python::attach(|py| match self.iter.bind(py).call_method0("__next__") {
+                Ok(obj) => obj
+                    .cast::<PyBytes>()
+                    .map(|b| Some(b.as_bytes().to_vec()))
+                    .map_err(|_| std::io::Error::other("remote stream yielded a non-bytes chunk")),
+                Err(err) if err.is_instance_of::<pyo3::exceptions::PyStopIteration>(py) => Ok(None),
+                Err(err) => Err(std::io::Error::other(err.to_string())),
+            })?;
+            match next {
+                Some(chunk) => self.current = Cursor::new(chunk),
+                None => {
+                    self.done = true;
+                    return Ok(0);
+                }
+            }
+        }
+    }
+}
+
+/// A Rust `Read + Seek` over a Python file-like with `read(n)` and
+/// `seek(offset, whence)` (obstore's `ReadableFile`). Used for `.zip`, whose
+/// central directory is at the end of the object.
+struct PySeekReader {
+    file: Py<PyAny>,
+}
+
+impl Read for PySeekReader {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        Python::attach(|py| {
+            let obj = self
+                .file
+                .bind(py)
+                .call_method1("read", (out.len(),))
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            let bytes = obj
+                .cast::<PyBytes>()
+                .map_err(|_| std::io::Error::other("read() did not return bytes"))?;
+            let data = bytes.as_bytes();
+            if data.len() > out.len() {
+                return Err(std::io::Error::other(
+                    "read() returned more bytes than requested",
+                ));
+            }
+            out[..data.len()].copy_from_slice(data);
+            Ok(data.len())
+        })
+    }
+}
+
+impl Seek for PySeekReader {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        // Python io whence: 0=SET, 1=CUR, 2=END; seek() returns the new abs pos.
+        let (offset, whence): (i64, i64) = match pos {
+            SeekFrom::Start(n) => (n as i64, 0),
+            SeekFrom::Current(n) => (n, 1),
+            SeekFrom::End(n) => (n, 2),
+        };
+        Python::attach(|py| {
+            self.file
+                .bind(py)
+                .call_method1("seek", (offset, whence))
+                .and_then(|obj| obj.extract::<u64>())
+                .map_err(|e| std::io::Error::other(e.to_string()))
+        })
+    }
+}
+
+/// Assemble a `DecodedReader` from a Python source object and a resolved codec.
+/// `"plain"/"gzip"/"zstd"` → `source` is a bytes-iterator.
+/// `"tar"/"tar.gz"` → `source` is a 0-arg callable returning a fresh bytes-iterator.
+/// `"zip"` → `source` is a seekable file-like.
+fn build_decoded(
+    source: &Bound<'_, PyAny>,
+    codec: &str,
+    member: Option<&str>,
+) -> PyResult<DecodedReader> {
+    match codec {
+        "plain" | "gzip" | "zstd" => {
+            if member.is_some() {
+                return Err(PyValueError::new_err(
+                    "member= is only valid for an archive (.zip/.tar/.tar.gz) source",
+                ));
+            }
+            let codec = match codec {
+                "plain" => Codec::Plain,
+                "gzip" => Codec::Gzip,
+                "zstd" => Codec::Zstd,
+                _ => unreachable!("outer match limits codec to plain/gzip/zstd"),
+            };
+            let reader: ByteSource = Box::new(PyChunkReader::new(source.clone().unbind()));
+            wrap_stream(reader, codec).map_err(extxyz_error_to_py)
+        }
+        "tar" | "tar.gz" => {
+            let gzip = codec == "tar.gz";
+            let callable = source.clone().unbind();
+            let factory = move || {
+                Python::attach(|py| {
+                    callable
+                        .bind(py)
+                        .call0()
+                        .map(|iter| {
+                            Box::new(PyChunkReader::new(iter.unbind())) as Box<dyn Read + Send>
+                        })
+                        .map_err(|e| std::io::Error::other(e.to_string()))
+                })
+            };
+            wrap_tar(factory, member, gzip).map_err(extxyz_error_to_py)
+        }
+        "zip" => {
+            let reader = PySeekReader {
+                file: source.clone().unbind(),
+            };
+            wrap_zip(reader, member).map_err(extxyz_error_to_py)
+        }
+        other => Err(PyValueError::new_err(format!(
+            "unsupported remote codec {other:?}"
+        ))),
+    }
+}
+
+/// Read every frame from a Python bytes-iterator source, as a list of per-frame dicts.
+///
+/// `source` must be an iterator yielding `bytes` objects. `codec` is one of
+/// `"plain"`, `"gzip"`, `"zstd"`. `threads=None` parses on every core;
+/// `threads=1` is the exact serial path. Output is identical either way.
+#[pyfunction]
+#[pyo3(signature = (source, codec, member=None, threads=None))]
+fn read_frames_reader<'py>(
+    py: Python<'py>,
+    source: Bound<'py, PyAny>,
+    codec: &str,
+    member: Option<String>,
+    threads: Option<usize>,
+) -> PyResult<Bound<'py, PyList>> {
+    let reader = build_decoded(&source, codec, member.as_deref())?;
+    let frames = py
+        .detach(move || match threads {
+            Some(1) => oxyz_core::iter_frames_from(reader)?.collect(),
+            _ => oxyz_core::read_frames_parallel_from(reader, threads),
+        })
+        .map_err(extxyz_error_to_py)?;
+    let dicts = frames
+        .into_iter()
+        .map(|frame| frame_to_pydict(py, frame))
+        .collect::<PyResult<Vec<_>>>()?;
+    PyList::new(py, dicts)
+}
+
+/// Read the first frame from a Python bytes-iterator source.
+///
+/// `source` must be an iterator yielding `bytes` objects. `codec` is one of
+/// `"plain"`, `"gzip"`, `"zstd"`.
+#[pyfunction]
+#[pyo3(signature = (source, codec, member=None))]
+fn read_first_frame_reader<'py>(
+    py: Python<'py>,
+    source: Bound<'py, PyAny>,
+    codec: &str,
+    member: Option<String>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let reader = build_decoded(&source, codec, member.as_deref())?;
+    let frame = py
+        .detach(move || {
+            oxyz_core::iter_frames_from(reader)?
+                .next()
+                .unwrap_or(Err(ExtxyzError::MissingLine("atom count")))
+        })
+        .map_err(extxyz_error_to_py)?;
+    frame_to_pydict(py, frame)
+}
+
+/// Infer the codec name from a filename and optional header bytes.
+///
+/// Returns one of `"plain"`, `"gzip"`, `"zstd"`, `"tar"`, `"tar.gz"`, `"zip"`.
+#[pyfunction]
+#[pyo3(signature = (name, head=None))]
+fn detect_codec(name: &str, head: Option<&[u8]>) -> String {
+    detect_codec_name(name, head).to_owned()
+}
+
 create_exception!(
     _rust,
     ParseError,
@@ -853,6 +1157,12 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(scan, m)?)?;
     m.add_function(wrap_pyfunction!(is_compressed, m)?)?;
     m.add_function(wrap_pyfunction!(write, m)?)?;
+    m.add_function(wrap_pyfunction!(detect_codec, m)?)?;
+    m.add_function(wrap_pyfunction!(read_frames_reader, m)?)?;
+    m.add_function(wrap_pyfunction!(read_first_frame_reader, m)?)?;
+    m.add_function(wrap_pyfunction!(scan_reader, m)?)?;
+    m.add_function(wrap_pyfunction!(infer_schema_reader, m)?)?;
+    m.add_function(wrap_pyfunction!(read_batch_reader, m)?)?;
     m.add_class::<FrameIter>()?;
     m.add_class::<IndexedFrames>()?;
     m.add_class::<BatchIter>()?;

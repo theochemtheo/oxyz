@@ -32,10 +32,10 @@ import random
 from pathlib import Path
 
 import pytest
-from conftest import STORE_ATOMS_PER_FRAME, STORE_N_FRAMES
 from test_read import THREAD_SWEEP, needs_ase, row, run
 
 import oxyz
+from conftest import STORE_ATOMS_PER_FRAME, STORE_N_FRAMES
 
 needs_atompack = pytest.mark.skipif(
     importlib.util.find_spec("atompack") is None, reason="atompack-db not installed"

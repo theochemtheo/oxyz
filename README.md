@@ -39,6 +39,7 @@ pip install oxyz                # numpy is the only dependency
 pip install "oxyz[ase]"         # adds ASE conversion (ase >=3.23,<4)
 pip install "oxyz[metatomic]"   # adds metatomic.torch.System reading (torch >=2)
 pip install "oxyz[torch-sim]"   # adds torch_sim.SimState reading (torch >=2)
+pip install "oxyz[s3]"          # adds obstore for reading from S3-compatible URLs
 ```
 
 Wheels cover CPython ≥3.12 on Linux (x86_64, aarch64), macOS (arm64,
@@ -385,6 +386,33 @@ holds. A compressed stream cannot be seeked, so the random-access paths —
 reverse or negative ASE indices — either read the whole file into memory (the
 ASE index path, as ASE itself does) or raise pointing at the limitation;
 decompress the file first if you need them.
+
+### Reading from object storage
+
+`read_frames`, `iter_frames`, `scan`, `infer_schema`, the batch readers, and
+`oxyz.ase.read`/`iread` accept S3-compatible URLs when the `s3` extra is
+installed (see [Install](#install)):
+
+```python
+frames = oxyz.read_frames("s3://bucket/train.extxyz.gz")
+```
+
+Credentials and endpoint come from `AWS_*` environment variables by default;
+pass `storage_options=` to point at a non-AWS store (MinIO, R2, Ceph):
+
+```python
+oxyz.read_frames(
+    "s3://bucket/train.extxyz",
+    storage_options={"endpoint": "https://minio.example", "region": "us-east-1"},
+)
+```
+
+`gs://` and `az://` are routed through the same obstore mechanism; they are
+supported in principle but are not covered by oxyz's own integration tests, so
+treat them as best-effort. Compression (`.gz`, `.zst`, `.tar.gz`,
+`.zip`) and archive `member=` selection apply as for local files. A remote
+stream cannot seek, so random-access batch strategies (`shuffle`,
+`atoms_per_batch`, `memory_scales_with`) need a local copy.
 
 ### Writing
 
