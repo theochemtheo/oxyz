@@ -1,4 +1,4 @@
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use ndarray::Array2;
@@ -13,8 +13,8 @@ use pyo3::{
 use oxyz_core::schema::{ColumnSchema, MetadataSchema, Schema, ValueType};
 use oxyz_core::{
     Batch, ByteSource, Codec, Column, ColumnData, ColumnKind, Compression, DecodedReader,
-    ExtxyzError, Frame, FrameSink, Value, open_decoded, wrap_stream, write_frames,
-    write_frames_parallel,
+    ExtxyzError, Frame, FrameSink, Value, detect_codec_name, open_decoded, wrap_stream, wrap_tar,
+    wrap_zip, write_frames, write_frames_parallel,
 };
 
 /// Map the Python `compression` string to the core selector.
@@ -894,9 +894,53 @@ impl Read for PyChunkReader {
     }
 }
 
+/// A Rust `Read + Seek` over a Python file-like with `read(n)` and
+/// `seek(offset, whence)` (obstore's `ReadableFile`). Used for `.zip`, whose
+/// central directory is at the end of the object.
+struct PySeekReader {
+    file: Py<PyAny>,
+}
+
+impl Read for PySeekReader {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        Python::attach(|py| {
+            let obj = self
+                .file
+                .bind(py)
+                .call_method1("read", (out.len(),))
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            let bytes = obj
+                .cast::<PyBytes>()
+                .map_err(|_| std::io::Error::other("read() did not return bytes"))?;
+            let data = bytes.as_bytes();
+            out[..data.len()].copy_from_slice(data);
+            Ok(data.len())
+        })
+    }
+}
+
+impl Seek for PySeekReader {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        // Python io whence: 0=SET, 1=CUR, 2=END; seek() returns the new abs pos.
+        let (offset, whence): (i64, i64) = match pos {
+            SeekFrom::Start(n) => (n as i64, 0),
+            SeekFrom::Current(n) => (n, 1),
+            SeekFrom::End(n) => (n, 2),
+        };
+        Python::attach(|py| {
+            self.file
+                .bind(py)
+                .call_method1("seek", (offset, whence))
+                .and_then(|obj| obj.extract::<u64>())
+                .map_err(|e| std::io::Error::other(e.to_string()))
+        })
+    }
+}
+
 /// Assemble a `DecodedReader` from a Python source object and a resolved codec.
-/// `"plain"/"gzip"/"zstd"` → `source` is a bytes-iterator. (`"tar"/"tar.gz"/"zip"`
-/// handled in a later task.)
+/// `"plain"/"gzip"/"zstd"` → `source` is a bytes-iterator.
+/// `"tar"/"tar.gz"` → `source` is a 0-arg callable returning a fresh bytes-iterator.
+/// `"zip"` → `source` is a seekable file-like.
 fn build_decoded(
     source: &Bound<'_, PyAny>,
     codec: &str,
@@ -916,6 +960,28 @@ fn build_decoded(
             };
             let reader: ByteSource = Box::new(PyChunkReader::new(source.clone().unbind()));
             wrap_stream(reader, codec).map_err(extxyz_error_to_py)
+        }
+        "tar" | "tar.gz" => {
+            let gzip = codec == "tar.gz";
+            let callable = source.clone().unbind();
+            let factory = move || {
+                Python::attach(|py| {
+                    callable
+                        .bind(py)
+                        .call0()
+                        .map(|iter| {
+                            Box::new(PyChunkReader::new(iter.unbind())) as Box<dyn Read + Send>
+                        })
+                        .map_err(|e| std::io::Error::other(e.to_string()))
+                })
+            };
+            wrap_tar(factory, member, gzip).map_err(extxyz_error_to_py)
+        }
+        "zip" => {
+            let reader = PySeekReader {
+                file: source.clone().unbind(),
+            };
+            wrap_zip(reader, member).map_err(extxyz_error_to_py)
         }
         other => Err(PyValueError::new_err(format!(
             "unsupported remote codec {other:?}"
@@ -972,6 +1038,15 @@ fn read_first_frame_reader<'py>(
         })
         .map_err(extxyz_error_to_py)?;
     frame_to_pydict(py, frame)
+}
+
+/// Infer the codec name from a filename and optional header bytes.
+///
+/// Returns one of `"plain"`, `"gzip"`, `"zstd"`, `"tar"`, `"tar.gz"`, `"zip"`.
+#[pyfunction]
+#[pyo3(signature = (name, head=None))]
+fn detect_codec(name: &str, head: Option<&[u8]>) -> String {
+    detect_codec_name(name, head).to_owned()
 }
 
 create_exception!(
@@ -1076,6 +1151,7 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(scan, m)?)?;
     m.add_function(wrap_pyfunction!(is_compressed, m)?)?;
     m.add_function(wrap_pyfunction!(write, m)?)?;
+    m.add_function(wrap_pyfunction!(detect_codec, m)?)?;
     m.add_function(wrap_pyfunction!(read_frames_reader, m)?)?;
     m.add_function(wrap_pyfunction!(read_first_frame_reader, m)?)?;
     m.add_function(wrap_pyfunction!(scan_reader, m)?)?;

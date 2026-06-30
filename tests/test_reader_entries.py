@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import gzip
+import io
+import tarfile
+import zipfile
 from pathlib import Path
 
 import oxyz._rust as _rust
@@ -76,3 +79,41 @@ def test_batch_iter_from_reader_streams():
         _rust.BatchIter.from_reader(chunks(path.read_bytes()), 1, "plain", None)
     )
     assert len(batches) >= 1
+
+
+def test_read_frames_reader_tar_member():
+    path = DATA / "minimal_periodic.extxyz"
+    body = path.read_bytes()
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        info = tarfile.TarInfo("inner.xyz")
+        info.size = len(body)
+        tar.addfile(info, io.BytesIO(body))
+    blob = buf.getvalue()
+
+    def factory():  # a fresh bytes-iterator per call (tar reads twice)
+        return chunks(blob)
+
+    frames = _rust.read_frames_reader(factory, "tar", None, None)
+    assert len(frames) == len(_rust.read_frames(str(path), None, "infer", None))
+
+
+def test_read_frames_reader_zip_member():
+    path = DATA / "minimal_periodic.extxyz"
+    body = path.read_bytes()
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("inner.xyz", body)
+    seekable = io.BytesIO(buf.getvalue())  # has read/seek/tell
+
+    frames = _rust.read_frames_reader(seekable, "zip", None, None)
+    assert len(frames) == len(_rust.read_frames(str(path), None, "infer", None))
+
+
+def test_detect_codec():
+    assert _rust.detect_codec("train.xyz", None) == "plain"
+    assert _rust.detect_codec("train.xyz.gz", None) == "gzip"
+    assert _rust.detect_codec("a.tar.gz", None) == "tar.gz"
+    assert _rust.detect_codec("a.zip", None) == "zip"
+    assert _rust.detect_codec("blob", b"PK\x03\x04") == "zip"
+    assert _rust.detect_codec("blob", b"hello") == "plain"
