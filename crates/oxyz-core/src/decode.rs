@@ -102,8 +102,22 @@ pub fn open_decoded(
         Codec::Gzip => wrap_stream(Box::new(File::open(path)?), Codec::Gzip),
         Codec::Zstd => wrap_stream(Box::new(File::open(path)?), Codec::Zstd),
         Codec::Zip => open_zip_member(path, member),
-        Codec::Tar => open_tar_member(path, member, false),
-        Codec::TarGzip => open_tar_member(path, member, true),
+        Codec::Tar => {
+            let path = path.to_owned();
+            wrap_tar(
+                move || File::open(&path).map(|f| Box::new(f) as Box<dyn Read + Send>),
+                member,
+                false,
+            )
+        }
+        Codec::TarGzip => {
+            let path = path.to_owned();
+            wrap_tar(
+                move || File::open(&path).map(|f| Box::new(f) as Box<dyn Read + Send>),
+                member,
+                true,
+            )
+        }
     }
 }
 
@@ -284,16 +298,18 @@ fn open_zip_member(path: &Path, member: Option<&str>) -> Result<DecodedReader> {
     }))
 }
 
-fn open_tar_member(path: &Path, member: Option<&str>, gzip: bool) -> Result<DecodedReader> {
-    // Two passes over the stream: one to enumerate members (a tar has no
-    // central directory), one to stream the chosen one. For `.tar.gz` this
-    // decompresses twice — acceptable for the multi-member case, which is rare.
-    let names = tar_member_names(path, gzip)?;
+/// Stream one member of a tar (optionally gzip-compressed). `factory` yields a
+/// fresh *raw* tar byte stream on each call; enumeration and streaming each open
+/// one (two passes — a tar has no central directory).
+pub fn wrap_tar<F>(factory: F, member: Option<&str>, gzip: bool) -> Result<DecodedReader>
+where
+    F: Fn() -> io::Result<Box<dyn Read + Send>> + Send + 'static,
+{
+    let names = tar_member_names(&factory, gzip)?;
     let target = resolve_member(&names, member)?;
-    let path = path.to_owned();
 
     Ok(spawn_pipe(move |tx| {
-        let stream = match tar_stream(&path, gzip) {
+        let stream = match tar_stream_from(&factory, gzip) {
             Ok(stream) => stream,
             Err(error) => {
                 let _ = tx.send(Err(error));
@@ -325,8 +341,11 @@ fn open_tar_member(path: &Path, member: Option<&str>, gzip: bool) -> Result<Deco
     }))
 }
 
-fn tar_member_names(path: &Path, gzip: bool) -> Result<Vec<String>> {
-    let mut archive = tar::Archive::new(tar_stream(path, gzip)?);
+fn tar_member_names<F>(factory: &F, gzip: bool) -> Result<Vec<String>>
+where
+    F: Fn() -> io::Result<Box<dyn Read + Send>>,
+{
+    let mut archive = tar::Archive::new(tar_stream_from(factory, gzip)?);
     let mut names = Vec::new();
     for entry in archive.entries()? {
         let entry = entry?;
@@ -340,12 +359,15 @@ fn tar_member_names(path: &Path, gzip: bool) -> Result<Vec<String>> {
     Ok(names)
 }
 
-fn tar_stream(path: &Path, gzip: bool) -> io::Result<Box<dyn Read + Send>> {
-    let file = File::open(path)?;
+fn tar_stream_from<F>(factory: &F, gzip: bool) -> io::Result<Box<dyn Read + Send>>
+where
+    F: Fn() -> io::Result<Box<dyn Read + Send>>,
+{
+    let raw = factory()?;
     Ok(if gzip {
-        Box::new(MultiGzDecoder::new(file))
+        Box::new(MultiGzDecoder::new(raw))
     } else {
-        Box::new(file)
+        raw
     })
 }
 

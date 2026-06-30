@@ -33,3 +33,24 @@ fn wrap_stream_rejects_archive_codec() {
     let source: ByteSource = Box::new(Cursor::new(Vec::new()));
     assert!(wrap_stream(source, Codec::Zip).is_err());
 }
+
+fn tar_two_members() -> Vec<u8> {
+    let mut builder = tar::Builder::new(Vec::new());
+    for (name, body) in [("a.txt", b"alpha".as_slice()), ("b.xyz", b"beta")] {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(body.len() as u64);
+        header.set_cksum();
+        builder.append_data(&mut header, name, body).unwrap();
+    }
+    builder.into_inner().unwrap()
+}
+
+#[test]
+fn wrap_tar_selects_named_member() {
+    let bytes = tar_two_members();
+    let factory = move || Ok(Box::new(Cursor::new(bytes.clone())) as Box<dyn std::io::Read + Send>);
+    let mut reader = oxyz_core::decode::wrap_tar(factory, Some("b.xyz"), false).unwrap();
+    let mut out = String::new();
+    std::io::Read::read_to_string(&mut reader, &mut out).unwrap();
+    assert_eq!(out, "beta");
+}
