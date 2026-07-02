@@ -18,7 +18,13 @@ from oxyz._schema_spec import ColumnRule, MetadataRule, SchemaSpec
 DATA = Path(__file__).parent / "data"
 
 SPEC = SchemaSpec(
-    columns=(ColumnRule("species", Kind.STR), ColumnRule("pos", Kind.REAL, width=3)),
+    columns=(
+        ColumnRule("species", Kind.STR),
+        ColumnRule("pos", Kind.REAL, width=3),
+        # Optional so the conformant/extra-column files (which lack it) pass;
+        # a present-but-mismatched magmom still fires (drift fixture, frame 1).
+        ColumnRule("magmom", Kind.REAL, width=3, required=False),
+    ),
     metadata=(MetadataRule("energy", Kind.REAL),),
 )
 
@@ -54,7 +60,7 @@ def test_drift_type_required_raises_at_frame_1():
             DATA / "schema_drift_type.extxyz", schema=SPEC, conformance="required"
         )
     assert excinfo.value.frame_index == 1
-    assert excinfo.value.name == "pos"
+    assert excinfo.value.name == "magmom"
 
 
 def test_warn_conformance_warns_not_raises():

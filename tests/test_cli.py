@@ -128,7 +128,12 @@ def test_emit_schema_with_no_schema_errors(tmp_path, capsys):
 def _write_spec(tmp_path: Path) -> Path:
     p = tmp_path / "s.yaml"
     p.write_text(
-        "columns:\n  species: {kind: S}\n  pos: {kind: R, width: 3}\n"
+        "columns:\n"
+        "  species: {kind: S}\n"
+        "  pos: {kind: R, width: 3}\n"
+        # optional, so the conformant/extra files (no magmom) pass; a
+        # present-but-mismatched magmom still fires on the drift fixture
+        "  magmom: {kind: R, width: 3, required: false}\n"
         "metadata:\n  energy: {kind: R}\n"
     )
     return p
@@ -149,7 +154,7 @@ def test_check_reports_all_and_exits_one(tmp_path, capsys):
     )
     out = capsys.readouterr().out
     assert code == 1
-    assert "pos" in out
+    assert "magmom" in out
     assert (
         "first at frame 1 (L5)" in out
     )  # frame 1 begins at line 5 (frame 0 = 4 lines)
@@ -169,7 +174,7 @@ def test_check_json_includes_line(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert code == 1
     violation = payload["violations"][0]
-    assert violation["name"] == "pos"
+    assert violation["name"] == "magmom"
     assert violation["first_frame"] == 1
     assert violation["first_line"] == 5
 

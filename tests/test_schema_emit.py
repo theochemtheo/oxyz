@@ -87,3 +87,30 @@ def test_same_stem_families_with_different_width_not_globbed(tmp_path):
     assert not any(r.name == "d_*" for r in spec.columns)  # not globbed
     assert sum(r.name.startswith("d_") for r in spec.columns) == 6  # all literal
     assert len(read_frames(path, schema=spec, conformance="strict")) == 2  # round-trips
+
+
+def test_to_spec_emits_drift_note_for_conflicting_column():
+    # schema_drift_type has magmom R:3 (frame 0) then R:1 (frame 1): the widths
+    # conflict, so `unified` is None and emission falls back to the dominant
+    # variant with a drift note rather than a clean rule.
+    from oxyz._schema_emit import spec_and_notes
+
+    _, notes = spec_and_notes(infer_schema(DATA / "schema_drift_type.extxyz"))
+    assert "magmom" in notes
+    assert "drift" in notes["magmom"]
+
+
+def test_to_spec_emits_drift_note_for_conflicting_metadata(tmp_path):
+    # `label` is an Int in frame 0 and a Str in frame 1 — no unifying type, so
+    # the metadata entry carries a drift note.
+    from oxyz._schema_emit import spec_and_notes
+
+    text = (
+        "1\nProperties=species:S:1:pos:R:3 label=1\nH 0.0 0.0 0.0\n"
+        "1\nProperties=species:S:1:pos:R:3 label=foo\nH 0.0 0.0 0.0\n"
+    )
+    path = tmp_path / "meta_drift.extxyz"
+    path.write_text(text)
+    _, notes = spec_and_notes(infer_schema(path))
+    assert "label" in notes
+    assert "drift" in notes["label"]

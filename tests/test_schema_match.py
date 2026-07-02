@@ -16,6 +16,7 @@ from oxyz._schema_match import (
     compile_spec,
     enforce_frame,
     message,
+    metadata_signature,
     resolve,
     validate_frame,
 )
@@ -218,3 +219,59 @@ def test_resolve_accepts_spec_object_and_path(tmp_path: Path):
     assert resolve(spec) == compile_spec(spec)
     (tmp_path / "s.yaml").write_text("columns:\n  pos: {kind: R, width: 3}\n")
     assert resolve(tmp_path / "s.yaml") == compile_spec(spec)
+
+
+def test_metadata_signature_covers_scalar_and_string_array_kinds():
+    assert metadata_signature(3) == (Kind.INT, ())
+    assert metadata_signature("x") == (Kind.STR, ())
+    assert metadata_signature(["a", "b", "c"]) == (Kind.STR, (3,))
+
+
+def test_glob_member_kind_width_mismatch_flagged():
+    columns = {
+        "descriptor_0": np.zeros((2, 3), dtype=np.float64),  # R:3, expected R:1
+        "descriptor_1": np.zeros(2, dtype=np.float64),
+    }
+    spec = SchemaSpec(columns=(ColumnRule("descriptor_*", Kind.REAL, width=1, min=1),))
+    result = validate_frame(frame(columns), compile_spec(spec), "required")
+    assert Violation("column", "descriptor_0", "mismatch", "R:1", "R:3") in result
+
+
+def test_metadata_glob_count_and_mismatch():
+    # two md_* keys, one of the wrong kind (Str where Real expected)
+    meta = {"md_a": 1.0, "md_b": "oops"}
+    spec = SchemaSpec(metadata=(MetadataRule("md_*", Kind.REAL, count=2),))
+    result = validate_frame(frame({}, meta), compile_spec(spec), "required")
+    assert Violation("metadata", "md_b", "mismatch", "R", "S") in result
+
+
+def test_metadata_glob_count_out_of_range_flagged():
+    meta = {"md_a": 1.0}
+    spec = SchemaSpec(metadata=(MetadataRule("md_*", Kind.REAL, count=2),))
+    result = validate_frame(frame({}, meta), compile_spec(spec), "required")
+    assert result == [Violation("metadata", "md_*", "count", "2", "1")]
+
+
+def test_optional_metadata_absent_is_fine():
+    spec = SchemaSpec(metadata=(MetadataRule("energy", Kind.REAL, required=False),))
+    assert validate_frame(frame({}, {}), compile_spec(spec), "required") == []
+
+
+def test_metadata_extra_flagged_only_under_strict():
+    f = frame({}, {"energy": -1.0, "comment": "hi"})
+    spec = SchemaSpec(metadata=(MetadataRule("energy", Kind.REAL),))
+    compiled = compile_spec(spec)
+    assert validate_frame(f, compiled, "required") == []
+    assert validate_frame(f, compiled, "strict") == [
+        Violation("metadata", "comment", "extra", None, "S")
+    ]
+
+
+def test_body_count_and_frame_axis_wording():
+    assert (
+        body(Violation("metadata", "md_*", "count", "2", "1")) == "expected 2, found 1"
+    )
+    assert (
+        body(Violation("frame", "n_atoms", "mismatch", "[3, ]", "2"))
+        == "expected in [3, ], found 2"
+    )
