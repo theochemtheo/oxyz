@@ -1540,6 +1540,7 @@ version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
+    { name = "pyyaml" },
 ]
 
 [package.optional-dependencies]
@@ -1579,6 +1580,7 @@ dev = [
     { name = "torch", version = "2.12.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
     { name = "torch-sim-atomistic" },
     { name = "ty" },
+    { name = "types-pyyaml" },
 ]
 
 [package.metadata]
@@ -1587,6 +1589,7 @@ requires-dist = [
     { name = "metatomic-torch", marker = "extra == 'metatomic'" },
     { name = "numpy", specifier = ">=2" },
     { name = "obstore", marker = "extra == 's3'", specifier = ">=0.11" },
+    { name = "pyyaml", specifier = ">=6" },
     { name = "torch", marker = "sys_platform == 'darwin' and extra == 'metatomic'", specifier = ">=2" },
     { name = "torch", marker = "sys_platform == 'darwin' and extra == 'torch-sim'", specifier = ">=2" },
     { name = "torch", marker = "sys_platform != 'darwin' and extra == 'metatomic'", specifier = ">=2", index = "https://download.pytorch.org/whl/cpu" },
@@ -1614,6 +1617,7 @@ dev = [
     { name = "torch", marker = "sys_platform == 'darwin'", specifier = ">=2" },
     { name = "torch-sim-atomistic" },
     { name = "ty", specifier = ">=0.0.44" },
+    { name = "types-pyyaml" },
 ]
 
 [[package]]
@@ -2617,6 +2621,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/d3/76/ec3957c10872643a98db7a7895101ad89c5b7cba4bc6c4aebbbfc91756cc/ty-0.0.44-py3-none-win32.whl", hash = "sha256:6a24586c65419223ac5bab4822d49ab493a5d19ea2a897514284c232b9d6166a", size = 10892978, upload-time = "2026-06-05T03:34:12.603Z" },
     { url = "https://files.pythonhosted.org/packages/a5/7d/ba24050432196e7d7f03945e5c379951593c48e04e5c5d5275cfc4624791/ty-0.0.44-py3-none-win_amd64.whl", hash = "sha256:8cccb27e348c89a9733fbad1b2efadfbad79b107c7e52adb52dfd8a70156a38d", size = 11987058, upload-time = "2026-06-05T03:33:42.692Z" },
     { url = "https://files.pythonhosted.org/packages/71/34/16ec3f1fec75292d9c56a8b5fef037ceaba85a5c30562206c1a245a00a67/ty-0.0.44-py3-none-win_arm64.whl", hash = "sha256:58049504e7a12bf1957f24a5384a332c94d5590127083a80db5e5a1bed34190b", size = 11329961, upload-time = "2026-06-05T03:33:39.427Z" },
+]
+
+[[package]]
+name = "types-pyyaml"
+version = "6.0.12.20260518"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b8/83/4a1afc3fbfcf5b8d46fc390cd95ed6b0dc9010a265f4e9f46314efffa37a/types_pyyaml-6.0.12.20260518.tar.gz", hash = "sha256:d917f83fb38462550338c1297faedd860b3ec83912b96b1e3d73255f7473e466", size = 17850, upload-time = "2026-05-18T06:01:58.675Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/06/a2/c01db32be2ae7d6a1689972f3c492b149ee4e164b12fdfd9f64b50888215/types_pyyaml-6.0.12.20260518-py3-none-any.whl", hash = "sha256:d2150f75a231c9fe9c7463bd29487d93e60bac90400287351384bc2284eba7cd", size = 20312, upload-time = "2026-05-18T06:01:57.368Z" },
 ]
 
 [[package]]

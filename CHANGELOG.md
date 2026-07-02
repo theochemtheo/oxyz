@@ -10,6 +10,31 @@ recorded here.
 
 ## [Unreleased]
 
+### Added
+
+- Schema-aware reading: pass `schema=` (a `SchemaSpec` or a path to a
+  `.json`/`.yaml`/`.toml` file) and `conformance=` (`"strict"`, `"required"`,
+  or `"warn"`) to `read_frames`, `read_first`, `read_frames_sliced`, and
+  `iter_frames`. Validates each frame's columns, metadata, and structural facts,
+  with frame-indexed `SchemaError`s and silenceable `SchemaWarning`s. Names may
+  be literals, globs (`descriptor_*`), or regexes (`re:...`), with `count`/`min`/
+  `max` on patterns.
+- `oxyz check FILE --schema S`: report every schema violation in a file (with
+  frame index and source line), exit non-zero when any is found; `--json` for CI.
+- `oxyz scan` now prints a copy-pasteable schema, and `oxyz scan --emit-schema
+  PATH` writes it to a `.yaml`/`.json` file. `Schema.to_spec()` exposes the same
+  in Python.
+
+### Changed
+
+- `oxyz scan`'s text summary now shows the inferred schema as pasteable schema
+  syntax rather than a free-form report.
+
+### Dependencies
+
+- Added PyYAML (`pyyaml>=6`) as a runtime dependency, for reading and writing
+  YAML schemas.
+
 ## [0.4.0] - 2026-06-30
 
 ### Added

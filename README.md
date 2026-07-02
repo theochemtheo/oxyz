@@ -186,6 +186,34 @@ table. `dtype=None` infers from the data (float64), matching `atoms_to_state`;
 pass `torch.float32` for ML use. `SimStateSource` parses once and serves the
 state plus array-native `per_config` / `per_atom` extraction.
 
+## Reading against a schema
+
+Assert what a file should contain and have it checked as you read:
+
+```python
+import oxyz
+
+frames = oxyz.read_frames("train.extxyz", schema="schema.yaml")   # conformance="required"
+```
+
+A schema names expected columns, metadata, and structural facts, using the
+extxyz kind letters (`R`/`I`/`L`/`S`):
+
+```yaml
+columns:
+  species: {kind: S}
+  pos: {kind: R, width: 3}
+  "descriptor_*": {kind: R, count: 5}
+metadata:
+  energy: {kind: R}
+```
+
+`conformance` is `"strict"` (missing, extra, or mismatched entries all raise),
+`"required"` (the default — required entries enforced, extras allowed), or
+`"warn"` (deviations become silenceable warnings). `oxyz check file.extxyz
+--schema schema.yaml` reports every violation at once; `oxyz scan --emit-schema
+schema.yaml file.extxyz` writes a starting schema from a file you trust.
+
 ## What you get beyond ASE
 
 **Array-native frames.** A `Frame` is a frozen dataclass holding the file's

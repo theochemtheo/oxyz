@@ -38,8 +38,9 @@ target/
 .claude
 .codex
 
-# local planning notes, never committed
+# local planning notes and design specs, never committed
 .NOTES/
+docs/superpowers/
 
 # Benchmarks: generated fixtures and pytest-benchmark saved results
 benchmarks/.cache/
