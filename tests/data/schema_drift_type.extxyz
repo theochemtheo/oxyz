@@ -1,0 +1,8 @@
+2
+Properties=species:S:1:pos:R:3 energy=-1.5
+H 0.0 0.0 0.0
+O 1.0 0.0 0.0
+2
+Properties=species:S:1:pos:R:2 energy=-1.7
+H 0.0 0.0
+O 1.1 0.0

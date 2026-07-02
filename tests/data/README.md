@@ -26,6 +26,9 @@
 | `move_mask_fix_atoms.extxyz` | Per-atom `move_mask:L:1` — ASE writes/reads it as a `FixAtoms` constraint. |
 | `mace_ref_energy_forces_stress.xyz` | MACE training schema: `REF_energy`, `REF_forces:R:3`, `REF_stress`, `config_type`. |
 | `mace_isolated_atom_and_head.xyz` | MACE isolated-atom frames; per-frame `config_type`/`head` metadata that differs by frame. |
+| `schema_conformant.extxyz` | Two frames, stable `species`/`pos`/`energy` schema — the schema-aware read happy path. |
+| `schema_extra_column.extxyz` | Second frame adds a `charge` column — exercises `strict` (error) vs `required` (allowed). |
+| `schema_drift_type.extxyz` | Second frame's `pos` narrows to width 2 — a kind/width mismatch at frame 1. |
 
 Compressed twins of `two_frame_same_schema.xyz` (gzip, zstd, zip, tar, tar.gz,
 plus concat-gzip and multi-member archives) live in `compressed/`; see its

@@ -22,10 +22,13 @@ DATA_DIR = Path(__file__).parent / "data"
 # Voigt stress (ASE rejects it), new-style string arrays (ASE leaves them as
 # one raw string), and single-quoted values (ASE strips the quotes; oxyz keeps
 # them per the grammar). See the "Divergences from ASE" section of the README.
+# schema_drift_type.extxyz varies `pos` width between frames on purpose (for
+# the schema-conformance tests) and ASE's own reader rejects that shape change.
 VOIGT_STRESS = {"simple.extxyz", "nonorthogonal.extxyz", "stress_voigt6.extxyz"}
 DIVERGENT = VOIGT_STRESS | {
     "newstyle_array_metadata.extxyz",
     "singlequote_metadata.extxyz",
+    "schema_drift_type.extxyz",
 }
 
 GOLDEN = sorted(
