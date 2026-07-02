@@ -109,3 +109,41 @@ def test_render_yaml_notes_render_as_trailing_comments():
         spec, notes={"charge": "drift: R:1 in 3/5, I:1 in 2/5 — using R"}
     )
     assert "charge: {kind: R}  # drift:" in text
+
+
+def test_to_yaml_method_matches_render_yaml():
+    spec = SchemaSpec.from_dict(SPEC_DICT)
+    assert spec.to_yaml() == render_yaml(spec)
+
+
+def test_to_dict_omits_absent_sections():
+    cols_only = SchemaSpec(columns=(ColumnRule("pos", Kind.REAL, width=3),))
+    assert cols_only.to_dict() == {"columns": {"pos": {"kind": "R", "width": 3}}}
+
+    meta_only = SchemaSpec(metadata=(MetadataRule("energy", Kind.REAL),))
+    assert meta_only.to_dict() == {"metadata": {"energy": {"kind": "R"}}}
+
+    assert SchemaSpec().to_dict() == {}
+
+
+def test_metadata_count_is_serialised():
+    spec = SchemaSpec(metadata=(MetadataRule("md_*", Kind.REAL, count=3),))
+    assert spec.to_dict()["metadata"]["md_*"] == {"kind": "R", "count": 3}
+
+
+def test_frame_attrs_partial_bounds_and_lattice():
+    assert SchemaSpec(frame=FrameRule(n_atoms_min=1)).to_dict()["frame"] == {
+        "n_atoms": {"min": 1}
+    }
+    assert SchemaSpec(frame=FrameRule(n_atoms_max=5)).to_dict()["frame"] == {
+        "n_atoms": {"max": 5}
+    }
+    assert SchemaSpec(frame=FrameRule(lattice_required=True)).to_dict()["frame"] == {
+        "lattice": "required"
+    }
+
+
+def test_empty_frame_rule_renders_no_frame_section():
+    empty = SchemaSpec(frame=FrameRule())
+    assert empty.to_dict()["frame"] == {}
+    assert "frame:" not in render_yaml(empty)
