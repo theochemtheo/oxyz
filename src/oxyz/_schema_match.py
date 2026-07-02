@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import fnmatch
 import re
+import warnings
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -288,4 +290,68 @@ def validate_frame(
         _validate_columns(frame, compiled, level)
         + _validate_metadata(frame, compiled, level)
         + _validate_frame_rule(frame, compiled)
+    )
+
+
+class SchemaError(ValueError):
+    """A frame failed schema validation. Carries the offending `frame_index` and
+    entry `name` as attributes, so callers need not parse the message."""
+
+    def __init__(
+        self, message: str, *, frame_index: int | None = None, name: str | None = None
+    ):
+        super().__init__(message)
+        self.frame_index = frame_index
+        self.name = name
+
+
+class SchemaWarning(UserWarning):
+    """A schema deviation under `conformance="warn"`. Silence with
+    `warnings.filterwarnings("ignore", category=oxyz.SchemaWarning)`."""
+
+
+def body(violation: Violation) -> str:
+    match violation.deviation:
+        case "mismatch":
+            if violation.axis == "frame":
+                return f"expected in {violation.expected}, found {violation.found}"
+            return f"expected {violation.expected}, found {violation.found}"
+        case "missing":
+            return "missing (required)"
+        case "extra":
+            return f"unexpected ({violation.found})"
+        case "count":
+            return f"expected {violation.expected}, found {violation.found}"
+
+
+def message(violation: Violation, frame_index: int) -> str:
+    return (
+        f"frame {frame_index}: {violation.axis} '{violation.name}': {body(violation)}"
+    )
+
+
+def resolve(schema: SchemaSpec | str | Path) -> CompiledSpec:
+    """Compile a `SchemaSpec` directly, or load one from a file path first."""
+
+    spec = schema if isinstance(schema, SchemaSpec) else SchemaSpec.from_file(schema)
+    return compile_spec(spec)
+
+
+def enforce_frame(
+    frame: Frame, compiled: CompiledSpec, level: Conformance, frame_index: int
+) -> None:
+    """Validate one frame and apply policy: raise `SchemaError` on the first
+    violation under `strict`/`required`; emit a `SchemaWarning` per violation
+    under `warn`; do nothing when conformant."""
+
+    violations = validate_frame(frame, compiled, level)
+    if not violations:
+        return
+    if level == "warn":
+        for v in violations:
+            warnings.warn(message(v, frame_index), SchemaWarning, stacklevel=3)
+        return
+    first = violations[0]
+    raise SchemaError(
+        message(first, frame_index), frame_index=frame_index, name=first.name
     )
