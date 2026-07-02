@@ -4,6 +4,7 @@ import argparse
 import dataclasses
 import json
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from oxyz import infer_schema, scan
@@ -87,6 +88,16 @@ def _add_scan_parser(subparsers: argparse._SubParsersAction) -> None:
         dest="storage_options",
         help="remote store option (repeatable), e.g. endpoint=..., region=...",
     )
+    scan_parser.add_argument(
+        "--emit-schema",
+        default=None,
+        metavar="PATH",
+        dest="emit_schema",
+        help=(
+            "write the inferred schema to PATH (.yaml or .json) instead of "
+            "the text summary"
+        ),
+    )
     scan_parser.set_defaults(func=_cmd_scan)
 
 
@@ -123,6 +134,11 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             storage_options=storage_options,
         )
         stats = schema
+    if args.emit_schema is not None:
+        if schema is None:
+            raise ValueError("--emit-schema needs the schema pass; drop --no-schema")
+        _write_schema(schema, Path(args.emit_schema))
+        return 0
     if args.json:
         print(json.dumps(_scan_payload(stats, schema), indent=2))
     else:
@@ -155,6 +171,26 @@ def _stats_dict(stats: StatsSource) -> dict:
     }
 
 
+def _write_schema(schema: Schema, path: Path) -> None:
+    spec = schema.to_spec()
+    if path.suffix.lower() == ".json":
+        path.write_text(spec.to_json())
+    else:
+        from oxyz._schema_emit import spec_and_notes
+        from oxyz._schema_spec import render_yaml
+
+        spec, notes = spec_and_notes(schema)
+        path.write_text(render_yaml(spec, notes))
+
+
+def _schema_block(schema: Schema) -> str:
+    from oxyz._schema_emit import spec_and_notes
+    from oxyz._schema_spec import render_yaml
+
+    spec, notes = spec_and_notes(schema)
+    return render_yaml(spec, notes)
+
+
 def _print_scan_summary(stats: StatsSource, schema: Schema | None) -> None:
     print(f"frames:      {stats.n_frames}")
     if stats.n_frames:
@@ -166,4 +202,7 @@ def _print_scan_summary(stats: StatsSource, schema: Schema | None) -> None:
         )
     if schema is not None:
         print()
-        print(schema.report().rstrip("\n"))
+        print(
+            "# schema — paste into a .yaml and read with read_frames(..., schema=...)"
+        )
+        print(_schema_block(schema).rstrip("\n"))

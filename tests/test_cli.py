@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from oxyz._cli import main
+from oxyz._schema_spec import SchemaSpec
 
 DATA = Path(__file__).parent / "data"
 
@@ -74,3 +75,37 @@ def test_no_command_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
     code = main([])
     assert code == 2
     assert "scan" in capsys.readouterr().err
+
+
+def test_scan_text_schema_block_is_valid_schema(capsys):
+    assert main(["scan", str(DATA / "schema_conformant.extxyz")]) == 0
+    out = capsys.readouterr().out
+    block = out.split("columns:", 1)
+    assert len(block) == 2  # a `columns:` section is present
+    spec = SchemaSpec.from_yaml_text("columns:" + block[1])
+    names = {rule.name for rule in spec.columns}
+    assert {"species", "pos"} <= names
+
+
+def test_scan_emit_schema_writes_file(tmp_path: Path):
+    out = tmp_path / "schema.yaml"
+    assert (
+        main(
+            ["scan", str(DATA / "schema_conformant.extxyz"), "--emit-schema", str(out)]
+        )
+        == 0
+    )
+    spec = SchemaSpec.from_file(out)
+    assert any(rule.name == "pos" for rule in spec.columns)
+
+
+def test_scan_emit_schema_json(tmp_path: Path):
+    out = tmp_path / "schema.json"
+    assert (
+        main(
+            ["scan", str(DATA / "schema_conformant.extxyz"), "--emit-schema", str(out)]
+        )
+        == 0
+    )
+    spec = SchemaSpec.from_file(out)
+    assert any(rule.name == "pos" for rule in spec.columns)
