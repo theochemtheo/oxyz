@@ -32,7 +32,14 @@ def test_conformant_columns_have_no_violations():
 
 
 def test_missing_required_column_flagged_at_all_levels():
-    spec = SchemaSpec(columns=(ColumnRule("forces", Kind.REAL, width=3),))
+    spec = SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+            ColumnRule("charge", Kind.REAL),
+            ColumnRule("forces", Kind.REAL, width=3),
+        )
+    )
     for level in ("strict", "required", "warn"):
         result = validate_frame(frame(cols()), compile_spec(spec), level)
         assert result == [Violation("column", "forces", "missing", "R:3", None)]
@@ -40,7 +47,12 @@ def test_missing_required_column_flagged_at_all_levels():
 
 def test_optional_missing_column_is_fine():
     spec = SchemaSpec(
-        columns=(ColumnRule("forces", Kind.REAL, width=3, required=False),)
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+            ColumnRule("charge", Kind.REAL),
+            ColumnRule("forces", Kind.REAL, width=3, required=False),
+        )
     )
     assert validate_frame(frame(cols()), compile_spec(spec), "strict") == []
 

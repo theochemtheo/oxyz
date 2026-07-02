@@ -158,7 +158,7 @@ def _validate_columns(
                 )
             )
 
-    if level in ("strict", "warn") and claimed:
+    if level in ("strict", "warn"):
         for name in present:
             if name not in claimed:
                 kind, width = column_signature(present[name])
@@ -174,9 +174,7 @@ def validate_frame(
     frame: Frame, compiled: CompiledSpec, level: Conformance
 ) -> list[Violation]:
     """Return every schema deviation in `frame`. Never raises. `extra` items are
-    reported only under `strict`/`warn`, and only once the spec has claimed at
-    least one present column (an unrelated schema stays silent rather than
-    flagging the whole frame); missing/mismatch/count are reported at all
-    levels. Metadata and frame checks are added by later helpers."""
+    reported only under `strict`/`warn`; missing/mismatch/count are reported at
+    all levels. Metadata and frame checks are added by later helpers."""
 
     return _validate_columns(frame, compiled, level)
