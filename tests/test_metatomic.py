@@ -27,16 +27,12 @@ DATA_DIR = Path(__file__).parent / "data"
 # Files ase.io.read disagrees on (Voigt stress it rejects, plus oxyz's
 # documented metadata divergences). System fields are unaffected, but we keep
 # the reference set to those ASE reads cleanly, matching test_ase's GOLDEN.
-# schema_drift_type.extxyz varies `magmom` width between frames on purpose (for
-# the schema-conformance tests); its cross-frame drift isn't golden-parity
-# material, so it stays out of the reference set.
 DIVERGENT = {
     "simple.extxyz",
     "nonorthogonal.extxyz",
     "stress_voigt6.extxyz",
     "newstyle_array_metadata.extxyz",
     "singlequote_metadata.extxyz",
-    "schema_drift_type.extxyz",
 }
 
 GOLDEN = sorted(
