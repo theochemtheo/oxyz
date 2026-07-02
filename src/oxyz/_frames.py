@@ -13,6 +13,9 @@ from oxyz import _remote
 if TYPE_CHECKING:
     from ase import Atoms
 
+    from oxyz._schema_match import Conformance
+    from oxyz._schema_spec import SchemaSpec
+
 ColumnValues = np.ndarray | list[str] | list[list[str]]
 MetadataValue = float | int | bool | str | np.ndarray | list[str]
 
@@ -46,6 +49,8 @@ class Frame:
 def read_first(
     path: str | Path,
     *,
+    schema: SchemaSpec | str | Path | None = None,
+    conformance: Conformance = "required",
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
@@ -61,6 +66,10 @@ def read_first(
     A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through
     the same parser (needs the ``oxyz[s3]`` extra); ``storage_options`` passes
     endpoint/credentials to the store, falling back to ``AWS_*`` env vars.
+
+    `schema` (a `SchemaSpec` or a path to a `.json`/`.yaml`/`.toml` file)
+    validates the frame; `conformance` is `"strict"`, `"required"` (default),
+    or `"warn"`. See `oxyz.SchemaSpec`.
     """
     if _remote.is_remote(path):
         src = _remote.open_source(
@@ -69,10 +78,17 @@ def read_first(
             member=member,
             storage_options=storage_options,
         )
-        return _frame_from_data(
-            _rust.read_first_frame_reader(src.obj, src.codec, src.member)
+        data = _rust.read_first_frame_reader(src.obj, src.codec, src.member)
+    else:
+        data = _rust.read_first_frame(str(path), compression, member)
+    frame = _frame_from_data(data)
+    if schema is not None:
+        from oxyz import _schema_match
+
+        _schema_match.enforce_frame(
+            frame, _schema_match.resolve(schema), conformance, 0
         )
-    return _frame_from_data(_rust.read_first_frame(str(path), compression, member))
+    return frame
 
 
 def _check_threads(threads: int | None) -> None:
@@ -86,6 +102,8 @@ def read_frames(
     path: str | Path,
     *,
     threads: int | None = None,
+    schema: SchemaSpec | str | Path | None = None,
+    conformance: Conformance = "required",
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
@@ -105,6 +123,10 @@ def read_frames(
     A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through
     the same parser (needs the ``oxyz[s3]`` extra); ``storage_options`` passes
     endpoint/credentials to the store, falling back to ``AWS_*`` env vars.
+
+    `schema` (a `SchemaSpec` or a path to a `.json`/`.yaml`/`.toml` file)
+    validates each frame; `conformance` is `"strict"`, `"required"` (default),
+    or `"warn"`. See `oxyz.SchemaSpec`.
     """
     _check_threads(threads)
     if _remote.is_remote(path):
@@ -117,7 +139,14 @@ def read_frames(
         data = _rust.read_frames_reader(src.obj, src.codec, src.member, threads)
     else:
         data = _rust.read_frames(str(path), threads, compression, member)
-    return [_frame_from_data(frame) for frame in data]
+    frames = [_frame_from_data(frame) for frame in data]
+    if schema is not None:
+        from oxyz import _schema_match
+
+        compiled = _schema_match.resolve(schema)
+        for index, frame in enumerate(frames):
+            _schema_match.enforce_frame(frame, compiled, conformance, index)
+    return frames
 
 
 def read_frames_sliced(
@@ -125,6 +154,8 @@ def read_frames_sliced(
     frames: slice,
     threads: int | None = None,
     *,
+    schema: SchemaSpec | str | Path | None = None,
+    conformance: Conformance = "required",
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
@@ -140,6 +171,10 @@ def read_frames_sliced(
     A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through
     the same parser (needs the ``oxyz[s3]`` extra); ``storage_options`` passes
     endpoint/credentials to the store, falling back to ``AWS_*`` env vars.
+
+    `schema` (a `SchemaSpec` or a path to a `.json`/`.yaml`/`.toml` file)
+    validates each kept frame against its original index; `conformance` is
+    `"strict"`, `"required"` (default), or `"warn"`. See `oxyz.SchemaSpec`.
     """
     if _remote.is_remote(path):
         src = _remote.open_source(
@@ -151,7 +186,15 @@ def read_frames_sliced(
         data = _rust.read_frames_reader(src.obj, src.codec, src.member, threads)
     else:
         data = _rust.read_frames(str(path), threads, compression, member)
-    return [_frame_from_data(frame) for frame in data[frames]]
+    indices = range(len(data))[frames]
+    result = [_frame_from_data(frame) for frame in data[frames]]
+    if schema is not None:
+        from oxyz import _schema_match
+
+        compiled = _schema_match.resolve(schema)
+        for index, frame in zip(indices, result, strict=True):
+            _schema_match.enforce_frame(frame, compiled, conformance, index)
+    return result
 
 
 class IndexedFrames:
@@ -174,6 +217,8 @@ class IndexedFrames:
 def iter_frames(
     path: str | Path,
     *,
+    schema: SchemaSpec | str | Path | None = None,
+    conformance: Conformance = "required",
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
@@ -191,6 +236,10 @@ def iter_frames(
     A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through
     the same parser (needs the ``oxyz[s3]`` extra); ``storage_options`` passes
     endpoint/credentials to the store, falling back to ``AWS_*`` env vars.
+
+    `schema` (a `SchemaSpec` or a path to a `.json`/`.yaml`/`.toml` file)
+    validates each frame before it is yielded; `conformance` is `"strict"`,
+    `"required"` (default), or `"warn"`. See `oxyz.SchemaSpec`.
     """
     if _remote.is_remote(path):
         src = _remote.open_source(
@@ -202,8 +251,18 @@ def iter_frames(
         iterator = _rust.FrameIter.from_reader(src.obj, src.codec, src.member)
     else:
         iterator = _rust.FrameIter(str(path), compression, member)
-    for data in iterator:
-        yield _frame_from_data(data)
+    compiled = None
+    if schema is not None:
+        from oxyz import _schema_match
+
+        compiled = _schema_match.resolve(schema)
+    for index, data in enumerate(iterator):
+        frame = _frame_from_data(data)
+        if compiled is not None:
+            from oxyz import _schema_match
+
+            _schema_match.enforce_frame(frame, compiled, conformance, index)
+        yield frame
 
 
 def _frame_from_data(data: _rust.FrameData) -> Frame:

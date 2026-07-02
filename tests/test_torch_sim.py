@@ -25,9 +25,17 @@ pytestmark = pytest.mark.skipif(
 
 DATA_DIR = Path(__file__).parent / "data"
 
-# Files ase.io.read rejects (a stress shape ASE's reader will not accept); the
-# reference path can't be built for them, so they sit out the parity sweep.
-ASE_REJECTS = {"simple.extxyz", "nonorthogonal.extxyz", "stress_voigt6.extxyz"}
+# Files ase.io.read rejects (a stress shape ASE's reader will not accept), plus
+# the schema-conformance fixtures that vary `pos` width or per-atom columns
+# between frames on purpose — oxyz's own batch reader requires a uniform
+# schema across frames, so these can't build a reference either way.
+ASE_REJECTS = {
+    "simple.extxyz",
+    "nonorthogonal.extxyz",
+    "stress_voigt6.extxyz",
+    "schema_drift_type.extxyz",
+    "schema_extra_column.extxyz",
+}
 
 GOLDEN = sorted(
     path.name
