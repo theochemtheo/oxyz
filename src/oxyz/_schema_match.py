@@ -11,6 +11,7 @@ from oxyz._schema import Kind
 from oxyz._schema_spec import (
     KIND_TO_LETTER,
     ColumnRule,
+    FrameRule,
     MetadataRule,
     SchemaSpec,
 )
@@ -47,7 +48,7 @@ class CompiledSpec:
     columns_pattern: tuple[tuple[ColumnRule, re.Pattern[str]], ...]
     metadata_literal: dict[str, MetadataRule]
     metadata_pattern: tuple[tuple[MetadataRule, re.Pattern[str]], ...]
-    frame: object  # FrameRule | None; kept loose to avoid an import cycle in typing
+    frame: FrameRule | None
 
 
 def _is_pattern(name: str) -> bool:
@@ -101,7 +102,30 @@ def _column_sig_str(kind: Kind, width: int) -> str:
     return f"{KIND_TO_LETTER[kind]}:{width}"
 
 
-def _cardinality(rule) -> tuple[int, int | None]:
+def metadata_signature(value: object) -> tuple[Kind, tuple[int, ...]]:
+    """Derive `(kind, shape)` from a built metadata value. `bool` is checked
+    before `int` because Python's `bool` is a subclass of `int`."""
+
+    if isinstance(value, bool):
+        return Kind.BOOL, ()
+    if isinstance(value, int):
+        return Kind.INT, ()
+    if isinstance(value, float):
+        return Kind.REAL, ()
+    if isinstance(value, str):
+        return Kind.STR, ()
+    if isinstance(value, np.ndarray):
+        return _NUMPY_KIND[value.dtype.kind], (value.shape[0],)
+    # list[str] — a string array
+    return Kind.STR, (len(value),)  # ty: ignore[invalid-argument-type]
+
+
+def _metadata_sig_str(kind: Kind, shape: tuple[int, ...]) -> str:
+    letter = KIND_TO_LETTER[kind]
+    return letter if shape == () else f"{letter}[{shape[0]}]"
+
+
+def _cardinality(rule: ColumnRule | MetadataRule) -> tuple[int, int | None]:
     if rule.count is not None:
         return rule.count, rule.count
     lo = rule.min if rule.min is not None else (1 if rule.required else 0)
@@ -170,11 +194,98 @@ def _validate_columns(
     return out
 
 
+def _validate_metadata(
+    frame: Frame, compiled: CompiledSpec, level: Conformance
+) -> list[Violation]:
+    out: list[Violation] = []
+    claimed: set[str] = set()
+    present = frame.metadata
+
+    for name, rule in compiled.metadata_literal.items():
+        expected = _metadata_sig_str(rule.kind, rule.shape)
+        if name not in present:
+            if rule.required:
+                out.append(Violation("metadata", name, "missing", expected, None))
+            continue
+        claimed.add(name)
+        kind, shape = metadata_signature(present[name])
+        if (kind, shape) != (rule.kind, rule.shape):
+            out.append(
+                Violation(
+                    "metadata",
+                    name,
+                    "mismatch",
+                    expected,
+                    _metadata_sig_str(kind, shape),
+                )
+            )
+
+    for rule, matcher in compiled.metadata_pattern:
+        matches = [n for n in present if n not in claimed and matcher.match(n)]
+        expected = _metadata_sig_str(rule.kind, rule.shape)
+        for name in matches:
+            claimed.add(name)
+            kind, shape = metadata_signature(present[name])
+            if (kind, shape) != (rule.kind, rule.shape):
+                out.append(
+                    Violation(
+                        "metadata",
+                        name,
+                        "mismatch",
+                        expected,
+                        _metadata_sig_str(kind, shape),
+                    )
+                )
+        lo, hi = _cardinality(rule)
+        if len(matches) < lo or (hi is not None and len(matches) > hi):
+            out.append(
+                Violation(
+                    "metadata",
+                    rule.name,
+                    "count",
+                    str(rule.count or lo),
+                    str(len(matches)),
+                )
+            )
+
+    if level in ("strict", "warn"):
+        for name in present:
+            if name not in claimed:
+                kind, shape = metadata_signature(present[name])
+                out.append(
+                    Violation(
+                        "metadata", name, "extra", None, _metadata_sig_str(kind, shape)
+                    )
+                )
+    return out
+
+
+def _validate_frame_rule(frame: Frame, compiled: CompiledSpec) -> list[Violation]:
+    rule = compiled.frame
+    if rule is None:
+        return []
+    out: list[Violation] = []
+    lo, hi = rule.n_atoms_min, rule.n_atoms_max
+    if (lo is not None and frame.n_atoms < lo) or (
+        hi is not None and frame.n_atoms > hi
+    ):
+        bounds = f"[{'' if lo is None else lo}, {'' if hi is None else hi}]"
+        out.append(
+            Violation("frame", "n_atoms", "mismatch", bounds, str(frame.n_atoms))
+        )
+    if rule.lattice_required and "Lattice" not in frame.metadata:
+        out.append(Violation("frame", "Lattice", "missing", "required", None))
+    return out
+
+
 def validate_frame(
     frame: Frame, compiled: CompiledSpec, level: Conformance
 ) -> list[Violation]:
     """Return every schema deviation in `frame`. Never raises. `extra` items are
-    reported only under `strict`/`warn`; missing/mismatch/count are reported at
-    all levels. Metadata and frame checks are added by later helpers."""
+    reported only under `strict`/`warn`; missing/mismatch/count at all levels."""
 
-    return _validate_columns(frame, compiled, level)
+    return (
+        _validate_columns(frame, compiled, level)
+        + _validate_metadata(frame, compiled, level)
+        + _validate_frame_rule(frame, compiled)
+    )

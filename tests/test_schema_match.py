@@ -5,7 +5,7 @@ import numpy as np
 from oxyz import Kind
 from oxyz._frames import Frame
 from oxyz._schema_match import Violation, compile_spec, validate_frame
-from oxyz._schema_spec import ColumnRule, SchemaSpec
+from oxyz._schema_spec import ColumnRule, FrameRule, MetadataRule, SchemaSpec
 
 
 def frame(columns=None, metadata=None, n_atoms=2) -> Frame:
@@ -103,3 +103,47 @@ def test_string_column_width_from_list_of_lists():
     columns = {"labels": [["a", "b"], ["c", "d"]]}
     spec = SchemaSpec(columns=(ColumnRule("labels", Kind.STR, width=2),))
     assert validate_frame(frame(columns), compile_spec(spec), "strict") == []
+
+
+def test_metadata_scalar_and_array_conformant():
+    meta = {"energy": -1.5, "stress": np.zeros(9, dtype=np.float64)}
+    spec = SchemaSpec(
+        metadata=(
+            MetadataRule("energy", Kind.REAL),
+            MetadataRule("stress", Kind.REAL, shape=(9,)),
+        )
+    )
+    assert validate_frame(frame(cols(), meta), compile_spec(spec), "required") == []
+
+
+def test_metadata_bool_not_confused_with_int():
+    spec = SchemaSpec(metadata=(MetadataRule("periodic", Kind.BOOL),))
+    result = validate_frame(
+        frame(cols(), {"periodic": True}), compile_spec(spec), "required"
+    )
+    assert result == []
+
+
+def test_metadata_shape_mismatch_flagged():
+    meta = {"stress": np.zeros(6, dtype=np.float64)}
+    spec = SchemaSpec(metadata=(MetadataRule("stress", Kind.REAL, shape=(9,)),))
+    result = validate_frame(frame(cols(), meta), compile_spec(spec), "required")
+    assert result == [Violation("metadata", "stress", "mismatch", "R[9]", "R[6]")]
+
+
+def test_metadata_missing_required_flagged():
+    spec = SchemaSpec(metadata=(MetadataRule("energy", Kind.REAL),))
+    result = validate_frame(frame(cols(), {}), compile_spec(spec), "required")
+    assert result == [Violation("metadata", "energy", "missing", "R", None)]
+
+
+def test_frame_n_atoms_bounds():
+    spec = SchemaSpec(frame=FrameRule(n_atoms_min=3))
+    result = validate_frame(frame(cols(), n_atoms=2), compile_spec(spec), "required")
+    assert result == [Violation("frame", "n_atoms", "mismatch", "[3, ]", "2")]
+
+
+def test_frame_lattice_required():
+    spec = SchemaSpec(frame=FrameRule(lattice_required=True))
+    result = validate_frame(frame(cols(), {}), compile_spec(spec), "required")
+    assert result == [Violation("frame", "Lattice", "missing", "required", None)]
