@@ -227,6 +227,11 @@ def test_metadata_signature_covers_scalar_and_string_array_kinds():
     assert metadata_signature(["a", "b", "c"]) == (Kind.STR, (3,))
 
 
+def test_metadata_signature_rejects_type_outside_the_union():
+    with pytest.raises(TypeError, match="unsupported metadata value type"):
+        metadata_signature(object())
+
+
 def test_glob_member_kind_width_mismatch_flagged():
     columns = {
         "descriptor_0": np.zeros((2, 3), dtype=np.float64),  # R:3, expected R:1

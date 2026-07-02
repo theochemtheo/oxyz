@@ -121,9 +121,7 @@ def metadata_signature(value: object) -> tuple[Kind, tuple[int, ...]]:
     if isinstance(value, list):
         # a string array (`list[str]`)
         return Kind.STR, (len(value),)
-    raise TypeError(  # pragma: no cover - defensive; value is the MetadataValue union
-        f"unsupported metadata value type: {type(value).__name__}"
-    )
+    raise TypeError(f"unsupported metadata value type: {type(value).__name__}")
 
 
 def _metadata_sig_str(kind: Kind, shape: tuple[int, ...]) -> str:
