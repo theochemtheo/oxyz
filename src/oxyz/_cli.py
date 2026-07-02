@@ -41,6 +41,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(metavar="<command>")
     _add_scan_parser(subparsers)
+    _add_check_parser(subparsers)
     return parser
 
 
@@ -101,6 +102,44 @@ def _add_scan_parser(subparsers: argparse._SubParsersAction) -> None:
     scan_parser.set_defaults(func=_cmd_scan)
 
 
+def _add_check_parser(subparsers: argparse._SubParsersAction) -> None:
+    check_parser = subparsers.add_parser(
+        "check",
+        help="validate a file against a schema, reporting every violation",
+        description=(
+            "Validate PATH against a schema and report all violations (not just "
+            "the first). Exit 0 when conformant, 1 when any violation is found."
+        ),
+    )
+    check_parser.add_argument("path", help="path to an extxyz/xyz file")
+    check_parser.add_argument(
+        "--schema", required=True, help="schema file (.json/.yaml/.toml)"
+    )
+    check_parser.add_argument(
+        "--conformance",
+        choices=("strict", "required"),
+        default="required",
+        help="strict rejects extra columns/keys; required (default) allows them",
+    )
+    check_parser.add_argument(
+        "--json", action="store_true", help="emit a JSON object instead of text"
+    )
+    check_parser.add_argument(
+        "--compression",
+        choices=("infer", "none", "gzip", "zstd", "zip"),
+        default="infer",
+    )
+    check_parser.add_argument("--member", default=None)
+    check_parser.add_argument(
+        "--storage-option",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        dest="storage_options",
+    )
+    check_parser.set_defaults(func=_cmd_check)
+
+
 def _parse_storage_options(items: list[str]) -> dict[str, str] | None:
     if not items:
         return None
@@ -144,6 +183,72 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     else:
         _print_scan_summary(stats, schema)
     return 0
+
+
+def _cmd_check(args: argparse.Namespace) -> int:
+    from oxyz import iter_frames
+    from oxyz._schema_match import body, resolve, validate_frame
+
+    compiled = resolve(args.schema)
+    storage_options = _parse_storage_options(args.storage_options)
+    # group key -> [count, first_frame, first_line, violation]
+    groups: dict[tuple, list] = {}
+    line = 1
+    n_frames = 0
+    for index, frame in enumerate(
+        iter_frames(
+            args.path,
+            compression=args.compression,
+            member=args.member,
+            storage_options=storage_options,
+        )
+    ):
+        n_frames = index + 1
+        for v in validate_frame(frame, compiled, args.conformance):
+            key = (v.axis, v.name, v.deviation, v.expected, v.found)
+            if key not in groups:
+                groups[key] = [0, index, line, v]
+            groups[key][0] += 1
+        line += frame.n_atoms + 2
+
+    if args.json:
+        payload = {
+            "path": args.path,
+            "conformance": args.conformance,
+            "n_frames": n_frames,
+            "violations": [
+                {
+                    "axis": v.axis,
+                    "name": v.name,
+                    "deviation": v.deviation,
+                    "expected": v.expected,
+                    "found": v.found,
+                    "frames": count,
+                    "first_frame": first_frame,
+                    "first_line": first_line,
+                }
+                for (count, first_frame, first_line, v) in groups.values()
+            ],
+        }
+        print(json.dumps(payload, indent=2))
+    else:
+        if not groups:
+            print(
+                f"{args.path}: conformant ({n_frames} frames, "
+                f"conformance={args.conformance})"
+            )
+        else:
+            print(
+                f"{args.path}: {len(groups)} schema violations "
+                f"(conformance={args.conformance})"
+            )
+            for count, first_frame, first_line, v in groups.values():
+                print(
+                    f"  {v.axis} '{v.name}': {body(v)}"
+                    f"   — {count}/{n_frames} frames, "
+                    f"first at frame {first_frame} (L{first_line})"
+                )
+    return 1 if groups else 0
 
 
 def _scan_payload(stats: StatsSource, schema: Schema | None) -> dict:

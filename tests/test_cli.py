@@ -109,3 +109,59 @@ def test_scan_emit_schema_json(tmp_path: Path):
     )
     spec = SchemaSpec.from_file(out)
     assert any(rule.name == "pos" for rule in spec.columns)
+
+
+def _write_spec(tmp_path: Path) -> Path:
+    p = tmp_path / "s.yaml"
+    p.write_text(
+        "columns:\n  species: {kind: S}\n  pos: {kind: R, width: 3}\n"
+        "metadata:\n  energy: {kind: R}\n"
+    )
+    return p
+
+
+def test_check_conformant_exits_zero(tmp_path, capsys):
+    spec = _write_spec(tmp_path)
+    code = main(
+        ["check", str(DATA / "schema_conformant.extxyz"), "--schema", str(spec)]
+    )
+    assert code == 0
+
+
+def test_check_reports_all_and_exits_one(tmp_path, capsys):
+    spec = _write_spec(tmp_path)
+    code = main(
+        ["check", str(DATA / "schema_drift_type.extxyz"), "--schema", str(spec)]
+    )
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "pos" in out
+    assert (
+        "first at frame 1 (L5)" in out
+    )  # frame 1 begins at line 5 (frame 0 = 4 lines)
+
+
+def test_check_json_includes_line(tmp_path, capsys):
+    spec = _write_spec(tmp_path)
+    code = main(
+        [
+            "check",
+            str(DATA / "schema_drift_type.extxyz"),
+            "--schema",
+            str(spec),
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 1
+    violation = payload["violations"][0]
+    assert violation["name"] == "pos"
+    assert violation["first_frame"] == 1
+    assert violation["first_line"] == 5
+
+
+def test_check_extra_only_errors_under_strict(tmp_path):
+    spec = _write_spec(tmp_path)
+    args = ["check", str(DATA / "schema_extra_column.extxyz"), "--schema", str(spec)]
+    assert main(args) == 0  # required: extra column allowed
+    assert main([*args, "--conformance", "strict"]) == 1
