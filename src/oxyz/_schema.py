@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -10,6 +11,9 @@ import oxyz._rust as _rust
 from oxyz import _remote
 from oxyz._frames import Compression
 from oxyz._stats import AtomCountStats
+
+if TYPE_CHECKING:
+    from oxyz._schema_spec import SchemaSpec
 
 
 class Kind(StrEnum):
@@ -105,6 +109,14 @@ class Schema(AtomCountStats):
     def report(self) -> str:
         """Human-readable summary: one line per column and metadata key."""
         return self._report
+
+    def to_spec(self) -> SchemaSpec:
+        """Best-effort prescriptive schema from what was observed: partial-presence
+        entries optional, enumerable column families collapsed to `*` globs, no
+        `frame` bounds. Feed it back to `read_frames(..., schema=...)`."""
+        from oxyz._schema_emit import spec_from_schema
+
+        return spec_from_schema(self)
 
     def __str__(self) -> str:
         return self._report
