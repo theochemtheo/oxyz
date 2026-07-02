@@ -87,11 +87,20 @@ def run(benchmark, read, path: Path, shape: tuple[int, int] | str | None = "file
     return benchmark(read, path)
 
 
-def oxyz_read_all_with(threads: int):
+def oxyz_read_all_with(threads: int | None):
     @row("numpy frames", "serial" if threads == 1 else "parallel", threads=threads)
     def read(path: Path) -> list:
         return oxyz.read_frames(path, threads=threads)
 
+    return read
+
+
+def oxyz_read_all_schema_with(conformance: oxyz.Conformance):
+    @row("numpy frames", f"schema-{conformance}")
+    def read(path: Path) -> list:
+        return oxyz.read_frames(path, schema=read.spec, conformance=conformance)
+
+    read.spec = None  # set per file by the test below, before timing starts
     return read
 
 
@@ -241,6 +250,28 @@ def test_read_all_metadata_heavy(benchmark, read, metadata_heavy):
 @pytest.mark.benchmark(group="read_all/mace_mixed")
 @pytest.mark.parametrize("read", READ_ALL)
 def test_read_all_mace_mixed(benchmark, read, mace_mixed):
+    frames = run(benchmark, read, mace_mixed)
+    assert len(frames) == 1_000
+
+
+SCHEMA_READ = [
+    pytest.param(oxyz_read_all_with(None), id="baseline"),
+    pytest.param(oxyz_read_all_schema_with("required"), id="schema-required"),
+    pytest.param(oxyz_read_all_schema_with("strict"), id="schema-strict"),
+]
+
+
+# Isolates per-frame validation cost from parsing: all three rows parse the
+# same file the same way, differing only in whether/how strictly read_frames
+# checks each frame against a schema. The schema itself is derived from the
+# file (the common case: validate what training data actually looks like)
+# and computed once per row, before timing starts, so the measured cost is
+# validation alone, not schema inference.
+@pytest.mark.benchmark(group="schema_read/mace_mixed")
+@pytest.mark.parametrize("read", SCHEMA_READ)
+def test_schema_read_overhead(benchmark, read, mace_mixed):
+    if getattr(read, "spec", "unset") is None:
+        read.spec = oxyz.infer_schema(mace_mixed).to_spec()
     frames = run(benchmark, read, mace_mixed)
     assert len(frames) == 1_000
 
