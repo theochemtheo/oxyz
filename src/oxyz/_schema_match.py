@@ -118,8 +118,12 @@ def metadata_signature(value: object) -> tuple[Kind, tuple[int, ...]]:
         return Kind.STR, ()
     if isinstance(value, np.ndarray):
         return _NUMPY_KIND[value.dtype.kind], (value.shape[0],)
-    # list[str] — a string array
-    return Kind.STR, (len(value),)  # ty: ignore[invalid-argument-type]
+    if isinstance(value, list):
+        # a string array (`list[str]`)
+        return Kind.STR, (len(value),)
+    raise TypeError(  # pragma: no cover - defensive; value is the MetadataValue union
+        f"unsupported metadata value type: {type(value).__name__}"
+    )
 
 
 def _metadata_sig_str(kind: Kind, shape: tuple[int, ...]) -> str:
