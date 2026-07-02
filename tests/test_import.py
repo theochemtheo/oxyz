@@ -12,6 +12,7 @@ def test_schema_public_api_exported():
     import oxyz
 
     for name in (
+        "Conformance",
         "SchemaSpec",
         "ColumnRule",
         "MetadataRule",
