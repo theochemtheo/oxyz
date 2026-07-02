@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
@@ -46,6 +46,8 @@ def _collapse_columns(
         if match and required and note is None:
             families[(match.group(1), kind, width)].append(entry.name)
 
+    stem_family_count = Counter(stem for (stem, _kind, _width) in families)
+
     globbed: set[str] = set()
     rules: list[ColumnRule] = []
     notes: dict[str, str] = {}
@@ -57,7 +59,11 @@ def _collapse_columns(
         if match is not None:
             stem = match.group(1)
             members = families.get((stem, kind, width), [])
-            if entry.name in members and len(members) >= glob_min_run:
+            if (
+                entry.name in members
+                and len(members) >= glob_min_run
+                and stem_family_count[stem] == 1
+            ):
                 globbed.update(members)
                 rules.append(
                     ColumnRule(f"{stem}*", kind, width=width, count=len(members))

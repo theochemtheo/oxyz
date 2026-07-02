@@ -72,3 +72,18 @@ def test_partial_member_of_glob_family_not_dropped_or_duplicated(tmp_path):
     assert len(literal) == 1 and literal[0].required is False  # not dropped
     # round-trip: the emitted spec validates its own source under required
     assert len(read_frames(path, schema=spec, conformance="required")) == 2
+
+
+def test_same_stem_families_with_different_width_not_globbed(tmp_path):
+    lo = [f"d_{i}:R:1" for i in range(3)]
+    hi = [f"d_{i}:R:3" for i in range(3, 6)]
+    props = "species:S:1:pos:R:3:" + ":".join(lo + hi)
+    vals = " ".join(["0.0"] * (3 + 3 * 1 + 3 * 3))  # pos(3) + 3xR:1 + 3xR:3
+    frame = f"2\nProperties={props}\nH {vals}\nO {vals}\n"
+    text = frame + frame
+    path = tmp_path / "two_families.extxyz"
+    path.write_text(text)
+    spec = infer_schema(path).to_spec()
+    assert not any(r.name == "d_*" for r in spec.columns)  # not globbed
+    assert sum(r.name.startswith("d_") for r in spec.columns) == 6  # all literal
+    assert len(read_frames(path, schema=spec, conformance="strict")) == 2  # round-trips

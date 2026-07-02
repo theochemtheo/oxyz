@@ -142,14 +142,15 @@ def _validate_columns(
     present = frame.columns
 
     for name, rule in compiled.columns_literal.items():
-        expected = _column_sig_str(rule.kind, rule.width)
         if name not in present:
             if rule.required:
+                expected = _column_sig_str(rule.kind, rule.width)
                 out.append(Violation("column", name, "missing", expected, None))
             continue
         claimed.add(name)
         kind, width = column_signature(present[name])
         if (kind, width) != (rule.kind, rule.width):
+            expected = _column_sig_str(rule.kind, rule.width)
             out.append(
                 Violation(
                     "column", name, "mismatch", expected, _column_sig_str(kind, width)
@@ -158,11 +159,11 @@ def _validate_columns(
 
     for rule, matcher in compiled.columns_pattern:
         matches = [n for n in present if n not in claimed and matcher.match(n)]
-        expected = _column_sig_str(rule.kind, rule.width)
         for name in matches:
             claimed.add(name)
             kind, width = column_signature(present[name])
             if (kind, width) != (rule.kind, rule.width):
+                expected = _column_sig_str(rule.kind, rule.width)
                 out.append(
                     Violation(
                         "column",
@@ -204,14 +205,15 @@ def _validate_metadata(
     present = frame.metadata
 
     for name, rule in compiled.metadata_literal.items():
-        expected = _metadata_sig_str(rule.kind, rule.shape)
         if name not in present:
             if rule.required:
+                expected = _metadata_sig_str(rule.kind, rule.shape)
                 out.append(Violation("metadata", name, "missing", expected, None))
             continue
         claimed.add(name)
         kind, shape = metadata_signature(present[name])
         if (kind, shape) != (rule.kind, rule.shape):
+            expected = _metadata_sig_str(rule.kind, rule.shape)
             out.append(
                 Violation(
                     "metadata",
@@ -224,11 +226,11 @@ def _validate_metadata(
 
     for rule, matcher in compiled.metadata_pattern:
         matches = [n for n in present if n not in claimed and matcher.match(n)]
-        expected = _metadata_sig_str(rule.kind, rule.shape)
         for name in matches:
             claimed.add(name)
             kind, shape = metadata_signature(present[name])
             if (kind, shape) != (rule.kind, rule.shape):
+                expected = _metadata_sig_str(rule.kind, rule.shape)
                 out.append(
                     Violation(
                         "metadata",

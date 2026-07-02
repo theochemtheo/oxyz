@@ -277,9 +277,8 @@ def _stats_dict(stats: StatsSource) -> dict:
 
 
 def _write_schema(schema: Schema, path: Path) -> None:
-    spec = schema.to_spec()
     if path.suffix.lower() == ".json":
-        path.write_text(spec.to_json())
+        path.write_text(schema.to_spec().to_json())
     else:
         from oxyz._schema_emit import spec_and_notes
         from oxyz._schema_spec import render_yaml

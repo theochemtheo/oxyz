@@ -111,6 +111,20 @@ def test_scan_emit_schema_json(tmp_path: Path):
     assert any(rule.name == "pos" for rule in spec.columns)
 
 
+def test_emit_schema_with_no_schema_errors(tmp_path, capsys):
+    out = tmp_path / "s.yaml"
+    code = main(
+        [
+            "scan",
+            str(DATA / "schema_conformant.extxyz"),
+            "--emit-schema",
+            str(out),
+            "--no-schema",
+        ]
+    )
+    assert code == 1  # ValueError -> main() prints and returns 1
+
+
 def _write_spec(tmp_path: Path) -> Path:
     p = tmp_path / "s.yaml"
     p.write_text(

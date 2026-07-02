@@ -259,8 +259,6 @@ def iter_frames(
     for index, data in enumerate(iterator):
         frame = _frame_from_data(data)
         if compiled is not None:
-            from oxyz import _schema_match
-
             _schema_match.enforce_frame(frame, compiled, conformance, index)
         yield frame
 
