@@ -54,13 +54,15 @@ def _collapse_columns(
             continue
         kind, width, required, note = resolved[entry.name]
         match = _ENUMERATED.match(entry.name)
-        family_key = (match.group(1), kind, width) if match else None
-        if family_key in families and len(families[family_key]) >= glob_min_run:
-            members = families[family_key]
-            globbed.update(members)
-            name = f"{family_key[0]}*"
-            rules.append(ColumnRule(name, kind, width=width, count=len(members)))
-            continue
+        if match is not None:
+            stem = match.group(1)
+            members = families.get((stem, kind, width), [])
+            if entry.name in members and len(members) >= glob_min_run:
+                globbed.update(members)
+                rules.append(
+                    ColumnRule(f"{stem}*", kind, width=width, count=len(members))
+                )
+                continue
         rules.append(ColumnRule(entry.name, kind, width=width, required=required))
         if note is not None:
             notes[entry.name] = note

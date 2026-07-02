@@ -47,3 +47,28 @@ def test_descriptor_family_collapses_to_glob(tmp_path: Path):
 
 def test_no_frame_section_emitted():
     assert infer_schema(DATA / "schema_conformant.extxyz").to_spec().frame is None
+
+
+def test_partial_member_of_glob_family_not_dropped_or_duplicated(tmp_path):
+    f0_props = "species:S:1:pos:R:3:" + ":".join(
+        f"descriptor_{i}:R:1" for i in range(5)
+    )
+    f1_props = "species:S:1:pos:R:3:" + ":".join(
+        f"descriptor_{i}:R:1" for i in (0, 1, 3, 4)
+    )
+    f0 = " ".join(["0.0"] * (3 + 5))
+    f1 = " ".join(["0.0"] * (3 + 4))
+    text = (
+        f"2\nProperties={f0_props}\nH {f0}\nO {f0}\n"
+        f"2\nProperties={f1_props}\nH {f1}\nO {f1}\n"
+    )
+    path = tmp_path / "partial.extxyz"
+    path.write_text(text)
+    spec = infer_schema(path).to_spec()
+    glob_rules = [r for r in spec.columns if r.name == "descriptor_*"]
+    assert len(glob_rules) == 1  # not duplicated
+    assert glob_rules[0].count == 4
+    literal = [r for r in spec.columns if r.name == "descriptor_2"]
+    assert len(literal) == 1 and literal[0].required is False  # not dropped
+    # round-trip: the emitted spec validates its own source under required
+    assert len(read_frames(path, schema=spec, conformance="required")) == 2
