@@ -24,8 +24,8 @@ print(schema)                                    # which keys drift, and in how 
 
 `oxyz` exists for the gap between "extxyz is the lingua franca of atomistic
 ML datasets" and "every Python extxyz reader is slow enough to matter".
-Reading a dataset into numpy is 16–27× faster than `ase.io.read` on the
-benchmarks below; reading it into `ase.Atoms` objects is 3.5–6× faster.
+Reading a dataset into numpy is 17–24× faster than `ase.io.read` on the
+benchmarks below; reading it into `ase.Atoms` objects is 3.3–6.3× faster.
 The same single pass can also tell you the dataset's schema — which columns
 and metadata keys appear, with what types and shapes, and how consistently
 — which is the part of dataset ingestion that usually goes unchecked.
@@ -35,12 +35,15 @@ Pre-1.0: minor versions may change the API.
 ## Install
 
 ```sh
-pip install oxyz                # numpy is the only dependency
-pip install "oxyz[ase]"         # adds ASE conversion (ase >=3.23,<4)
-pip install "oxyz[metatomic]"   # adds metatomic.torch.System reading (torch >=2)
-pip install "oxyz[torch-sim]"   # adds torch_sim.SimState reading (torch >=2)
-pip install "oxyz[s3]"          # adds obstore for reading from S3-compatible URLs
+pip install oxyz                # minimal dependencies
+pip install "oxyz[ase]"         # adds ase.Atoms conversion
+pip install "oxyz[metatomic]"   # adds metatomic.torch.System reading
+pip install "oxyz[torch-sim]"   # adds torch_sim.SimState reading
+pip install "oxyz[s3]"          # adds reading from S3-compatible URLs
 ```
+
+Runtime dependencies are kept to a minimum; the extras above are pulled in
+lazily, only when their target is used.
 
 Wheels cover CPython ≥3.12 on Linux (x86_64, aarch64), macOS (arm64,
 x86_64), and Windows (x64).
@@ -289,10 +292,13 @@ oxyz scan train.extxyz
 ```
 
 `scan` prints per-frame atom-count statistics followed by the inferred
-schema. Unlike the `oxyz.scan` primitive, which parses nothing, the command
-reads the whole file to infer the schema; `--no-schema` drops back to the
-cheap structural pass and reports only the statistics. `--json` emits a
-single `{"stats": ..., "schema": ...}` object for piping into other tools.
+schema, rendered as pasteable schema syntax you can drop into a `.yaml` and
+read back with `schema=`. Unlike the `oxyz.scan` primitive, which parses
+nothing, the command reads the whole file to infer the schema; `--no-schema`
+drops back to the cheap structural pass and reports only the statistics.
+`--emit-schema PATH` writes the schema to a `.yaml`/`.json` file instead of
+printing it, and `--json` emits a single `{"stats": ..., "schema": ...}`
+object for piping into other tools.
 
 ```text
 $ oxyz scan train.extxyz
@@ -300,16 +306,14 @@ frames:      3
 atoms total: 6
 atoms/frame: min 1  max 3  mean 2.00  median 2.00  std 0.82
 
-3 frames, 6 atoms (min 1, max 3)
-
-per-atom columns:
-  species: S:1 (3/3 frames)
-  pos: R:3 (3/3 frames)
-  forces: R:3 (3/3 frames)
-
+# schema — paste into a .yaml and read with read_frames(..., schema=...)
+columns:
+  species: {kind: S}
+  pos: {kind: R, width: 3}
+  forces: {kind: R, width: 3}
 metadata:
-  Lattice: IntArray[9] (3/3 frames)
-  energy: Real (3/3 frames)
+  Lattice: {kind: R, shape: [9]}
+  energy: {kind: R}
 ```
 
 ## Performance
@@ -327,23 +331,23 @@ parser, via its `read_dicts`):
 
 | workload | oxyz | oxyz `threads=1` | cextxyz |
 | --- | ---: | ---: | ---: |
-| 2 000 small frames | **9.2 ms** | 18.6 ms | 215 ms |
-| 4 × 100 000 atoms | **26.6 ms** | 60.2 ms | 92.7 ms |
-| 2 000 frames, heavy metadata | **12.7 ms** | 25.6 ms | 356 ms |
-| MACE-style mixed file | **6.4 ms** | 13.1 ms | 135 ms |
+| 2 000 small frames | **10.2 ms** | 19.6 ms | 213 ms |
+| 4 × 100 000 atoms | **26.6 ms** | 59.5 ms | 96.4 ms |
+| 2 000 frames, heavy metadata | **14.0 ms** | 27.3 ms | 376 ms |
+| MACE-style mixed file | **7.2 ms** | 14.3 ms | 147 ms |
 
 Whole-file reads to `ase.Atoms` (`oxyz.ase.read` vs the [ase-extxyz] plugin
 wrapping the same C parser, vs `ase.io.read`):
 
 | workload | oxyz.ase | ase-extxyz | ase |
 | --- | ---: | ---: | ---: |
-| 2 000 small frames | **60 ms** | 101 ms | 209 ms |
-| 4 × 100 000 atoms | **71 ms** | 90 ms | 426 ms |
-| 2 000 frames, heavy metadata | **74 ms** | 241 ms | 339 ms |
-| MACE-style mixed file | **37 ms** | 75 ms | 152 ms |
+| 2 000 small frames | **66 ms** | 103 ms | 216 ms |
+| 4 × 100 000 atoms | **70 ms** | 97 ms | 446 ms |
+| 2 000 frames, heavy metadata | **81 ms** | 252 ms | 332 ms |
+| MACE-style mixed file | **38 ms** | 83 ms | 166 ms |
 
 Beyond whole-file reads: on selective reads (every 20th frame of the
-small-frames file) `oxyz.read_batch` takes 1.6 ms against 21 ms for ASE;
+small-frames file) `oxyz.read_batch` takes 1.8 ms against 21 ms for ASE;
 on peak memory, streaming `iter_frames` through the small-frames file
 grows RSS by 12 MiB where `ase.io.iread` grows it by 56 MiB
 ([benchmarks/MEMORY.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/MEMORY.md)).
@@ -367,22 +371,15 @@ oxyz.iter_batches(path, *, frames_per_batch=None, atoms_per_batch=None,
 oxyz.scan(path)                              -> FrameIndex
 oxyz.infer_schema(path)                      -> Schema
 
-# Every reader above also takes compression="infer" and member=None.
+# Every reader above also takes compression="infer" and member=None; the
+# per-frame readers additionally take schema=None and conformance="required".
 
 oxyz.write(path, obj, *, append=False, compression="infer", level=None, threads=None) -> None
 oxyz.Writer(path, *, append=False, compression="infer", level=None, batch=None)   # incremental, a context manager
-
-oxyz.ase.read(path, index=None, *, format=None)  -> Atoms | list[Atoms]  # index=None: last frame
-oxyz.ase.iread(path, index=":", *, format=None)  -> Iterator[Atoms]
-oxyz.ase.to_atoms(frame)                     -> Atoms              # also Frame.to_ase()
-oxyz.ase.from_atoms(atoms)                   -> Frame              # the inverse
-
-oxyz.metatomic.read(path, index=":", *, dtype=None, device=None,
-                    positions_requires_grad=False, cell_requires_grad=False,
-                    threads=None)            -> System | list[System]
-oxyz.metatomic.iread(path, index=":", *, dtype=None, ...)  -> Iterator[System]
-oxyz.metatomic.SystemSource(path, *, threads=None)         # .systems() / .per_config() / .per_atom()
 ```
+
+The output-target converters — `oxyz.ase`, `oxyz.metatomic`, `oxyz.torch_sim`
+— share the reader index grammar; their signatures are in the sections above.
 
 `Frame`, `Batch`, `FrameIndex`, `Schema` and its parts (`ColumnSchema`,
 `MetadataSchema`, the variant records, the `Kind` enum) are frozen
@@ -391,7 +388,10 @@ dataclasses; everything ships with type stubs.
 The command line mirrors a subset:
 
 ```text
-oxyz scan <path> [--no-schema] [--json] [--compression C] [--member M]
+oxyz scan  <path> [--no-schema] [--emit-schema PATH] [--json]
+                  [--compression C] [--member M] [--storage-option K=V]
+oxyz check <path> --schema S [--conformance strict|required] [--json]
+                  [--compression C] [--member M] [--storage-option K=V]
 ```
 
 ### Compressed files
@@ -534,7 +534,7 @@ own:
   threads parse in parallel; conversion to numpy happens once at the
   boundary, column buffers passing across as whole arrays rather than
   element-wise. Built as a single abi3 wheel per platform covering
-  CPython ≥3.11.
+  CPython ≥3.12.
 - **`src/oxyz`** — thin typed Python: frozen dataclasses over the
   binding's dicts, batch planning (the pure-Python part of
   `iter_batches`), and the index grammar (shared by the conversion layers
