@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
 import oxyz._rust as _rust
 from oxyz import _remote
 from oxyz._frames import ColumnValues, Compression, _check_threads
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Sequence
+    from pathlib import Path
 
 MemoryScaling = Literal["n_atoms", "n_atoms_x_density"]
 
@@ -114,7 +116,7 @@ def read_batch(
     )
 
 
-def iter_batches(
+def iter_batches(  # noqa: C901, PLR0913  the keyword options are the batching contract
     path: str | Path,
     *,
     frames_per_batch: int | None = None,
@@ -286,7 +288,10 @@ def _planned_batches(
     elif atoms_per_batch is not None:
         plans = _greedy_atom_plans(order, n_atoms, atoms_per_batch)
     else:
-        assert memory_scales_with is not None and max_scaler is not None
+        # Type-narrowing only, never control flow: iter_batches already raised
+        # unless exactly one strategy is set, so this else is the memory case.
+        assert memory_scales_with is not None  # noqa: S101
+        assert max_scaler is not None  # noqa: S101
         weights = _memory_weights(memory_scales_with, n_atoms, reader.volumes)
         plans = _balanced_bins(order, weights, max_scaler)
 
@@ -325,7 +330,9 @@ def _memory_weights(
     counts = n_atoms.astype(np.float64)
     if metric == "n_atoms":
         return counts
-    assert volumes is not None  # need_volume opened the scan with volumes
+    # Type-narrowing only, never control flow: need_volume opened the scan with
+    # volumes, so this is non-None here.
+    assert volumes is not None  # noqa: S101
     with np.errstate(invalid="ignore", divide="ignore"):
         density = counts * counts / volumes
     return np.where(np.isfinite(volumes) & (volumes > 0), density, counts)

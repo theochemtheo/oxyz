@@ -42,7 +42,8 @@ def test_descriptor_family_collapses_to_glob(tmp_path: Path):
     names = {rule.name for rule in spec.columns}
     assert "descriptor_*" in names
     glob = next(rule for rule in spec.columns if rule.name == "descriptor_*")
-    assert glob.count == 5 and glob.kind is Kind.REAL
+    assert glob.count == 5
+    assert glob.kind is Kind.REAL
 
 
 def test_no_frame_section_emitted():
@@ -69,7 +70,8 @@ def test_partial_member_of_glob_family_not_dropped_or_duplicated(tmp_path):
     assert len(glob_rules) == 1  # not duplicated
     assert glob_rules[0].count == 4
     literal = [r for r in spec.columns if r.name == "descriptor_2"]
-    assert len(literal) == 1 and literal[0].required is False  # not dropped
+    assert len(literal) == 1  # not dropped
+    assert literal[0].required is False
     # round-trip: the emitted spec validates its own source under required
     assert len(read_frames(path, schema=spec, conformance="required")) == 2
 

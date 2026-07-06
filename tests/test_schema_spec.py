@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -13,6 +13,9 @@ from oxyz._schema_spec import (
     SchemaSpec,
     render_yaml,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 SPEC_DICT = {
     "columns": {

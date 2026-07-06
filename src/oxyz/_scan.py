@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
-
-import numpy as np
+from typing import TYPE_CHECKING
 
 import oxyz._rust as _rust
 from oxyz import _remote
-from oxyz._frames import Compression
 from oxyz._stats import AtomCountStats
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import numpy as np
+
+    from oxyz._frames import Compression
 
 
 @dataclass(frozen=True, slots=True)

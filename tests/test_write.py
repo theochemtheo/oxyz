@@ -62,7 +62,7 @@ def test_corpus_round_trips_losslessly(name: str, tmp_path: Path) -> None:
     if not has_species_and_pos(frames):
         # extxyz needs species and pos; a frame without them must be refused,
         # not written into something unreadable.
-        with pytest.raises(ValueError, match="species|pos"):
+        with pytest.raises(ValueError, match=r"species|pos"):
             oxyz.write(out, frames)
         return
 

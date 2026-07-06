@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -11,6 +9,9 @@ import oxyz._rust as _rust
 from oxyz import _remote
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from pathlib import Path
+
     from ase import Atoms
 
     from oxyz._schema_match import Conformance

@@ -14,11 +14,15 @@ own guarded import of torch has already succeeded.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import torch
 
 from oxyz._convert import species_to_numbers
-from oxyz._frames import ColumnValues
+
+if TYPE_CHECKING:
+    from oxyz._frames import ColumnValues
 
 
 class MissingSpeciesError(Exception):

@@ -27,13 +27,11 @@ Optional dependencies `torch` and `torch-sim-atomistic`, installed with
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
-from pathlib import Path
 
 import numpy as np
 
 from oxyz._batch import Batch, MemoryScaling, iter_batches, read_batch
 from oxyz._convert import UnknownSpeciesError, numbers_to_masses
-from oxyz._frames import Compression
 from oxyz._scan import scan
 from oxyz._select import parse_index
 
@@ -46,7 +44,14 @@ except ImportError as error:
         "'torch-sim-atomistic'; install them with: pip install oxyz[torch-sim]"
     ) from error
 
+from typing import TYPE_CHECKING
+
 from oxyz._torch import MissingSpeciesError, numbers, to_tensor
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from oxyz._frames import Compression
 
 __all__ = ["SimStateSource", "ToSimStateError", "iread", "read"]
 
@@ -57,7 +62,7 @@ class ToSimStateError(ValueError):
     """The frames have no faithful `SimState` representation (strict: no repair)."""
 
 
-def read(
+def read(  # noqa: PLR0913  keyword options mirror the SimState data model
     path: str | Path,
     index: int | str | slice = ":",
     *,
@@ -93,7 +98,7 @@ def read(
     )
 
 
-def iread(
+def iread(  # noqa: PLR0913  batching options plus the SimState data model
     path: str | Path,
     *,
     frames_per_batch: int | None = None,

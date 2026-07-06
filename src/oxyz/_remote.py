@@ -10,7 +10,6 @@ install stays numpy-only.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
@@ -44,6 +43,8 @@ _CLIENT_CONFIG_KEYS: frozenset[str] = frozenset(
 )
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from obstore.store import AzureConfig, GCSConfig, S3Config
 
     # The accepted shape of `storage_options`, keyed by the provider the URL
@@ -133,8 +134,8 @@ def _build_store(bucket_url: str, storage_options: StorageOptions | None) -> Any
     _from_url: Any = from_url
     return _from_url(
         bucket_url,
-        config=cfg if cfg else None,
-        client_options=client if client else None,
+        config=cfg or None,
+        client_options=client or None,
     )
 
 
@@ -191,7 +192,7 @@ def open_source(
 ) -> RemoteSource:
     """Open `path` as a `RemoteSource` for the `_rust.*_reader` entries."""
     obstore = _import_obstore()
-    _scheme_, bucket_url, key = _split_url(str(path))
+    _, bucket_url, key = _split_url(str(path))
     store = _build_store(bucket_url, storage_options)
     codec = _resolve_codec(obstore, store, key, compression)
 

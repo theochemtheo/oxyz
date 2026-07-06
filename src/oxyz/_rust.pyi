@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import NotRequired, TypedDict
 
 import numpy as np
@@ -19,8 +17,8 @@ class ParseError(ValueError):
     line_number: int | None
     column: str | None
 
-ColumnValues = np.ndarray | list[str] | list[list[str]]
-MetadataValue = float | int | bool | str | np.ndarray | list[str]
+type ColumnValues = np.ndarray | list[str] | list[list[str]]
+type MetadataValue = float | int | bool | str | np.ndarray | list[str]
 
 class FrameData(TypedDict):
     n_atoms: int

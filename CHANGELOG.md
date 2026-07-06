@@ -8,6 +8,12 @@ While the version is below 1.0 the public API is not yet settled: minor
 releases may make breaking changes, patch releases will not. Such changes are
 recorded here.
 
+## [Unreleased]
+
+### Internal
+
+- Widened the `ruff` lint selection.
+
 ## [0.5.0] - 2026-07-03
 
 ### Added

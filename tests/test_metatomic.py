@@ -170,7 +170,8 @@ def test_index_selects_single_or_list() -> None:
     assert not isinstance(one, list)
     assert hasattr(one, "positions")
     several = oxyz.metatomic.read(path, ":")
-    assert isinstance(several, list) and len(several) == 2
+    assert isinstance(several, list)
+    assert len(several) == 2
 
 
 def test_iread_streams_same_systems_as_read() -> None:

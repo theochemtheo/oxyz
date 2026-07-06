@@ -4,7 +4,6 @@ import fnmatch
 import re
 import warnings
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -19,6 +18,9 @@ from oxyz._schema_spec import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+    from pathlib import Path
+
     from oxyz._frames import Frame
 
 Conformance = Literal["strict", "required", "warn"]
@@ -63,9 +65,11 @@ def _matcher(name: str) -> re.Pattern[str]:
     return re.compile(fnmatch.translate(name))
 
 
-def _partition(rules):
-    literal: dict = {}
-    patterns: list = []
+def _partition[Rule: (ColumnRule, MetadataRule)](
+    rules: Iterable[Rule],
+) -> tuple[dict[str, Rule], tuple[tuple[Rule, re.Pattern[str]], ...]]:
+    literal: dict[str, Rule] = {}
+    patterns: list[tuple[Rule, re.Pattern[str]]] = []
     for rule in rules:
         if _is_pattern(rule.name):
             patterns.append((rule, _matcher(rule.name)))
@@ -303,7 +307,7 @@ class SchemaError(ValueError):
 
     def __init__(
         self, message: str, *, frame_index: int | None = None, name: str | None = None
-    ):
+    ) -> None:
         super().__init__(message)
         self.frame_index = frame_index
         self.name = name
