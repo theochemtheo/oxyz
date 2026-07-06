@@ -9,9 +9,8 @@ caller converts to its own target.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
 from itertools import islice
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import oxyz._rust as _rust
 from oxyz import _remote
@@ -23,6 +22,10 @@ from oxyz._frames import (
     read_frames,
     read_frames_sliced,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
+    from pathlib import Path
 
 
 def _is_streaming_only(path: str | Path, compression: Compression) -> bool:

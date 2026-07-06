@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import json
 import tomllib
-from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
 from oxyz._schema import Kind
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 LETTER_TO_KIND: dict[str, Kind] = {
     "R": Kind.REAL,

@@ -121,7 +121,56 @@ select = [
     "UP",
     "B",
     "SIM",
+    "ANN",   # the public surface is a typed contract; keep it annotated
+    "RUF",
+    "TC",    # typing-only imports belong under TYPE_CHECKING
+    "PT",    # the tests encode the promises; hold them to pytest idioms
+    "PYI",   # the shipped .pyi stubs are linted too
+    "RET",
+    "PIE",
+    "FURB",
+    "SLOT",
+    "ICN",
+    "LOG",
+    "G",
+    "INP",
+    "TID",
+    "N",
+    "PTH",
+    "DTZ",
+    "PGH",
+    "FLY",
+    "ERA",
+    "C901",     # complexity; thresholds below flag only real outliers
+    "PLR0913",
+    "S",        # security; asserts (S101) allowed in tests below
+    "T20",      # no stray prints outside the CLI
 ]
+
+[tool.ruff.lint.pylint]
+max-args = 8
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
+
+[tool.ruff.lint.per-file-ignores]
+# lazy imports are the deliberate optional-target design; asserts and magic
+# values are the idiom of these tests, not a smell.
+# S: security lints target shipped code, not the test harness (fake creds, the
+# ty subprocess canary); PT011: these tests assert the error class deliberately.
+"tests/**" = ["ANN", "S", "PLR2004", "SLF001", "ARG", "PT011"]
+# print() is the CLI's output mechanism.
+"src/oxyz/_cli.py" = ["T201"]
+# the obstore adapter is the boundary to an optional, loosely-typed dependency;
+# Any is deliberate there rather than a missing annotation.
+"src/oxyz/_remote.py" = ["ANN401"]
+# the .pyi stubs are the user-facing docs for the Rust extension's symbols, so
+# they carry docstrings by design.
+"**/*.pyi" = ["PYI021"]
+# benchmarks are PEP 723 measurement scripts, not shipped surface: they print
+# results, use pickle/random/subprocess to drive comparisons, and need no
+# annotations. Keep the real checks (F/E/B/…); relax the standards groups.
+"benchmarks/**" = ["ANN", "S", "T20", "INP", "PT", "TC", "RUF001"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

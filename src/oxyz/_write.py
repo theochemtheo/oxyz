@@ -9,8 +9,7 @@ ordering, and compression all live in the Rust core; this layer only marshals.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Self, cast
 
 import numpy as np
 
@@ -18,6 +17,8 @@ import oxyz._rust as _rust
 from oxyz._frames import ColumnValues, Compression, Frame, MetadataValue
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from ase import Atoms
 
     Writable = Frame | Atoms
@@ -92,7 +93,7 @@ class Writer:
         """Finalise the encoder and close the file. Idempotent."""
         self._inner.close()
 
-    def __enter__(self) -> Writer:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc: object) -> None:

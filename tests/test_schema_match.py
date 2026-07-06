@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import warnings
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
@@ -21,6 +21,9 @@ from oxyz._schema_match import (
     validate_frame,
 )
 from oxyz._schema_spec import ColumnRule, FrameRule, MetadataRule, SchemaSpec
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def frame(columns=None, metadata=None, n_atoms=2) -> Frame:

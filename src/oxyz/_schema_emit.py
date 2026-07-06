@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import re
 from collections import Counter, defaultdict
-from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-from oxyz._schema import Kind
 from oxyz._schema_spec import ColumnRule, MetadataRule, SchemaSpec
 
 if TYPE_CHECKING:
-    from oxyz._schema import ColumnSchema, ColumnVariant, MetadataVariant, Schema
+    from collections.abc import Sequence
+
+    from oxyz._schema import ColumnSchema, ColumnVariant, Kind, MetadataVariant, Schema
 
 _ENUMERATED = re.compile(r"^(.*?)(\d+)$")
 

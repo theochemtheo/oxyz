@@ -19,9 +19,7 @@ Optional dependencies `torch` and `metatomic-torch`, installed with
 from __future__ import annotations
 
 import warnings
-from collections.abc import Iterator
-from pathlib import Path
-from typing import overload
+from typing import TYPE_CHECKING, overload
 
 import numpy as np
 
@@ -39,6 +37,10 @@ except ImportError as error:
     ) from error
 
 from oxyz._torch import MissingSpeciesError, numbers, resolve_dtype, to_tensor
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from pathlib import Path
 
 __all__ = ["SystemSource", "ToSystemError", "iread", "read"]
 
@@ -101,7 +103,7 @@ def read(
 ) -> System | list[System]: ...
 
 
-def read(
+def read(  # noqa: PLR0913  keyword options mirror the System data model
     path: str | Path,
     index: int | str | slice = ":",
     *,

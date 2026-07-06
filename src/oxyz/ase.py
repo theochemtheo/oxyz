@@ -15,16 +15,19 @@ The README's "Divergences from ASE" section lists the rest.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from pathlib import Path
-from typing import overload
+from typing import TYPE_CHECKING, overload
 
 import numpy as np
 
 from oxyz._convert import UnknownSpeciesError, species_to_numbers
 from oxyz._frames import ColumnValues, Compression, Frame, MetadataValue
-from oxyz._remote import StorageOptions
 from oxyz._select import frames_for_read, nth_frame, parse_index, sliced_frames
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from pathlib import Path
+
+    from oxyz._remote import StorageOptions
 
 try:
     from ase import Atoms
@@ -56,7 +59,7 @@ class FromAtomsError(ValueError):
     """The `ase.Atoms` carries something a `Frame` cannot represent faithfully."""
 
 
-def to_atoms(frame: Frame) -> Atoms:
+def to_atoms(frame: Frame) -> Atoms:  # noqa: C901  flat field-by-field mapping to ase.Atoms
     """Convert one `Frame` to `ase.Atoms`, mirroring `ase.io.read`'s mapping."""
     info: dict = dict(frame.metadata)
 

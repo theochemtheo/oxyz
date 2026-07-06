@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-
-import pytest
+from typing import TYPE_CHECKING
 
 from oxyz._cli import main
 from oxyz._schema_spec import SchemaSpec
+
+if TYPE_CHECKING:
+    import pytest
 
 DATA = Path(__file__).parent / "data"
 
@@ -18,7 +20,8 @@ def test_scan_prints_stats_and_schema(capsys: pytest.CaptureFixture[str]) -> Non
     assert "frames:      2" in out
     assert "atoms/frame:" in out
     # The schema report follows the stats block.
-    assert "frames" in out and "species" in out
+    assert "frames" in out
+    assert "species" in out
 
 
 def test_scan_empty_file_reports_zero_frames(

@@ -2,17 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from pathlib import Path
 from typing import TYPE_CHECKING
-
-import numpy as np
 
 import oxyz._rust as _rust
 from oxyz import _remote
-from oxyz._frames import Compression
 from oxyz._stats import AtomCountStats
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
+    import numpy as np
+
+    from oxyz._frames import Compression
     from oxyz._schema_spec import SchemaSpec
 
 

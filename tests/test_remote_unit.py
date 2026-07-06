@@ -142,7 +142,8 @@ def test_ase_read_routes_remote(monkeypatch):
     # index=0 (forward) and index=-1 (reverse fallback) both work remotely.
     first = oxyz.ase.read("s3://bucket/minimal_periodic.extxyz", index=0)
     last = oxyz.ase.read("s3://bucket/minimal_periodic.extxyz", index=-1)
-    assert len(first) > 0 and len(last) > 0
+    assert len(first) > 0
+    assert len(last) > 0
 
 
 def test_cli_storage_option_parsing(monkeypatch, capsys):
@@ -231,7 +232,8 @@ def test_readable_bytes_adapter_returns_plain_bytes():
 
     adapter = _remote._ReadableBytesAdapter(FakeReader())
     out = adapter.read(3)
-    assert isinstance(out, bytes) and out == b"abc"
+    assert isinstance(out, bytes)
+    assert out == b"abc"
     assert adapter.seek(5) == 5
     assert adapter.tell() == 5
     assert adapter.seekable() is True

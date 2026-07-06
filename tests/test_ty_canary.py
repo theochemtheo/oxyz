@@ -14,7 +14,10 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 REPRO = """\
 import numpy as np
