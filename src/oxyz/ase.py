@@ -110,9 +110,16 @@ def to_atoms(frame: Frame) -> Atoms:  # noqa: C901  flat field-by-field mapping 
     if numbers is None:
         raise ToAseError("frame has neither a 'species' nor a 'Z' column")
 
+    positions = arrays.pop("positions", None)
+    if positions is None:
+        # No 'pos' column (e.g. a projection schema that omits it). Refuse
+        # rather than let ase default every atom to the origin — silent
+        # corruption. Mirrors oxyz.metatomic's ToSystemError.
+        raise ToAseError("frame has no 'pos' column to use as positions")
+
     atoms = Atoms(
         numbers=numbers,
-        positions=arrays.pop("positions", None),
+        positions=positions,
         charges=arrays.pop("initial_charges", None),
         cell=cell,
         pbc=pbc,

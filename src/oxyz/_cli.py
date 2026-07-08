@@ -12,6 +12,7 @@ from oxyz import infer_schema, scan
 if TYPE_CHECKING:
     from oxyz._scan import FrameIndex
     from oxyz._schema import Schema
+    from oxyz._schema_spec import SchemaSpec
 
     # scan and infer_schema both report atom-count statistics; the schema adds
     # the column/metadata detail.
@@ -167,7 +168,7 @@ def _add_freeze_parser(subparsers: argparse._SubParsersAction) -> None:
         "--schema", required=True, help="input schema (.json/.yaml/.toml)"
     )
     freeze_parser.add_argument(
-        "--out", required=True, help="output schema path (.json/.yaml/.toml)"
+        "--out", required=True, help="output schema path (.json/.yaml/.yml)"
     )
     freeze_parser.add_argument(
         "--compression",
@@ -196,12 +197,24 @@ def _cmd_freeze(args: argparse.Namespace) -> int:
         member=args.member,
         storage_options=storage_options,
     )
-    out = Path(args.out)
-    if out.suffix.lower() == ".json":
-        out.write_text(frozen.to_json())
-    else:
-        out.write_text(frozen.to_yaml())
+    _write_spec(frozen, Path(args.out))
     return 0
+
+
+def _write_spec(spec: SchemaSpec, out: Path) -> None:
+    """Write a schema to `out`, dispatching on the extension. TOML output is
+    rejected — there is no TOML serialiser, and silently writing YAML under a
+    `.toml` name produces a file that will not re-read."""
+    suffix = out.suffix.lower()
+    if suffix == ".json":
+        out.write_text(spec.to_json())
+    elif suffix in (".yaml", ".yml"):
+        out.write_text(spec.to_yaml())
+    else:
+        raise ValueError(
+            f"cannot write a schema to a {suffix!r} file; use .json, .yaml, or "
+            ".yml (there is no TOML serialiser)"
+        )
 
 
 def _parse_storage_options(items: list[str]) -> dict[str, str] | None:
@@ -220,6 +233,8 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     # The schema pass keeps the per-frame atom counts, so it yields the same
     # distribution stats as scan -- run only one. --no-schema wants no parse
     # at all, so it falls back to the cheap structural scan.
+    if args.project and args.emit_schema is None:
+        raise ValueError("--project only applies together with --emit-schema")
     storage_options = _parse_storage_options(args.storage_options)
     if args.no_schema:
         stats: StatsSource = scan(
@@ -251,9 +266,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
                 member=args.member,
                 storage_options=storage_options,
             )
-            out.write_text(
-                frozen.to_json() if out.suffix.lower() == ".json" else frozen.to_yaml()
-            )
+            _write_spec(frozen, out)
         else:
             _write_schema(schema, out)
         return 0

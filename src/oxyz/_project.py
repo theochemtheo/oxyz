@@ -96,16 +96,32 @@ def _freeze_columns(
                     f"frozen; resolve it by hand"
                 )
             kind, width = entry.unified
+            required = entry.frames_present == n_frames
+            _check_freezable_optional(
+                name, rule.name, kind, required, rule.fill, "column"
+            )
             out.append(
                 ColumnRule(
-                    name=name,
-                    kind=kind,
-                    width=width,
-                    required=entry.frames_present == n_frames,
-                    fill=rule.fill,
+                    name=name, kind=kind, width=width, required=required, fill=rule.fill
                 )
             )
     return out
+
+
+def _check_freezable_optional(
+    name: str, pattern: str, kind: Kind, required: bool, fill: object, axis: str
+) -> None:
+    """A pattern that matches a field present in only *some* frames freezes it to
+    an optional rule; if that field is INT/BOOL/STR with no fill, projection
+    could never materialise it, so refuse here rather than emit a spec that
+    raises at read time."""
+    if not required and kind in _NO_NATURAL_NULL and fill is None:
+        raise SchemaError(
+            f"{axis} {name!r} (matched by pattern {pattern!r}) is present in only "
+            f"some frames and is a {KIND_TO_LETTER[kind]} field with no natural "
+            f"null; give the pattern rule a 'fill' so the frozen schema can "
+            f"project it"
+        )
 
 
 def _freeze_metadata(
@@ -132,13 +148,13 @@ def _freeze_metadata(
                     f"frozen; resolve it by hand"
                 )
             kind, shape = entry.unified
+            required = entry.frames_present == n_frames
+            _check_freezable_optional(
+                key, rule.name, kind, required, rule.fill, "metadata"
+            )
             out.append(
                 MetadataRule(
-                    name=key,
-                    kind=kind,
-                    shape=shape,
-                    required=entry.frames_present == n_frames,
-                    fill=rule.fill,
+                    name=key, kind=kind, shape=shape, required=required, fill=rule.fill
                 )
             )
     return out
@@ -158,14 +174,32 @@ def _fill_for(rule: ColumnRule | MetadataRule) -> float | int | bool | str | Non
     return math.nan if rule.kind == Kind.REAL else None
 
 
+def _fill_matches_kind(fill: object, kind: Kind) -> bool:
+    # bool before int: Python's bool is an int subclass.
+    if kind == Kind.BOOL:
+        return isinstance(fill, bool)
+    if kind == Kind.INT:
+        return isinstance(fill, int) and not isinstance(fill, bool)
+    if kind == Kind.REAL:
+        return isinstance(fill, (int, float)) and not isinstance(fill, bool)
+    return isinstance(fill, str)
+
+
 def _plan_entry(rule: ColumnRule | MetadataRule, *, is_metadata: bool) -> tuple:
     letter = KIND_TO_LETTER[rule.kind]
+    axis = "metadata" if is_metadata else "column"
     fill = _fill_for(rule)
     if fill is None and not rule.required and rule.kind in _NO_NATURAL_NULL:
-        axis = "metadata" if is_metadata else "column"
         raise SchemaError(
             f"{axis} {rule.name!r} is an optional {letter} field with no natural "
             f"null; give it a 'fill' value so projection can materialise it"
+        )
+    if rule.fill is not None and not _fill_matches_kind(rule.fill, rule.kind):
+        # Catch a mismatched fill here (e.g. a string fill on an INT column, or
+        # one pattern's fill copied by freeze onto a differing-kind column) with
+        # a clear message rather than a TypeError from the binding at read time.
+        raise SchemaError(
+            f"{axis} {rule.name!r}: fill {rule.fill!r} is not a valid {letter} value"
         )
     if is_metadata:
         assert isinstance(rule, MetadataRule)  # noqa: S101 — type-narrowing only

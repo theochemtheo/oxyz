@@ -215,3 +215,27 @@ def test_freeze_raises_on_kind_conflict(tmp_path):
     spec = SchemaSpec(columns=(ColumnRule(name="x*", kind=Kind.REAL),), mode="project")
     with pytest.raises(SchemaError, match="x"):
         spec.freeze(f)
+
+
+def test_string_fill_with_quotes_roundtrips_through_yaml():
+    spec = SchemaSpec.from_dict(
+        {"columns": {"tag": {"kind": "S", "required": False, "fill": 'a"b\\c'}}}
+    )
+    reloaded = SchemaSpec.from_yaml_text(spec.to_yaml())
+    assert reloaded.columns[0].fill == 'a"b\\c'
+
+
+def test_freeze_optional_non_real_without_fill_raises(tmp_path):
+    import pytest
+
+    from oxyz._schema_match import SchemaError
+
+    f = tmp_path / "mixed.xyz"
+    # label:S present only in frame 1 -> optional STR, no natural null, no fill
+    f.write_text(
+        "1\nProperties=species:S:1:pos:R:3:label:S:1\nH 0 0 0 a\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+    )
+    spec = SchemaSpec(columns=(ColumnRule("label*", Kind.STR),), mode="project")
+    with pytest.raises(SchemaError, match="fill"):
+        spec.freeze(f)

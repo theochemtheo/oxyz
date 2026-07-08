@@ -277,9 +277,10 @@ def _flow(attrs: Mapping[str, Any]) -> str:
             rendered = "[" + ", ".join(str(v) for v in value) + "]"
         elif isinstance(value, str) and key != "kind":
             # Quote an arbitrary string value (e.g. a string `fill`) so YAML
-            # re-reads it as a string, not as a bool / number / null. The kind
-            # letter is a controlled R/I/L/S token and stays bare.
-            rendered = f'"{value}"'
+            # re-reads it as a string, not as a bool / number / null. json.dumps
+            # yields a valid double-quoted scalar, escaping any `"` or `\`. The
+            # kind letter is a controlled R/I/L/S token and stays bare.
+            rendered = json.dumps(value)
         else:
             rendered = str(value)
         parts.append(f"{key}: {rendered}")

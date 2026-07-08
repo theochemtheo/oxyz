@@ -354,3 +354,18 @@ def test_ase_read_projects_before_conversion(tmp_path):
     # 'junk' is dropped by projection, so it is not carried onto the Atoms arrays
     assert "junk" not in atoms[0].arrays
     assert len(atoms) == 2
+
+
+def test_ase_read_missing_pos_raises_not_zeros(tmp_path):
+    import pytest
+
+    import oxyz.ase
+    from oxyz._schema import Kind
+    from oxyz._schema_spec import ColumnRule, SchemaSpec
+    from oxyz.ase import ToAseError
+
+    f = tmp_path / "m.xyz"
+    f.write_text("2\nProperties=species:S:1:pos:R:3\nH 0 0 0\nH 1 0 0\n")
+    spec = SchemaSpec(columns=(ColumnRule("species", Kind.STR),), mode="project")
+    with pytest.raises(ToAseError, match="pos"):
+        oxyz.ase.read(f, 0, schema=spec)

@@ -103,3 +103,9 @@ def test_enforce_clean_frame_kept_silently():
     with warnings.catch_warnings():
         warnings.simplefilter("error")  # any warning becomes an error
         assert enforce_projection([], "warn", 0, dropped=False) is True
+
+
+def test_fill_kind_mismatch_is_spec_error():
+    spec = SchemaSpec(columns=(ColumnRule("id", Kind.INT, fill="oops"),))
+    with pytest.raises(SchemaError, match="fill"):
+        compile_projection(spec, "project")

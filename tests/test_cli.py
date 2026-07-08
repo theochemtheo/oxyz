@@ -221,3 +221,30 @@ def test_scan_emit_schema_project_is_frozen(tmp_path: Path) -> None:
     text = out.read_text()
     assert "mode: project" in text
     assert "*" not in text  # no glob families; frozen to literals
+
+
+def test_freeze_rejects_toml_output(tmp_path: Path, capsys) -> None:
+    data = tmp_path / "d.xyz"
+    data.write_text("1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n")
+    schema = tmp_path / "in.yaml"
+    schema.write_text("mode: project\ncolumns:\n  species: {kind: S}\n")
+    rc = main(
+        [
+            "freeze",
+            str(data),
+            "--schema",
+            str(schema),
+            "--out",
+            str(tmp_path / "o.toml"),
+        ]
+    )
+    assert rc == 1
+    assert "TOML" in capsys.readouterr().err
+
+
+def test_scan_project_without_emit_errors(tmp_path: Path, capsys) -> None:
+    data = tmp_path / "d.xyz"
+    data.write_text("1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n")
+    rc = main(["scan", str(data), "--project"])
+    assert rc == 1
+    assert "project" in capsys.readouterr().err

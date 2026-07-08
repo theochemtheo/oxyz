@@ -248,9 +248,6 @@ class SystemSource:
         device: torch.device | None = None,
         positions_requires_grad: bool = False,
         cell_requires_grad: bool = False,
-        schema: SchemaSpec | str | Path | None = None,
-        conformance: Conformance = "required",
-        mode: Mode | None = None,
     ) -> list[System]:
         """Convert every frame to a `System`."""
         return [
