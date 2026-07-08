@@ -104,6 +104,19 @@ always_run = true
 stages = ["pre-commit", "pre-push"]
 
 [[repos.hooks]]
+id = "stubtest"
+name = "stubtest (_rust.pyi vs compiled module)"
+# Compares the hand-written _rust stub against the compiled extension, catching
+# stub drift (a wrong signature/default) that ty cannot see. Needs the built
+# module, so it runs at pre-push alongside the other compiled-module hooks; the
+# allowlist holds only irreducible PyO3/stubtest mismatches.
+language = "system"
+entry = "uv run python -m mypy.stubtest oxyz._rust --allowlist stubtest-allowlist.txt"
+pass_filenames = false
+always_run = true
+stages = ["pre-push"]
+
+[[repos.hooks]]
 id = "cargo-fmt-check"
 name = "cargo fmt --check"
 language = "system"
