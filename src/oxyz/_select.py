@@ -92,8 +92,11 @@ def nth_frame(
                 storage_options=storage_options,
             )
             if index + len(frames) < 0:
+                # `len(frames)` is the count actually read: under project+warn
+                # some frames may have been dropped, so say "available" rather
+                # than claim it as the file's frame count.
                 raise IndexError(
-                    f"frame {index} out of range: file has {len(frames)} frames"
+                    f"frame {index} out of range: {len(frames)} frames available"
                 )
             return frames[index]
         _reject_member_on_plain(member)

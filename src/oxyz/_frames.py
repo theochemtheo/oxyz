@@ -74,7 +74,9 @@ def read_first(
     validates the frame; `conformance` is `"strict"`, `"required"` (default),
     or `"warn"`. `mode` (`None`/`"validate"`/`"project"`) overrides the schema's
     own `mode`; under `project` the frame is reshaped to the schema (extras
-    dropped, optionals filled). See `oxyz.SchemaSpec`.
+    dropped, optionals filled). Since there is only one frame, if `project`
+    drops it (an unfillable required field), `read_first` raises even under
+    `warn` — there is no surviving frame to return. See `oxyz.SchemaSpec`.
     """
     _require_schema_for_mode(schema, mode)
     plan = spec = None

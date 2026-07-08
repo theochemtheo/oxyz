@@ -262,7 +262,14 @@ def enforce_projection(
             raise SchemaError(
                 message(first, frame_index), frame_index=frame_index, name=first.name
             )
-        return True  # a drop only ever accompanies a deviation, but stay total
+        if dropped:
+            # A drop always carries a deviation in practice; raise rather than
+            # silently lose the frame under strict/required if the core ever
+            # dropped one without reporting why.
+            raise SchemaError(
+                f"frame {frame_index}: dropped by projection", frame_index=frame_index
+            )
+        return True
     for deviation in deviations:
         warnings.warn(
             message(_to_violation(deviation), frame_index), SchemaWarning, stacklevel=3
