@@ -369,3 +369,32 @@ def test_ase_read_missing_pos_raises_not_zeros(tmp_path):
     spec = SchemaSpec(columns=(ColumnRule("species", Kind.STR),), mode="project")
     with pytest.raises(ToAseError, match="pos"):
         oxyz.ase.read(f, 0, schema=spec)
+
+
+def test_schema_slice_enforcement_is_consistent(tmp_path: Path) -> None:
+    """A schema error outside the requested slice aborts the read the same way
+    regardless of the slice's shape (previously '1:' and '1:3' diverged)."""
+    import pytest
+
+    import oxyz.ase
+    from oxyz._schema import Kind
+    from oxyz._schema_match import SchemaError
+    from oxyz._schema_spec import ColumnRule, SchemaSpec
+
+    f = tmp_path / "m.xyz"
+    f.write_text(
+        "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+        "1\nProperties=species:S:1:pos:R:3:charge:R:1\nH 1 0 0 0.1\n"
+        "1\nProperties=species:S:1:pos:R:3:charge:R:1\nH 2 0 0 0.2\n"
+    )
+    spec = SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+            ColumnRule("charge", Kind.REAL),
+        )
+    )
+    for index in ("1:", "1:3", slice(1, None)):
+        with pytest.raises(SchemaError) as exc:
+            oxyz.ase.read(f, index, schema=spec, conformance="strict")
+        assert exc.value.frame_index == 0

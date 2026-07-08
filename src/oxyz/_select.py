@@ -77,26 +77,39 @@ def nth_frame(
     A compressed source cannot seek, so a negative index there reads the whole
     file and indexes in memory (as ASE does), losing the partial-read shortcut.
     A remote URL is likewise non-seekable and takes the same in-memory path.
-    With a `schema`, a negative index also reads eagerly so the sought frame is
-    validated/projected before it is returned.
+    With a `schema`, any index reads the whole file and applies the schema to
+    every frame before indexing — so validation/projection behaves the same way
+    whatever the index, at the cost of the partial-read shortcut.
     """
+    if schema is not None:
+        frames = read_frames(
+            path,
+            schema=schema,
+            conformance=conformance,
+            mode=mode,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
+        # `len(frames)` is the count actually read: under project+warn some
+        # frames may have been dropped, so say "available" not "file has".
+        if not -len(frames) <= index < len(frames):
+            raise IndexError(
+                f"frame {index} out of range: {len(frames)} frames available"
+            )
+        return frames[index]
+
     if index < 0:
-        if schema is not None or _is_streaming_only(path, compression):
+        if _is_streaming_only(path, compression):
             frames = read_frames(
                 path,
-                schema=schema,
-                conformance=conformance,
-                mode=mode,
                 compression=compression,
                 member=member,
                 storage_options=storage_options,
             )
             if index + len(frames) < 0:
-                # `len(frames)` is the count actually read: under project+warn
-                # some frames may have been dropped, so say "available" rather
-                # than claim it as the file's frame count.
                 raise IndexError(
-                    f"frame {index} out of range: {len(frames)} frames available"
+                    f"frame {index} out of range: file has {len(frames)} frames"
                 )
             return frames[index]
         _reject_member_on_plain(member)
@@ -108,13 +121,7 @@ def nth_frame(
         return indexed.get(index + len(indexed))
 
     stream = iter_frames(
-        path,
-        schema=schema,
-        conformance=conformance,
-        mode=mode,
-        compression=compression,
-        member=member,
-        storage_options=storage_options,
+        path, compression=compression, member=member, storage_options=storage_options
     )
     frame = next(islice(stream, index, None), None)
     if frame is None:
@@ -150,12 +157,16 @@ def frames_for_read(  # noqa: PLR0913  the read/schema/projection options are th
     reverse slices keep the streaming/indexed path, which stops early — an eager
     read must not parse past the frames a bounded slice asks for, and `threads`
     does not apply to it.
+
+    With a `schema`, the whole file is read and the schema applied to every
+    frame, then the slice taken — so a schema error (or a projected drop) is
+    handled the same way whatever the slice's shape, rather than depending on
+    which frames the slice happens to traverse.
     """
-    if is_forward(frames) and frames.stop is None:
-        return read_frames_sliced(
+    if schema is not None:
+        validated = read_frames(
             path,
-            slice(frames.start, None, frames.step),
-            threads,
+            threads=threads,
             schema=schema,
             conformance=conformance,
             mode=mode,
@@ -163,12 +174,19 @@ def frames_for_read(  # noqa: PLR0913  the read/schema/projection options are th
             member=member,
             storage_options=storage_options,
         )
+        return validated[frames]
+    if is_forward(frames) and frames.stop is None:
+        return read_frames_sliced(
+            path,
+            slice(frames.start, None, frames.step),
+            threads,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
     return sliced_frames(
         path,
         frames,
-        schema=schema,
-        conformance=conformance,
-        mode=mode,
         compression=compression,
         member=member,
         storage_options=storage_options,
