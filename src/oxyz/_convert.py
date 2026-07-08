@@ -104,7 +104,7 @@ def species_to_numbers(symbols: np.ndarray | list) -> np.ndarray:
     and raises.
     """
     # tolist() yields plain str, faster to iterate than ndarray's np.str_ scalars.
-    species: list = symbols.tolist() if isinstance(symbols, np.ndarray) else symbols
+    species: list = symbols if isinstance(symbols, list) else symbols.tolist()
     try:
         return np.fromiter(
             (_atomic_number(s) for s in species),
