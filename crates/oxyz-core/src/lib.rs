@@ -4,6 +4,7 @@ pub mod encode;
 pub mod extxyz;
 pub mod index;
 pub mod model;
+pub mod project;
 pub mod schema;
 
 pub use batch::{Batch, BatchBuilder, BatchError};
