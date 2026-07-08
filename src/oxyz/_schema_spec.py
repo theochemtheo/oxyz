@@ -4,7 +4,7 @@ import json
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
 
@@ -12,6 +12,13 @@ from oxyz._schema import Kind
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+    from oxyz._frames import Compression
+    from oxyz._remote import StorageOptions
+
+# Whether a schema validates (report only) or projects (reshape each frame to
+# the declared field set). See oxyz._project for what project mode compiles to.
+Mode = Literal["validate", "project"]
 
 LETTER_TO_KIND: dict[str, Kind] = {
     "R": Kind.REAL,
@@ -37,6 +44,10 @@ class ColumnRule:
     count: int | None = None
     min: int | None = None
     max: int | None = None
+    # The value projection fills this column with when it is absent. Only used
+    # under project mode; REAL defaults to NaN there, so a fill is required only
+    # for an optional INT/BOOL/STR column (which has no natural null).
+    fill: float | int | bool | str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +62,8 @@ class MetadataRule:
     count: int | None = None
     min: int | None = None
     max: int | None = None
+    # See ColumnRule.fill.
+    fill: float | int | bool | str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +91,7 @@ def _column_rule(name: str, attrs: Mapping[str, Any]) -> ColumnRule:
         count=attrs.get("count"),
         min=attrs.get("min"),
         max=attrs.get("max"),
+        fill=attrs.get("fill"),
     )
 
 
@@ -91,6 +105,7 @@ def _metadata_rule(name: str, attrs: Mapping[str, Any]) -> MetadataRule:
         count=attrs.get("count"),
         min=attrs.get("min"),
         max=attrs.get("max"),
+        fill=attrs.get("fill"),
     )
 
 
@@ -116,6 +131,7 @@ class SchemaSpec:
     columns: tuple[ColumnRule, ...] = ()
     metadata: tuple[MetadataRule, ...] = ()
     frame: FrameRule | None = None
+    mode: Mode = "validate"
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> SchemaSpec:
@@ -127,7 +143,12 @@ class SchemaSpec:
             for name, attrs in data.get("metadata", {}).items()
         )
         frame = _frame_rule(data["frame"]) if "frame" in data else None
-        return cls(columns=columns, metadata=metadata, frame=frame)
+        mode = data.get("mode", "validate")
+        if mode not in ("validate", "project"):
+            raise ValueError(
+                f"unknown schema mode {mode!r}; use 'validate' or 'project'"
+            )
+        return cls(columns=columns, metadata=metadata, frame=frame, mode=mode)
 
     @classmethod
     def from_yaml_text(cls, text: str) -> SchemaSpec:
@@ -150,6 +171,10 @@ class SchemaSpec:
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {}
+        # Emitted first, and only when non-default, so validate-mode specs
+        # round-trip byte-identically to before projection existed.
+        if self.mode != "validate":
+            out["mode"] = self.mode
         if self.columns:
             out["columns"] = {rule.name: _column_attrs(rule) for rule in self.columns}
         if self.metadata:
@@ -166,6 +191,32 @@ class SchemaSpec:
     def to_yaml(self) -> str:
         return render_yaml(self)
 
+    def freeze(
+        self,
+        path: str | Path,
+        *,
+        compression: Compression = "infer",
+        member: str | None = None,
+        storage_options: StorageOptions | None = None,
+    ) -> SchemaSpec:
+        """Expand this schema's pattern rules against `path` into a literal,
+        project-ready schema (`mode='project'`).
+
+        Columns matching in every frame become required; those in only some
+        become optional, so projection fills them. Raises `SchemaError` on a
+        matched field whose kind conflicts across frames. Literal rules pass
+        through unchanged. Returns a new spec; `self` is untouched.
+        """
+        from oxyz._project import freeze_spec
+
+        return freeze_spec(
+            self,
+            path,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
+
 
 def _column_attrs(rule: ColumnRule) -> dict[str, Any]:
     attrs: dict[str, Any] = {"kind": KIND_TO_LETTER[rule.kind]}
@@ -177,6 +228,9 @@ def _column_attrs(rule: ColumnRule) -> dict[str, Any]:
         value = getattr(rule, key)
         if value is not None:
             attrs[key] = value
+    # `is not None`, not truthiness: a 0 / False fill is a legitimate value.
+    if rule.fill is not None:
+        attrs["fill"] = rule.fill
     return attrs
 
 
@@ -190,6 +244,8 @@ def _metadata_attrs(rule: MetadataRule) -> dict[str, Any]:
         value = getattr(rule, key)
         if value is not None:
             attrs[key] = value
+    if rule.fill is not None:
+        attrs["fill"] = rule.fill
     return attrs
 
 
@@ -219,6 +275,11 @@ def _flow(attrs: Mapping[str, Any]) -> str:
             rendered = "true" if value else "false"
         elif isinstance(value, list):
             rendered = "[" + ", ".join(str(v) for v in value) + "]"
+        elif isinstance(value, str) and key != "kind":
+            # Quote an arbitrary string value (e.g. a string `fill`) so YAML
+            # re-reads it as a string, not as a bool / number / null. The kind
+            # letter is a controlled R/I/L/S token and stays bare.
+            rendered = f'"{value}"'
         else:
             rendered = str(value)
         parts.append(f"{key}: {rendered}")
@@ -232,6 +293,9 @@ def render_yaml(spec: SchemaSpec, notes: Mapping[str, str] | None = None) -> str
 
     notes = notes or {}
     lines: list[str] = []
+    # Non-default mode renders first, matching to_dict's key order.
+    if spec.mode != "validate":
+        lines.append(f"mode: {spec.mode}")
 
     def emit(section: str, entries: dict[str, dict[str, Any]]) -> None:
         if not entries:
