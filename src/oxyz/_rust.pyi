@@ -193,6 +193,7 @@ def read_batch(
     compression: str = "infer",
     member: str | None = None,
 ) -> BatchData: ...
+def build_batch(frames: list[FrameData]) -> BatchData: ...
 def read_frames_projected(
     path: str,
     threads: int | None = None,

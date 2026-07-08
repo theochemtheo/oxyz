@@ -391,6 +391,42 @@ fn read_frames<'py>(
     PyList::new(py, dicts)
 }
 
+/// Assemble a batch from already-parsed frame dicts (the inverse of reading a
+/// batch from a file). Backs the Python surface's validate-mode batch path,
+/// which parses and validates frames itself, then concatenates the lot. An
+/// empty list yields the empty batch; a non-uniform set raises `ParseError`,
+/// exactly as the file-backed batch readers do.
+#[pyfunction]
+fn build_batch<'py>(
+    py: Python<'py>,
+    frames: Vec<Bound<'py, PyDict>>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let core_frames = frames
+        .iter()
+        .map(pydict_to_frame)
+        .collect::<PyResult<Vec<_>>>()?;
+    let batch = py
+        .detach(move || -> Result<Batch, ExtxyzError> {
+            let mut builder = oxyz_core::BatchBuilder::new();
+            for frame in core_frames {
+                builder.push(frame)?;
+            }
+            match builder.finish() {
+                Ok(batch) => Ok(batch),
+                // An empty set is "no frames", not an error (matches the
+                // whole-file readers); a real assembly error propagates.
+                Err(oxyz_core::BatchError::Empty) => Ok(Batch {
+                    offsets: vec![0],
+                    columns: Vec::new(),
+                    metadata: Vec::new(),
+                }),
+                Err(error) => Err(error.into()),
+            }
+        })
+        .map_err(extxyz_error_to_py)?;
+    batch_to_pydict(py, batch)
+}
+
 // ---- Schema projection -------------------------------------------------------
 //
 // A projection plan crosses the binding as a Python tuple `(columns, metadata)`;
@@ -1634,6 +1670,7 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_first_frame_projected_reader, m)?)?;
     m.add_function(wrap_pyfunction!(read_batch_projected, m)?)?;
     m.add_function(wrap_pyfunction!(read_batch_projected_reader, m)?)?;
+    m.add_function(wrap_pyfunction!(build_batch, m)?)?;
     m.add_class::<FrameIterProjected>()?;
     m.add_class::<BatchIterProjected>()?;
     m.add_class::<FrameIter>()?;

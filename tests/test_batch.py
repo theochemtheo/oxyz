@@ -459,3 +459,110 @@ def test_build_plan_rejects_multidim_metadata_shape():
         _rust.read_first_frame_projected(
             str(DATA_DIR / "mixed_schema_optional_column.xyz"), plan=plan
         )
+
+
+def _batch_schema(mode="validate"):
+    from oxyz._schema import Kind
+    from oxyz._schema_spec import ColumnRule, SchemaSpec
+
+    return SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+            ColumnRule("charge", Kind.REAL, width=1),  # required
+        ),
+        mode=mode,
+    )
+
+
+def test_validate_batch_matches_frame_reader(tmp_path):
+    from oxyz._schema_match import SchemaError
+
+    spec = _batch_schema("validate")
+    # uniform-conforming: batch reads fine and honours the schema
+    ok = tmp_path / "ok.xyz"
+    ok.write_text(
+        "1\nProperties=species:S:1:pos:R:3:charge:R:1\nH 0 0 0 0.5\n"
+        "1\nProperties=species:S:1:pos:R:3:charge:R:1\nH 1 0 0 -0.5\n"
+    )
+    assert oxyz.read_batch(ok, schema=spec).n_frames == 2
+
+    # uniform-violating: same frame-indexed SchemaError as read_frames
+    bad = tmp_path / "bad.xyz"
+    bad.write_text(
+        "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 1 0 0\n"
+    )
+    with pytest.raises(SchemaError) as batch_exc:
+        oxyz.read_batch(bad, schema=spec)
+    with pytest.raises(SchemaError) as frame_exc:
+        oxyz.read_frames(bad, schema=spec)
+    assert str(batch_exc.value) == str(frame_exc.value)
+    assert batch_exc.value.frame_index == 0
+
+    # mixed file: a schema error naming the offending frame, not a raw BatchError
+    mixed = tmp_path / "mixed.xyz"
+    mixed.write_text(
+        "1\nProperties=species:S:1:pos:R:3:charge:R:1\nH 0 0 0 0.5\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 1 0 0\n"
+    )
+    with pytest.raises(SchemaError) as exc:
+        oxyz.read_batch(mixed, schema=spec)
+    assert exc.value.frame_index == 1
+
+
+def test_validate_batch_warn_keeps_uniform_batch(tmp_path):
+
+    from oxyz._schema_match import SchemaWarning
+
+    spec = _batch_schema("validate")
+    bad = tmp_path / "bad.xyz"
+    bad.write_text(
+        "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 1 0 0\n"
+    )
+    with pytest.warns(SchemaWarning, match="charge"):
+        batch = oxyz.read_batch(bad, schema=spec, conformance="warn")
+    assert batch.n_frames == 2
+    assert "charge" not in batch.columns  # validation does not reshape
+
+
+def test_validate_batch_mode_via_iter_batches(tmp_path):
+    from oxyz._schema_match import SchemaError
+
+    spec = _batch_schema("validate")
+    bad = tmp_path / "bad.xyz"
+    bad.write_text(
+        "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 1 0 0\n"
+    )
+    with pytest.raises(SchemaError, match="charge"):
+        # threads=1 takes the sequential path; default threads the planned path
+        list(oxyz.iter_batches(bad, frames_per_batch=1, schema=spec, threads=1))
+    with pytest.raises(SchemaError, match="charge"):
+        list(oxyz.iter_batches(bad, frames_per_batch=1, schema=spec))
+
+
+def test_project_batch_enforces_frame_rule(tmp_path):
+    from oxyz._schema import Kind
+    from oxyz._schema_match import SchemaError
+    from oxyz._schema_spec import ColumnRule, FrameRule, SchemaSpec
+
+    f = tmp_path / "counts.xyz"
+    f.write_text(
+        "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+        "2\nProperties=species:S:1:pos:R:3\nH 0 0 0\nH 1 0 0\n"
+    )
+    spec = SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+        ),
+        frame=FrameRule(n_atoms_min=2),
+        mode="project",
+    )
+    # frame 0 has 1 atom < 2 -> the frame rule fires on the projected batch
+    with pytest.raises(SchemaError) as exc:
+        oxyz.read_batch(f, schema=spec)
+    assert exc.value.frame_index == 0
+    assert "n_atoms" in str(exc.value)
