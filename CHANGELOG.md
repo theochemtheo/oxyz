@@ -12,6 +12,10 @@ recorded here.
 
 ### Internal
 
+- Hardened the CI and release workflows: every GitHub Action is pinned to a
+  commit SHA, jobs run with minimal per-job permissions, checkouts set
+  `persist-credentials: false`, a `zizmor` gate audits the workflows, and the
+  PyPI publish environment now requires approval.
 - Widened the `ruff` lint selection.
 
 ## [0.5.0] - 2026-07-03
