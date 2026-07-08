@@ -5,6 +5,7 @@
 
 use std::io::Cursor;
 
+use oxyz_core::project::{Fill, PlanColumn, ProjectionPlan, project_frame};
 use oxyz_core::{FrameIter, scan_frames, scan_frames_with_volume};
 use proptest::prelude::*;
 
@@ -75,5 +76,39 @@ proptest! {
         }
         parse_all(&input);
         scan_all(&input);
+    }
+}
+
+proptest! {
+    // Projection never panics and always yields exactly the plan's column shape
+    // (never over-allocating): each output column has n_atoms * width cells.
+    #[test]
+    fn projection_yields_plan_shape_without_panic(
+        n_atoms in 0usize..8,
+        widths in proptest::collection::vec(1usize..4, 0..5),
+    ) {
+        let plan = ProjectionPlan {
+            columns: widths
+                .iter()
+                .enumerate()
+                .map(|(i, &w)| PlanColumn {
+                    name: format!("c{i}"),
+                    kind: oxyz_core::model::ColumnKind::Real,
+                    width: w,
+                    required: false,
+                    fill: Some(Fill::Real(0.0)),
+                })
+                .collect(),
+            metadata: Vec::new(),
+        };
+        // An empty frame forces every column to be filled to the plan shape.
+        let frame = oxyz_core::model::Frame { n_atoms, columns: Vec::new(), metadata: Vec::new() };
+        let projected = project_frame(&frame, &plan);
+        prop_assert!(!projected.dropped); // all optional with fills
+        prop_assert_eq!(projected.frame.columns.len(), widths.len());
+        for (col, &w) in projected.frame.columns.iter().zip(&widths) {
+            prop_assert_eq!(col.width, w);
+            prop_assert_eq!(col.data.len(), n_atoms * w);
+        }
     }
 }
