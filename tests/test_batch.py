@@ -416,3 +416,27 @@ def test_batch_mode_without_schema_errors(tmp_path):
     f = _mixed_batchable(tmp_path)
     with pytest.raises(ValueError, match="mode"):
         oxyz.read_batch(f, mode="project")
+
+
+def test_projected_batch_parity_serial_vs_parallel():
+    from oxyz._schema import Kind
+    from oxyz._schema_spec import ColumnRule, SchemaSpec
+
+    fixture = DATA_DIR / "mixed_schema_optional_column.xyz"
+    spec = SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+            ColumnRule("charge", Kind.REAL, required=False),
+        ),
+        mode="project",
+    )
+    serial = oxyz.read_batch(fixture, schema=spec, threads=1)
+    parallel = oxyz.read_batch(fixture, schema=spec, threads=None)
+    assert serial.frame_indices.tolist() == parallel.frame_indices.tolist()
+    assert_array_equal(serial.offsets, parallel.offsets)
+    for key in serial.columns:
+        # charge carries a NaN fill (frame 2), so compare with NaNs neutralised.
+        left = np.nan_to_num(np.asarray(serial.columns[key]))
+        right = np.nan_to_num(np.asarray(parallel.columns[key]))
+        assert_array_equal(left, right)

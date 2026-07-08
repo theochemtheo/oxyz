@@ -29,6 +29,7 @@
 | `schema_conformant.extxyz` | Two frames, stable `species`/`pos`/`energy` schema — the schema-aware read happy path. |
 | `schema_extra_column.extxyz` | Second frame adds a `charge` column — exercises `strict` (error) vs `required` (allowed). |
 | `schema_drift_type.extxyz` | `magmom` changes width between frames (non-collinear `R:3` → collinear `R:1`) — a realistic per-atom width mismatch at frame 1. |
+| `mixed_schema_optional_column.xyz` | Two frames; the second lacks `charge` — the mixed-schema case that projection (`mode="project"`) makes batchable. |
 
 Compressed twins of `two_frame_same_schema.xyz` (gzip, zstd, zip, tar, tar.gz,
 plus concat-gzip and multi-member archives) live in `compressed/`; see its

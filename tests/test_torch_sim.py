@@ -35,6 +35,7 @@ ASE_REJECTS = {
     "stress_voigt6.extxyz",
     "schema_drift_type.extxyz",
     "schema_extra_column.extxyz",
+    "mixed_schema_optional_column.xyz",
 }
 
 GOLDEN = sorted(

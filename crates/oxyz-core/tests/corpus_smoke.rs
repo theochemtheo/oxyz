@@ -18,6 +18,7 @@ const FIXTURES: &[&str] = &[
     "mace_ref_energy_forces_stress.xyz",
     "mass_and_charge.extxyz",
     "minimal_periodic.extxyz",
+    "mixed_schema_optional_column.xyz",
     "molecule_type_labels.extxyz",
     "move_mask_fix_atoms.extxyz",
     "move_mask_fix_cartesian.extxyz",
