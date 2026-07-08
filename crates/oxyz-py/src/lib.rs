@@ -11,7 +11,8 @@ use pyo3::{
 };
 
 use oxyz_core::project::{
-    Axis, Deviation, DeviationKind, Fill, PlanColumn, PlanMetadata, ProjectionPlan, project_frame,
+    Axis, Deviation, DeviationKind, Fill, PlanColumn, PlanMetadata, Projected, ProjectionPlan,
+    project_frame,
 };
 use oxyz_core::schema::{ColumnSchema, MetadataSchema, Schema, ValueType};
 use oxyz_core::{
@@ -459,7 +460,16 @@ fn build_plan(py_plan: &Bound<'_, PyTuple>) -> PyResult<ProjectionPlan> {
         let name: String = entry.get_item(0)?.extract()?;
         let kind = kind_from_letter(&entry.get_item(1)?.extract::<String>()?)?;
         let shape_tuple: Vec<usize> = entry.get_item(2)?.extract()?;
-        let shape = shape_tuple.first().copied(); // () -> None, (n,) -> Some(n)
+        let shape = match shape_tuple.as_slice() {
+            [] => None,      // scalar
+            [n] => Some(*n), // 1-D array of length n
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "metadata {name:?}: shape {shape_tuple:?} has more than one \
+                     dimension; projection supports scalar or 1-D metadata"
+                )));
+            }
+        };
         let required: bool = entry.get_item(3)?.extract()?;
         let fill = opt_fill(kind, entry.get_item(4)?)?;
         metadata.push(PlanMetadata {
@@ -504,16 +514,12 @@ fn deviations_to_py<'py>(
     Ok(list)
 }
 
-/// Project one frame and build the `(FrameData | None, deviations)` tuple; a
-/// `None` first element marks a dropped frame.
-fn projected_frame_to_py<'py>(
-    py: Python<'py>,
-    frame: &Frame,
-    plan: &ProjectionPlan,
-) -> PyResult<Bound<'py, PyTuple>> {
-    let projected = project_frame(frame, plan);
+/// Build the `(FrameData | None, deviations)` tuple from an already-projected
+/// frame (projection runs with the GIL released; only this conversion needs it).
+/// A `None` first element marks a dropped frame.
+fn projected_to_py(py: Python<'_>, projected: Projected) -> PyResult<Bound<'_, PyTuple>> {
     let devs = deviations_to_py(py, &projected.deviations)?;
-    let data: Bound<'py, PyAny> = if projected.dropped {
+    let data: Bound<'_, PyAny> = if projected.dropped {
         py.None().into_bound(py)
     } else {
         frame_to_pydict(py, projected.frame)?.into_any()
@@ -535,17 +541,27 @@ fn read_frames_projected<'py>(
 ) -> PyResult<Bound<'py, PyList>> {
     let plan = build_plan(plan)?;
     let reader = open_reader(&path, compression, member.as_deref())?;
-    let frames = py
-        .detach(move || match threads {
-            Some(1) => oxyz_core::iter_frames_from(reader)?.collect(),
-            _ => oxyz_core::read_frames_parallel_from(reader, threads),
-        })
+    let projected = py
+        .detach(move || read_frames_projected_core(reader, threads, &plan))
         .map_err(extxyz_error_to_py)?;
-    let items = frames
-        .iter()
-        .map(|frame| projected_frame_to_py(py, frame, &plan))
+    let items = projected
+        .into_iter()
+        .map(|p| projected_to_py(py, p))
         .collect::<PyResult<Vec<_>>>()?;
     PyList::new(py, items)
+}
+
+/// Parse every frame and project it, all with the interpreter detached.
+fn read_frames_projected_core(
+    reader: DecodedReader,
+    threads: Option<usize>,
+    plan: &ProjectionPlan,
+) -> Result<Vec<Projected>, ExtxyzError> {
+    let frames: Vec<Frame> = match threads {
+        Some(1) => oxyz_core::iter_frames_from(reader)?.collect::<Result<_, _>>()?,
+        _ => oxyz_core::read_frames_parallel_from(reader, threads)?,
+    };
+    Ok(frames.iter().map(|f| project_frame(f, plan)).collect())
 }
 
 /// Projected variant of [`read_first_frame`]: `(FrameData | None, deviations)`.
@@ -560,14 +576,15 @@ fn read_first_frame_projected<'py>(
 ) -> PyResult<Bound<'py, PyTuple>> {
     let plan = build_plan(plan)?;
     let reader = open_reader(&path, compression, member.as_deref())?;
-    let frame = py
+    let projected = py
         .detach(move || {
-            oxyz_core::iter_frames_from(reader)?
+            let frame = oxyz_core::iter_frames_from(reader)?
                 .next()
-                .unwrap_or(Err(ExtxyzError::MissingLine("atom count")))
+                .unwrap_or(Err(ExtxyzError::MissingLine("atom count")))?;
+            Ok::<_, ExtxyzError>(project_frame(&frame, &plan))
         })
         .map_err(extxyz_error_to_py)?;
-    projected_frame_to_py(py, &frame, &plan)
+    projected_to_py(py, projected)
 }
 
 /// Reader-source variant of [`read_frames_projected`].
@@ -583,15 +600,12 @@ fn read_frames_projected_reader<'py>(
 ) -> PyResult<Bound<'py, PyList>> {
     let plan = build_plan(plan)?;
     let reader = build_decoded(&source, codec, member.as_deref())?;
-    let frames = py
-        .detach(move || match threads {
-            Some(1) => oxyz_core::iter_frames_from(reader)?.collect(),
-            _ => oxyz_core::read_frames_parallel_from(reader, threads),
-        })
+    let projected = py
+        .detach(move || read_frames_projected_core(reader, threads, &plan))
         .map_err(extxyz_error_to_py)?;
-    let items = frames
-        .iter()
-        .map(|frame| projected_frame_to_py(py, frame, &plan))
+    let items = projected
+        .into_iter()
+        .map(|p| projected_to_py(py, p))
         .collect::<PyResult<Vec<_>>>()?;
     PyList::new(py, items)
 }
@@ -608,14 +622,15 @@ fn read_first_frame_projected_reader<'py>(
 ) -> PyResult<Bound<'py, PyTuple>> {
     let plan = build_plan(plan)?;
     let reader = build_decoded(&source, codec, member.as_deref())?;
-    let frame = py
+    let projected = py
         .detach(move || {
-            oxyz_core::iter_frames_from(reader)?
+            let frame = oxyz_core::iter_frames_from(reader)?
                 .next()
-                .unwrap_or(Err(ExtxyzError::MissingLine("atom count")))
+                .unwrap_or(Err(ExtxyzError::MissingLine("atom count")))?;
+            Ok::<_, ExtxyzError>(project_frame(&frame, &plan))
         })
         .map_err(extxyz_error_to_py)?;
-    projected_frame_to_py(py, &frame, &plan)
+    projected_to_py(py, projected)
 }
 
 /// Projected variant of [`FrameIter`]: `__next__` yields `(FrameData | None,
@@ -647,9 +662,15 @@ impl FrameIterProjected {
     }
 
     fn __next__<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyTuple>>> {
-        match py.detach(|| self.inner.next()) {
+        let plan = &self.plan;
+        let projected = py.detach(|| match self.inner.next() {
+            None => None,
+            Some(Ok(frame)) => Some(Ok(project_frame(&frame, plan))),
+            Some(Err(error)) => Some(Err(error)),
+        });
+        match projected {
             None => Ok(None),
-            Some(Ok(frame)) => projected_frame_to_py(py, &frame, &self.plan).map(Some),
+            Some(Ok(projected)) => projected_to_py(py, projected).map(Some),
             Some(Err(error)) => Err(extxyz_error_to_py(error)),
         }
     }

@@ -296,3 +296,28 @@ fn projected_selection_preserves_request_order() {
     let e = pb.batch.columns.iter().find(|c| c.name == "e").unwrap();
     assert_eq!(e.data.as_real().unwrap(), &[3.0, 1.0]);
 }
+
+#[test]
+fn duplicate_metadata_prefers_conforming_occurrence() {
+    // `energy` appears twice: a wrong-kind Str, then a conforming Real. Projection
+    // must pick the conforming one, not report a spurious mismatch on the first.
+    let f = frame_meta(
+        1,
+        vec![
+            ("energy".into(), Value::Str("oops".into())),
+            ("energy".into(), Value::Real(-1.0)),
+        ],
+    );
+    let plan = ProjectionPlan {
+        columns: Vec::new(),
+        metadata: vec![real_meta("energy", None, true, Some(f64::NAN))],
+    };
+    let Projected {
+        frame,
+        deviations,
+        dropped,
+    } = oxyz_core::project::project_frame(&f, &plan);
+    assert!(!dropped);
+    assert!(deviations.is_empty());
+    assert_eq!(frame.metadata[0], ("energy".into(), Value::Real(-1.0)));
+}

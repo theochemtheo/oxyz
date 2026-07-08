@@ -157,13 +157,13 @@ fn project_metadata(
     let mut metadata = Vec::with_capacity(plan.metadata.len());
     for pm in &plan.metadata {
         let expected = metadata_sig(pm.kind, pm.shape);
-        match frame.metadata_value(&pm.name) {
-            Some(value) if value_kind_shape(value) == (pm.kind, pm.shape) => {
+        match lookup_metadata(frame, pm) {
+            Lookup::Conforming(value) => {
                 metadata.push((pm.name.clone(), value.clone()));
             }
-            other => {
-                match other {
-                    Some(value) => {
+            found => {
+                match found {
+                    Lookup::Mismatch(value) => {
                         let (k, s) = value_kind_shape(value);
                         deviations.push(Deviation {
                             axis: Axis::Metadata,
@@ -173,14 +173,14 @@ fn project_metadata(
                             found: Some(metadata_sig(k, s)),
                         });
                     }
-                    None if pm.required => deviations.push(Deviation {
+                    Lookup::Absent if pm.required => deviations.push(Deviation {
                         axis: Axis::Metadata,
                         name: pm.name.clone(),
                         kind: DeviationKind::Missing,
                         expected,
                         found: None,
                     }),
-                    None => {}
+                    _ => {}
                 }
                 match &pm.fill {
                     Some(fill) => {
@@ -194,10 +194,50 @@ fn project_metadata(
     metadata
 }
 
+/// Outcome of looking a plan field up in a frame that may hold the name more
+/// than once (the model preserves duplicate keys): a conforming occurrence if
+/// any, else the first non-conforming one, else absent. Preferring a conforming
+/// occurrence stops a stray duplicate from spuriously reporting a mismatch.
+enum Lookup<T> {
+    Conforming(T),
+    Mismatch(T),
+    Absent,
+}
+
+fn lookup_column<'a>(frame: &'a Frame, pc: &PlanColumn) -> Lookup<&'a Column> {
+    let mut mismatch = None;
+    for column in &frame.columns {
+        if column.name == pc.name {
+            if column.data.kind() == pc.kind && column.width == pc.width {
+                return Lookup::Conforming(column);
+            }
+            mismatch.get_or_insert(column);
+        }
+    }
+    mismatch.map_or(Lookup::Absent, Lookup::Mismatch)
+}
+
+fn lookup_metadata<'a>(frame: &'a Frame, pm: &PlanMetadata) -> Lookup<&'a Value> {
+    let mut mismatch = None;
+    for (key, value) in &frame.metadata {
+        if *key == pm.name {
+            if value_kind_shape(value) == (pm.kind, pm.shape) {
+                return Lookup::Conforming(value);
+            }
+            mismatch.get_or_insert(value);
+        }
+    }
+    mismatch.map_or(Lookup::Absent, Lookup::Mismatch)
+}
+
 /// Project `frame` onto `plan`: every output field is exactly the plan's, in
 /// declaration order. Undeclared fields dropped; absent optionals filled;
 /// absent-required and wrong-kind/width fields reported (filled if the plan
 /// carries a fill, else the frame is marked `dropped`).
+///
+/// Fill widths (`n_atoms * width`, and array `shape`) come from the plan, which
+/// Python builds from a `SchemaSpec`; the core trusts them (a hostile plan with
+/// an absurd width could over-allocate, but no *file* can produce one).
 pub fn project_frame(frame: &Frame, plan: &ProjectionPlan) -> Projected {
     let mut deviations = Vec::new();
     let mut dropped = false;
@@ -206,30 +246,28 @@ pub fn project_frame(frame: &Frame, plan: &ProjectionPlan) -> Projected {
     let mut columns = Vec::with_capacity(plan.columns.len());
     for pc in &plan.columns {
         let expected = column_sig(pc.kind, pc.width);
-        match frame.column(&pc.name) {
-            Some(existing) if existing.data.kind() == pc.kind && existing.width == pc.width => {
-                columns.push(existing.clone());
-            }
-            other => {
+        match lookup_column(frame, pc) {
+            Lookup::Conforming(existing) => columns.push(existing.clone()),
+            found => {
                 // Absent, or present with the wrong kind/width. Record the
                 // divergence (required-absent = Missing, present-wrong =
                 // Mismatch); optional-absent is silent.
-                match other {
-                    Some(existing) => deviations.push(Deviation {
+                match found {
+                    Lookup::Mismatch(existing) => deviations.push(Deviation {
                         axis: Axis::Column,
                         name: pc.name.clone(),
                         kind: DeviationKind::Mismatch,
                         expected,
                         found: Some(column_sig(existing.data.kind(), existing.width)),
                     }),
-                    None if pc.required => deviations.push(Deviation {
+                    Lookup::Absent if pc.required => deviations.push(Deviation {
                         axis: Axis::Column,
                         name: pc.name.clone(),
                         kind: DeviationKind::Missing,
                         expected,
                         found: None,
                     }),
-                    None => {}
+                    _ => {}
                 }
                 match &pc.fill {
                     Some(fill) => columns.push(Column {

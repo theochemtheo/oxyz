@@ -1310,6 +1310,11 @@ impl IndexedFrames {
         indices: &[usize],
         plan: &ProjectionPlan,
     ) -> Result<ProjectedBatch> {
+        // Empty request is `Err(Empty)`, matching every other batch reader
+        // (`finish_or_empty` below is for the all-dropped-but-non-empty case).
+        if indices.is_empty() {
+            return Err(BatchError::Empty.into());
+        }
         let mut builder = BatchBuilder::new();
         let mut survivors = Vec::new();
         let mut reports = Vec::new();
@@ -1341,6 +1346,9 @@ impl IndexedFrames {
         threads: Option<usize>,
         plan: &ProjectionPlan,
     ) -> Result<ProjectedBatch> {
+        if indices.is_empty() {
+            return Err(BatchError::Empty.into());
+        }
         let entries = indices
             .iter()
             .map(|&frame_index| {

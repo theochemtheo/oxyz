@@ -440,3 +440,22 @@ def test_projected_batch_parity_serial_vs_parallel():
         left = np.nan_to_num(np.asarray(serial.columns[key]))
         right = np.nan_to_num(np.asarray(parallel.columns[key]))
         assert_array_equal(left, right)
+
+
+def test_get_batch_projected_empty_indices_errors():
+    import oxyz._rust as _rust
+
+    idx = _rust.IndexedFrames(str(DATA_DIR / "mixed_schema_optional_column.xyz"))
+    plan = ([("pos", "R", 3, True, float("nan"))], [])
+    with pytest.raises(ValueError, match="empty"):
+        idx.get_batch_projected([], plan)
+
+
+def test_build_plan_rejects_multidim_metadata_shape():
+    import oxyz._rust as _rust
+
+    plan = ([], [("stress", "R", (2, 3), False, 0.0)])  # 2-D shape unsupported
+    with pytest.raises(ValueError, match="dimension"):
+        _rust.read_first_frame_projected(
+            str(DATA_DIR / "mixed_schema_optional_column.xyz"), plan=plan
+        )
