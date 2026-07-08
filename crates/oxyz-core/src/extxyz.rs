@@ -19,6 +19,7 @@ use crate::batch::{Batch, BatchBuilder, BatchError};
 use crate::decode::{Compression, DecodedReader, open_decoded};
 use crate::index::{FrameEntry, FrameIndex};
 use crate::model::{Column, ColumnData, ColumnKind, Frame, Value};
+use crate::project::{Deviation, ProjectionPlan, project_frame};
 use crate::schema::Schema;
 
 #[derive(Debug, Error)]
@@ -904,6 +905,274 @@ fn finish_or_empty(builder: BatchBuilder) -> Result<Batch> {
     }
 }
 
+// ---- Projecting batch reads --------------------------------------------------
+//
+// Each frame is projected onto a fixed plan before assembly, so a mixed-schema
+// file becomes batchable: undeclared fields are dropped, absent optionals
+// filled, and a frame with an unfillable required field is left out entirely.
+// These mirror the plain batch readers (reusing the same scan/gather/assemble
+// machinery) but carry the survivors and a per-frame deviation report back to
+// the caller for policy. The core stays policy-free — it reshapes and reports.
+
+/// The outcome of a projecting batch read.
+pub struct ProjectedBatch {
+    /// The concatenation of the frames that survived projection.
+    pub batch: Batch,
+    /// File indices of the surviving frames, in push order.
+    pub survivors: Vec<usize>,
+    /// A deviation report per requested frame (survivors and drops alike), in
+    /// request/file order, so the caller can apply policy in that order.
+    pub reports: Vec<(usize, Vec<Deviation>)>,
+}
+
+/// Project one frame into an in-progress batch: record its report, and push it
+/// (tracking its file index) unless it dropped. Push cannot fail on a projected
+/// frame — every survivor shares the plan's shape — but the error is surfaced
+/// rather than ignored.
+fn project_into(
+    builder: &mut BatchBuilder,
+    survivors: &mut Vec<usize>,
+    reports: &mut Vec<(usize, Vec<Deviation>)>,
+    index: usize,
+    frame: &Frame,
+    plan: &ProjectionPlan,
+) -> Result<()> {
+    let projected = project_frame(frame, plan);
+    reports.push((index, projected.deviations));
+    if projected.dropped {
+        return Ok(());
+    }
+    builder.push(projected.frame)?;
+    survivors.push(index);
+    Ok(())
+}
+
+/// Resolve projected single-pass outcomes against the request, in request
+/// order. Mirrors [`assemble_batch`], but projects each gathered frame and
+/// collects survivors and reports instead of demanding a uniform shape.
+fn assemble_projected_batch(
+    indices: &[usize],
+    parsed: Vec<(usize, Result<Frame>)>,
+    scan_error: Option<ExtxyzError>,
+    plan: &ProjectionPlan,
+) -> Result<ProjectedBatch> {
+    let n_frames = match scan_error {
+        Some(ExtxyzError::FrameOutOfRange { n_frames, .. }) => Some(n_frames),
+        Some(structural) => return Err(structural),
+        None => None,
+    };
+
+    let mut results: HashMap<usize, Result<Frame>> = parsed.into_iter().collect();
+    let mut uses: HashMap<usize, usize> = HashMap::new();
+    for &index in indices {
+        *uses.entry(index).or_insert(0) += 1;
+    }
+
+    let mut builder = BatchBuilder::new();
+    let mut survivors = Vec::new();
+    let mut reports = Vec::new();
+    for &index in indices {
+        if let Some(n_frames) = n_frames {
+            if index >= n_frames {
+                return Err(ExtxyzError::FrameOutOfRange {
+                    frame_index: index,
+                    n_frames,
+                });
+            }
+        }
+
+        let remaining = uses.get_mut(&index).expect("counted above");
+        *remaining -= 1;
+
+        // Repeats clone the frame; the last use takes ownership.
+        let frame = match results.get(&index) {
+            Some(Ok(frame)) if *remaining > 0 => frame.clone(),
+            _ => results
+                .remove(&index)
+                .expect("scanner yields every selected in-range frame")?,
+        };
+        project_into(
+            &mut builder,
+            &mut survivors,
+            &mut reports,
+            index,
+            &frame,
+            plan,
+        )?;
+    }
+    let batch = finish_or_empty(builder)?;
+    Ok(ProjectedBatch {
+        batch,
+        survivors,
+        reports,
+    })
+}
+
+/// Projecting analogue of [`read_batch_from`]: gather the selection, project
+/// each frame, and return the surviving batch with its report.
+pub fn read_batch_projected_from<R: BufRead>(
+    reader: R,
+    indices: &[usize],
+    plan: &ProjectionPlan,
+) -> Result<ProjectedBatch> {
+    if indices.is_empty() {
+        return Err(BatchError::Empty.into());
+    }
+    let mut parsed = Vec::new();
+    let mut scan_error = None;
+    for item in RawFrames::selecting(reader, indices) {
+        match item {
+            Ok(raw) => parsed.push((raw.frame_index, parse_raw(&raw))),
+            Err(error) => scan_error = Some(error),
+        }
+    }
+    assemble_projected_batch(indices, parsed, scan_error, plan)
+}
+
+/// [`read_batch_projected_from`] with the parses spread over `threads` workers.
+#[cfg(feature = "parallel")]
+pub fn read_batch_projected_parallel_from<R: BufRead + Send>(
+    reader: R,
+    indices: &[usize],
+    threads: Option<usize>,
+    plan: &ProjectionPlan,
+) -> Result<ProjectedBatch> {
+    if indices.is_empty() {
+        return Err(BatchError::Empty.into());
+    }
+    let (parsed, scan_error) = run_pipeline(RawFrames::selecting(reader, indices), threads)?;
+    assemble_projected_batch(indices, parsed, scan_error, plan)
+}
+
+/// Projecting analogue of [`read_all_batch_from`]: project every frame in file
+/// order into one batch.
+pub fn read_all_batch_projected_from<R: BufRead>(
+    reader: R,
+    plan: &ProjectionPlan,
+) -> Result<ProjectedBatch> {
+    let mut builder = BatchBuilder::new();
+    let mut survivors = Vec::new();
+    let mut reports = Vec::new();
+    for (index, frame) in FrameIter::new(reader).enumerate() {
+        project_into(
+            &mut builder,
+            &mut survivors,
+            &mut reports,
+            index,
+            &frame?,
+            plan,
+        )?;
+    }
+    let batch = finish_or_empty(builder)?;
+    Ok(ProjectedBatch {
+        batch,
+        survivors,
+        reports,
+    })
+}
+
+/// [`read_all_batch_projected_from`] with the parses spread over `threads`
+/// workers.
+#[cfg(feature = "parallel")]
+pub fn read_all_batch_projected_parallel_from<R: BufRead + Send>(
+    reader: R,
+    threads: Option<usize>,
+    plan: &ProjectionPlan,
+) -> Result<ProjectedBatch> {
+    let mut builder = BatchBuilder::new();
+    let mut survivors = Vec::new();
+    let mut reports = Vec::new();
+    for (index, frame) in read_frames_parallel_from(reader, threads)?
+        .into_iter()
+        .enumerate()
+    {
+        project_into(
+            &mut builder,
+            &mut survivors,
+            &mut reports,
+            index,
+            &frame,
+            plan,
+        )?;
+    }
+    let batch = finish_or_empty(builder)?;
+    Ok(ProjectedBatch {
+        batch,
+        survivors,
+        reports,
+    })
+}
+
+/// Projecting analogue of [`BatchIter`]. Yields every window that pulled at
+/// least one frame — even one whose frames all dropped, so the caller still
+/// sees the reports; a window that hits EOF without pulling ends iteration.
+pub struct BatchIterProjected<R: BufRead> {
+    frames: FrameIter<R>,
+    frames_per_batch: usize,
+    plan: ProjectionPlan,
+    next_index: usize,
+}
+
+impl<R: BufRead> Iterator for BatchIterProjected<R> {
+    type Item = Result<ProjectedBatch>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut builder = BatchBuilder::new();
+        let mut survivors = Vec::new();
+        let mut reports = Vec::new();
+        let mut pulled = 0usize;
+        for _ in 0..self.frames_per_batch {
+            match self.frames.next() {
+                None => break,
+                Some(Ok(frame)) => {
+                    let index = self.next_index;
+                    self.next_index += 1;
+                    pulled += 1;
+                    if let Err(error) = project_into(
+                        &mut builder,
+                        &mut survivors,
+                        &mut reports,
+                        index,
+                        &frame,
+                        &self.plan,
+                    ) {
+                        return Some(Err(error));
+                    }
+                }
+                Some(Err(error)) => return Some(Err(error)),
+            }
+        }
+        if pulled == 0 {
+            return None; // clean end-of-file
+        }
+        match finish_or_empty(builder) {
+            Ok(batch) => Some(Ok(ProjectedBatch {
+                batch,
+                survivors,
+                reports,
+            })),
+            Err(error) => Some(Err(error)),
+        }
+    }
+}
+
+/// [`iter_batches_from`] with projection onto `plan`.
+pub fn iter_batches_projected_from<R: BufRead>(
+    reader: R,
+    frames_per_batch: usize,
+    plan: ProjectionPlan,
+) -> Result<BatchIterProjected<R>> {
+    if frames_per_batch == 0 {
+        return Err(BatchError::ZeroFramesPerBatch.into());
+    }
+    Ok(BatchIterProjected {
+        frames: FrameIter::new(reader),
+        frames_per_batch,
+        plan,
+        next_index: 0,
+    })
+}
+
 /// Random-access reader: a scanned [`FrameIndex`] plus the open file.
 pub struct IndexedFrames {
     file: File,
@@ -1031,6 +1300,88 @@ impl IndexedFrames {
             builder.push(frame)?;
         }
         Ok(builder.finish()?)
+    }
+
+    /// [`get_batch`](Self::get_batch) with each frame projected onto `plan`.
+    /// Returns the surviving batch, the file indices that survived, and a
+    /// per-requested-frame deviation report.
+    pub fn get_batch_projected(
+        &mut self,
+        indices: &[usize],
+        plan: &ProjectionPlan,
+    ) -> Result<ProjectedBatch> {
+        let mut builder = BatchBuilder::new();
+        let mut survivors = Vec::new();
+        let mut reports = Vec::new();
+        for &frame_index in indices {
+            let frame = self.get(frame_index)?;
+            project_into(
+                &mut builder,
+                &mut survivors,
+                &mut reports,
+                frame_index,
+                &frame,
+                plan,
+            )?;
+        }
+        let batch = finish_or_empty(builder)?;
+        Ok(ProjectedBatch {
+            batch,
+            survivors,
+            reports,
+        })
+    }
+
+    /// [`get_batch_projected`](Self::get_batch_projected) with the frame parses
+    /// spread over worker threads; `threads` of `None` uses every core.
+    #[cfg(feature = "parallel")]
+    pub fn get_batch_projected_parallel(
+        &mut self,
+        indices: &[usize],
+        threads: Option<usize>,
+        plan: &ProjectionPlan,
+    ) -> Result<ProjectedBatch> {
+        let entries = indices
+            .iter()
+            .map(|&frame_index| {
+                self.index
+                    .get(frame_index)
+                    .map(|entry| (frame_index, entry))
+                    .ok_or(ExtxyzError::FrameOutOfRange {
+                        frame_index,
+                        n_frames: self.index.n_frames(),
+                    })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let frames = match threads {
+            None => parse_entries_on_pool(&self.path, &entries),
+            Some(n) => {
+                let path = self.path.clone();
+                self.worker_pool(n)?
+                    .install(|| parse_entries_on_pool(&path, &entries))
+            }
+        }?;
+
+        let mut builder = BatchBuilder::new();
+        let mut survivors = Vec::new();
+        let mut reports = Vec::new();
+        for (&(frame_index, _), frame) in entries.iter().zip(frames) {
+            project_into(
+                &mut builder,
+                &mut survivors,
+                &mut reports,
+                frame_index,
+                &frame,
+                plan,
+            )?;
+        }
+        let batch = finish_or_empty(builder)?;
+        Ok(ProjectedBatch {
+            batch,
+            survivors,
+            reports,
+        })
     }
 
     /// The cached `threads`-wide worker pool, built on first use and rebuilt

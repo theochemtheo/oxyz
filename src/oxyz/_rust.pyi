@@ -51,6 +51,9 @@ class DeviationData(TypedDict):
 type ProjectionPlan = tuple[list[tuple], list[tuple]]
 # A dropped frame has None in place of its FrameData; deviations report why.
 type ProjectedFrame = tuple[FrameData | None, list[DeviationData]]
+# A projected batch: the survivors' data, their file indices, and a
+# (frame_index, deviations) report per requested frame (survivors and drops).
+type ProjectedBatch = tuple[BatchData, list[int], list[tuple[int, list[DeviationData]]]]
 
 class ColumnVariantData(TypedDict):
     kind: str
@@ -109,6 +112,9 @@ class IndexedFrames:
     def get_batch(
         self, indices: list[int], threads: int | None = None
     ) -> BatchData: ...
+    def get_batch_projected(
+        self, indices: list[int], plan: ProjectionPlan, threads: int | None = None
+    ) -> ProjectedBatch: ...
 
 class BatchIter:
     def __init__(
@@ -145,6 +151,26 @@ class FrameIterProjected:
         codec: str,
         member: str | None = None,
     ) -> FrameIterProjected: ...
+
+class BatchIterProjected:
+    def __init__(
+        self,
+        path: str,
+        frames_per_batch: int,
+        plan: ProjectionPlan,
+        compression: str = "infer",
+        member: str | None = None,
+    ) -> None: ...
+    def __iter__(self) -> BatchIterProjected: ...
+    def __next__(self) -> ProjectedBatch: ...
+    @staticmethod
+    def from_reader(
+        source: object,
+        frames_per_batch: int,
+        plan: ProjectionPlan,
+        codec: str,
+        member: str | None = None,
+    ) -> BatchIterProjected: ...
 
 def read_first_frame(
     path: str, compression: str = "infer", member: str | None = None
@@ -188,6 +214,22 @@ def read_first_frame_projected_reader(
     member: str | None = None,
     plan: ProjectionPlan = ...,
 ) -> ProjectedFrame: ...
+def read_batch_projected(
+    path: str,
+    indices: list[int] | None = None,
+    threads: int | None = None,
+    compression: str = "infer",
+    member: str | None = None,
+    plan: ProjectionPlan = ...,
+) -> ProjectedBatch: ...
+def read_batch_projected_reader(
+    source: object,
+    codec: str,
+    indices: list[int] | None = None,
+    threads: int | None = None,
+    member: str | None = None,
+    plan: ProjectionPlan = ...,
+) -> ProjectedBatch: ...
 def infer_schema(
     path: str, compression: str = "infer", member: str | None = None
 ) -> SchemaData: ...

@@ -328,3 +328,15 @@ def test_schema_drift_within_a_batch_is_an_error(tmp_path: Path) -> None:
 
     # Batches that never span the drift are still readable.
     assert len(list(oxyz.iter_batches(path, frames_per_batch=1))) == 2
+
+
+def test_projected_batch_binding_entries_exist():
+    import oxyz._rust as _rust
+
+    for name in (
+        "read_batch_projected",
+        "read_batch_projected_reader",
+        "BatchIterProjected",
+    ):
+        assert hasattr(_rust, name), name
+    assert hasattr(_rust.IndexedFrames, "get_batch_projected")

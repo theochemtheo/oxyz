@@ -2,6 +2,17 @@ use oxyz_core::model::{Column, ColumnData, ColumnKind, Frame, Value};
 use oxyz_core::project::{
     Axis, DeviationKind, Fill, PlanColumn, PlanMetadata, Projected, ProjectionPlan,
 };
+use oxyz_core::{read_all_batch_projected_from, read_batch_projected_from};
+
+fn real_col_plan(name: &str, width: usize, required: bool) -> PlanColumn {
+    PlanColumn {
+        name: name.into(),
+        kind: ColumnKind::Real,
+        width,
+        required,
+        fill: Some(Fill::Real(f64::NAN)),
+    }
+}
 
 fn col(name: &str, data: ColumnData, width: usize) -> Column {
     Column {
@@ -216,4 +227,72 @@ fn metadata_array_mismatch_reports_bracket_signature() {
         }
         other => panic!("expected a 9-length RealArray, got {other:?}"),
     }
+}
+
+#[test]
+fn projected_whole_file_batch_fills_and_reports() {
+    let input = "1\nProperties=species:S:1:pos:R:3:charge:R:1\nH 0 0 0 0.5\n\
+                 1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n";
+    let plan = ProjectionPlan {
+        columns: vec![
+            real_col_plan("pos", 3, true),
+            real_col_plan("charge", 1, false),
+        ],
+        metadata: Vec::new(),
+    };
+    let pb = read_all_batch_projected_from(input.as_bytes(), &plan).unwrap();
+    assert_eq!(pb.survivors, vec![0, 1]); // species dropped, both frames kept
+    assert_eq!(pb.batch.n_frames(), 2);
+    let charge = pb
+        .batch
+        .columns
+        .iter()
+        .find(|c| c.name == "charge")
+        .unwrap();
+    let vals = charge.data.as_real().unwrap();
+    assert_eq!(vals.len(), 2);
+    assert_eq!(vals[0], 0.5);
+    assert!(vals[1].is_nan()); // second frame's charge filled
+    assert_eq!(pb.reports.len(), 2);
+    assert!(pb.reports.iter().all(|(_, d)| d.is_empty())); // optional fill is silent
+}
+
+#[test]
+fn projected_batch_drops_unfillable_and_records_survivors() {
+    let input = "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n\
+                 1\nProperties=species:S:1:pos:R:3:id:I:1\nH 0 0 0 7\n";
+    let plan = ProjectionPlan {
+        columns: vec![
+            real_col_plan("pos", 3, true),
+            PlanColumn {
+                name: "id".into(),
+                kind: ColumnKind::Int,
+                width: 1,
+                required: true,
+                fill: None, // no natural null -> an absent id drops the frame
+            },
+        ],
+        metadata: Vec::new(),
+    };
+    let pb = read_all_batch_projected_from(input.as_bytes(), &plan).unwrap();
+    assert_eq!(pb.survivors, vec![1]); // frame 0 dropped (no id), frame 1 kept
+    assert_eq!(pb.batch.n_frames(), 1);
+    assert_eq!(pb.reports.len(), 2);
+    assert_eq!(pb.reports[0].1.len(), 1); // frame 0 reports a missing id
+    assert!(pb.reports[1].1.is_empty());
+}
+
+#[test]
+fn projected_selection_preserves_request_order() {
+    let input = "1\nProperties=species:S:1:pos:R:3:e:R:1\nH 0 0 0 1.0\n\
+                 1\nProperties=species:S:1:pos:R:3:e:R:1\nH 0 0 0 2.0\n\
+                 1\nProperties=species:S:1:pos:R:3:e:R:1\nH 0 0 0 3.0\n";
+    let plan = ProjectionPlan {
+        columns: vec![real_col_plan("pos", 3, true), real_col_plan("e", 1, true)],
+        metadata: Vec::new(),
+    };
+    let pb = read_batch_projected_from(input.as_bytes(), &[2, 0], &plan).unwrap();
+    assert_eq!(pb.survivors, vec![2, 0]); // request order, not file order
+    let e = pb.batch.columns.iter().find(|c| c.name == "e").unwrap();
+    assert_eq!(e.data.as_real().unwrap(), &[3.0, 1.0]);
 }

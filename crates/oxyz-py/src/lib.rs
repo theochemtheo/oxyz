@@ -268,6 +268,26 @@ impl IndexedFrames {
             .map_err(extxyz_error_to_py)?;
         batch_to_pydict(py, batch)
     }
+
+    #[pyo3(signature = (indices, plan, threads=None))]
+    fn get_batch_projected<'py>(
+        &mut self,
+        py: Python<'py>,
+        indices: Vec<usize>,
+        plan: &Bound<'py, PyTuple>,
+        threads: Option<usize>,
+    ) -> PyResult<Bound<'py, PyTuple>> {
+        let plan = build_plan(plan)?;
+        let projected = py
+            .detach(|| match threads {
+                Some(1) => self.inner.get_batch_projected(&indices, &plan),
+                _ => self
+                    .inner
+                    .get_batch_projected_parallel(&indices, threads, &plan),
+            })
+            .map_err(extxyz_error_to_py)?;
+        projected_batch_to_py(py, projected)
+    }
 }
 
 /// Streaming batch iterator: `frames_per_batch` frames assembled per
@@ -677,6 +697,148 @@ fn read_batch<'py>(
         })
         .map_err(extxyz_error_to_py)?;
     batch_to_pydict(py, batch)
+}
+
+/// Convert a `ProjectedBatch` to the Python triple `(BatchData, survivors,
+/// reports)`: the surviving frames' batch, their file indices, and a
+/// `(index, deviations)` report per requested frame.
+fn projected_batch_to_py<'py>(
+    py: Python<'py>,
+    projected: oxyz_core::ProjectedBatch,
+) -> PyResult<Bound<'py, PyTuple>> {
+    let oxyz_core::ProjectedBatch {
+        batch,
+        survivors,
+        reports,
+    } = projected;
+    let batch_data = batch_to_pydict(py, batch)?;
+    let survivors_list = PyList::new(py, survivors)?;
+    let reports_list = PyList::empty(py);
+    for (index, deviations) in &reports {
+        let devs = deviations_to_py(py, deviations)?;
+        reports_list.append((*index, devs))?;
+    }
+    PyTuple::new(
+        py,
+        [
+            batch_data.into_any(),
+            survivors_list.into_any(),
+            reports_list.into_any(),
+        ],
+    )
+}
+
+/// Projected variant of [`read_batch`]: returns `(BatchData, survivors,
+/// reports)` where the batch holds only frames that survived projection.
+#[pyfunction]
+#[pyo3(signature = (path, indices=None, threads=None, compression="infer", member=None, *, plan))]
+fn read_batch_projected<'py>(
+    py: Python<'py>,
+    path: PathBuf,
+    indices: Option<Vec<usize>>,
+    threads: Option<usize>,
+    compression: &str,
+    member: Option<String>,
+    plan: &Bound<'py, PyTuple>,
+) -> PyResult<Bound<'py, PyTuple>> {
+    let plan = build_plan(plan)?;
+    let reader = open_reader(&path, compression, member.as_deref())?;
+    let projected = py
+        .detach(move || match (indices, threads) {
+            (None, Some(1)) => oxyz_core::read_all_batch_projected_from(reader, &plan),
+            (None, _) => oxyz_core::read_all_batch_projected_parallel_from(reader, threads, &plan),
+            (Some(indices), Some(1)) => {
+                oxyz_core::read_batch_projected_from(reader, &indices, &plan)
+            }
+            (Some(indices), _) => {
+                oxyz_core::read_batch_projected_parallel_from(reader, &indices, threads, &plan)
+            }
+        })
+        .map_err(extxyz_error_to_py)?;
+    projected_batch_to_py(py, projected)
+}
+
+/// Reader-source variant of [`read_batch_projected`].
+#[pyfunction]
+#[pyo3(signature = (source, codec, indices=None, threads=None, member=None, *, plan))]
+fn read_batch_projected_reader<'py>(
+    py: Python<'py>,
+    source: Bound<'py, PyAny>,
+    codec: &str,
+    indices: Option<Vec<usize>>,
+    threads: Option<usize>,
+    member: Option<String>,
+    plan: &Bound<'py, PyTuple>,
+) -> PyResult<Bound<'py, PyTuple>> {
+    let plan = build_plan(plan)?;
+    let reader = build_decoded(&source, codec, member.as_deref())?;
+    let projected = py
+        .detach(move || match (indices, threads) {
+            (None, Some(1)) => oxyz_core::read_all_batch_projected_from(reader, &plan),
+            (None, _) => oxyz_core::read_all_batch_projected_parallel_from(reader, threads, &plan),
+            (Some(indices), Some(1)) => {
+                oxyz_core::read_batch_projected_from(reader, &indices, &plan)
+            }
+            (Some(indices), _) => {
+                oxyz_core::read_batch_projected_parallel_from(reader, &indices, threads, &plan)
+            }
+        })
+        .map_err(extxyz_error_to_py)?;
+    projected_batch_to_py(py, projected)
+}
+
+/// Projected variant of [`BatchIter`]: `__next__` yields `(BatchData,
+/// survivors, reports)`.
+#[pyclass]
+struct BatchIterProjected {
+    inner: oxyz_core::BatchIterProjected<DecodedReader>,
+}
+
+#[pymethods]
+impl BatchIterProjected {
+    #[new]
+    #[pyo3(signature = (path, frames_per_batch, plan, compression="infer", member=None))]
+    fn new(
+        path: PathBuf,
+        frames_per_batch: usize,
+        plan: &Bound<'_, PyTuple>,
+        compression: &str,
+        member: Option<String>,
+    ) -> PyResult<Self> {
+        let plan = build_plan(plan)?;
+        let reader = open_reader(&path, compression, member.as_deref())?;
+        let inner = oxyz_core::iter_batches_projected_from(reader, frames_per_batch, plan)
+            .map_err(extxyz_error_to_py)?;
+        Ok(BatchIterProjected { inner })
+    }
+
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyTuple>>> {
+        match py.detach(|| self.inner.next()) {
+            None => Ok(None),
+            Some(Ok(projected)) => projected_batch_to_py(py, projected).map(Some),
+            Some(Err(error)) => Err(extxyz_error_to_py(error)),
+        }
+    }
+
+    #[staticmethod]
+    #[pyo3(signature = (source, frames_per_batch, plan, codec, member=None))]
+    fn from_reader(
+        source: Bound<'_, PyAny>,
+        frames_per_batch: usize,
+        plan: &Bound<'_, PyTuple>,
+        codec: &str,
+        member: Option<String>,
+    ) -> PyResult<Self> {
+        let plan = build_plan(plan)?;
+        let reader = build_decoded(&source, codec, member.as_deref())?;
+        let inner = oxyz_core::iter_batches_projected_from(reader, frames_per_batch, plan)
+            .map_err(extxyz_error_to_py)?;
+        Ok(BatchIterProjected { inner })
+    }
 }
 
 /// Infer the file's schema as one nested dict — counts, per-column and
@@ -1449,7 +1611,10 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_first_frame_projected, m)?)?;
     m.add_function(wrap_pyfunction!(read_frames_projected_reader, m)?)?;
     m.add_function(wrap_pyfunction!(read_first_frame_projected_reader, m)?)?;
+    m.add_function(wrap_pyfunction!(read_batch_projected, m)?)?;
+    m.add_function(wrap_pyfunction!(read_batch_projected_reader, m)?)?;
     m.add_class::<FrameIterProjected>()?;
+    m.add_class::<BatchIterProjected>()?;
     m.add_class::<FrameIter>()?;
     m.add_class::<IndexedFrames>()?;
     m.add_class::<BatchIter>()?;
