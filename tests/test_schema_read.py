@@ -106,3 +106,16 @@ def test_read_frames_sliced_reports_original_index():
             conformance="required",
         )
     assert excinfo.value.frame_index == 1
+
+
+def test_projected_binding_entries_exist():
+    import oxyz._rust as _rust
+
+    for name in (
+        "read_frames_projected",
+        "read_first_frame_projected",
+        "read_frames_projected_reader",
+        "read_first_frame_projected_reader",
+        "FrameIterProjected",
+    ):
+        assert hasattr(_rust, name), name

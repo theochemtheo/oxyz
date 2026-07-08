@@ -37,6 +37,21 @@ class BatchData(TypedDict):
     columns: dict[str, ColumnValues]
     metadata: dict[str, ColumnValues]
 
+class DeviationData(TypedDict):
+    axis: str
+    name: str
+    deviation: str
+    expected: str
+    found: str | None
+
+# A projection plan crosses as a tuple of two lists, columns then metadata,
+# each holding one per-field tuple built in oxyz._project. A column field is
+# name, letter, width, required, fill-or-None; a metadata field carries a shape
+# tuple in place of width (empty for a scalar, length-one for an array).
+type ProjectionPlan = tuple[list[tuple], list[tuple]]
+# A dropped frame has None in place of its FrameData; deviations report why.
+type ProjectedFrame = tuple[FrameData | None, list[DeviationData]]
+
 class ColumnVariantData(TypedDict):
     kind: str
     width: int
@@ -113,6 +128,24 @@ class BatchIter:
         member: str | None = None,
     ) -> BatchIter: ...
 
+class FrameIterProjected:
+    def __init__(
+        self,
+        path: str,
+        plan: ProjectionPlan,
+        compression: str = "infer",
+        member: str | None = None,
+    ) -> None: ...
+    def __iter__(self) -> FrameIterProjected: ...
+    def __next__(self) -> ProjectedFrame: ...
+    @staticmethod
+    def from_reader(
+        source: object,
+        plan: ProjectionPlan,
+        codec: str,
+        member: str | None = None,
+    ) -> FrameIterProjected: ...
+
 def read_first_frame(
     path: str, compression: str = "infer", member: str | None = None
 ) -> FrameData: ...
@@ -129,6 +162,32 @@ def read_batch(
     compression: str = "infer",
     member: str | None = None,
 ) -> BatchData: ...
+def read_frames_projected(
+    path: str,
+    threads: int | None = None,
+    compression: str = "infer",
+    member: str | None = None,
+    plan: ProjectionPlan = ...,
+) -> list[ProjectedFrame]: ...
+def read_first_frame_projected(
+    path: str,
+    compression: str = "infer",
+    member: str | None = None,
+    plan: ProjectionPlan = ...,
+) -> ProjectedFrame: ...
+def read_frames_projected_reader(
+    source: object,
+    codec: str,
+    member: str | None = None,
+    threads: int | None = None,
+    plan: ProjectionPlan = ...,
+) -> list[ProjectedFrame]: ...
+def read_first_frame_projected_reader(
+    source: object,
+    codec: str,
+    member: str | None = None,
+    plan: ProjectionPlan = ...,
+) -> ProjectedFrame: ...
 def infer_schema(
     path: str, compression: str = "infer", member: str | None = None
 ) -> SchemaData: ...
