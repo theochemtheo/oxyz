@@ -9,13 +9,14 @@ import oxyz._rust as _rust
 from oxyz import _remote
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterable, Iterator
     from pathlib import Path
 
     from ase import Atoms
 
-    from oxyz._schema_match import Conformance
-    from oxyz._schema_spec import SchemaSpec
+    from oxyz._rust import ProjectedFrame, ProjectionPlan
+    from oxyz._schema_match import CompiledSpec, Conformance
+    from oxyz._schema_spec import Mode, SchemaSpec
 
 ColumnValues = np.ndarray | list[str] | list[list[str]]
 MetadataValue = float | int | bool | str | np.ndarray | list[str]
@@ -52,6 +53,7 @@ def read_first(
     *,
     schema: SchemaSpec | str | Path | None = None,
     conformance: Conformance = "required",
+    mode: Mode | None = None,
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
@@ -70,8 +72,14 @@ def read_first(
 
     `schema` (a `SchemaSpec` or a path to a `.json`/`.yaml`/`.toml` file)
     validates the frame; `conformance` is `"strict"`, `"required"` (default),
-    or `"warn"`. See `oxyz.SchemaSpec`.
+    or `"warn"`. `mode` (`None`/`"validate"`/`"project"`) overrides the schema's
+    own `mode`; under `project` the frame is reshaped to the schema (extras
+    dropped, optionals filled). See `oxyz.SchemaSpec`.
     """
+    _require_schema_for_mode(schema, mode)
+    plan = spec = None
+    if schema is not None:
+        plan, spec = _projection(schema, mode)
     if _remote.is_remote(path):
         src = _remote.open_source(
             path,
@@ -79,9 +87,32 @@ def read_first(
             member=member,
             storage_options=storage_options,
         )
-        data = _rust.read_first_frame_reader(src.obj, src.codec, src.member)
+        if plan is not None:
+            raw = _rust.read_first_frame_projected_reader(
+                src.obj, src.codec, src.member, plan=plan
+            )
+        else:
+            data = _rust.read_first_frame_reader(src.obj, src.codec, src.member)
+    elif plan is not None:
+        raw = _rust.read_first_frame_projected(
+            str(path), compression, member, plan=plan
+        )
     else:
         data = _rust.read_first_frame(str(path), compression, member)
+
+    if plan is not None:
+        assert spec is not None  # noqa: S101 — set alongside plan above
+        kept = _keep_projected([raw], conformance, spec, [0])
+        if not kept:
+            from oxyz._schema_match import SchemaError
+
+            raise SchemaError(
+                "the first frame was dropped by projection (an unfillable "
+                "required field); no frame to return",
+                frame_index=0,
+            )
+        return kept[0]
+
     frame = _frame_from_data(data)
     if schema is not None:
         from oxyz import _schema_match
@@ -99,12 +130,64 @@ def _check_threads(threads: int | None) -> None:
         raise ValueError(f"threads must be a positive integer or None, got {threads!r}")
 
 
+def _projection(
+    schema: SchemaSpec | str | Path, mode: Mode | None
+) -> tuple[ProjectionPlan | None, SchemaSpec]:
+    """The crossing plan (`None` under validate mode) and the resolved spec, for
+    a reader that was given a `schema`."""
+    from oxyz._project import compile_projection, effective_mode
+    from oxyz._schema_spec import SchemaSpec
+
+    spec = schema if isinstance(schema, SchemaSpec) else SchemaSpec.from_file(schema)
+    return compile_projection(spec, effective_mode(spec, mode)), spec
+
+
+def _require_schema_for_mode(schema: object, mode: Mode | None) -> None:
+    if mode is not None and schema is None:
+        raise ValueError("mode= requires a schema= to project or validate against")
+
+
+def _frame_rule_compiled(spec: SchemaSpec) -> CompiledSpec | None:
+    """A compiled spec to check the frame rule against each projected frame, or
+    `None` when the spec has no frame rule. Columns and metadata already conform
+    after projection, so only frame-axis (`n_atoms`, `lattice`) checks bite."""
+    if spec.frame is None:
+        return None
+    from oxyz import _schema_match
+
+    return _schema_match.compile_spec(spec)
+
+
+def _keep_projected(
+    raw: Iterable[ProjectedFrame],
+    conformance: Conformance,
+    spec: SchemaSpec,
+    indices: Iterable[int],
+) -> list[Frame]:
+    """Apply projection policy to `(data, deviations)` items paired with their
+    file `indices`: raise/warn/drop, then frame-rule-check the survivors."""
+    from oxyz import _schema_match
+    from oxyz._project import enforce_projection
+
+    frame_compiled = _frame_rule_compiled(spec)
+    out: list[Frame] = []
+    for index, (data, deviations) in zip(indices, raw, strict=True):
+        keep = enforce_projection(deviations, conformance, index, data is None)
+        if keep and data is not None:
+            frame = _frame_from_data(data)
+            if frame_compiled is not None:
+                _schema_match.enforce_frame(frame, frame_compiled, conformance, index)
+            out.append(frame)
+    return out
+
+
 def read_frames(
     path: str | Path,
     *,
     threads: int | None = None,
     schema: SchemaSpec | str | Path | None = None,
     conformance: Conformance = "required",
+    mode: Mode | None = None,
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
@@ -127,9 +210,35 @@ def read_frames(
 
     `schema` (a `SchemaSpec` or a path to a `.json`/`.yaml`/`.toml` file)
     validates each frame; `conformance` is `"strict"`, `"required"` (default),
-    or `"warn"`. See `oxyz.SchemaSpec`.
+    or `"warn"`. `mode` (`None`/`"validate"`/`"project"`) overrides the schema's
+    own `mode`; under `project` each frame is reshaped to the schema (extras
+    dropped, optionals filled) and an unfillable frame is dropped under `warn`.
+    See `oxyz.SchemaSpec`.
     """
     _check_threads(threads)
+    _require_schema_for_mode(schema, mode)
+    plan = spec = None
+    if schema is not None:
+        plan, spec = _projection(schema, mode)
+
+    if plan is not None:
+        assert spec is not None  # noqa: S101 — set alongside plan above
+        if _remote.is_remote(path):
+            src = _remote.open_source(
+                path,
+                compression=compression,
+                member=member,
+                storage_options=storage_options,
+            )
+            raw = _rust.read_frames_projected_reader(
+                src.obj, src.codec, src.member, threads, plan=plan
+            )
+        else:
+            raw = _rust.read_frames_projected(
+                str(path), threads, compression, member, plan=plan
+            )
+        return _keep_projected(raw, conformance, spec, range(len(raw)))
+
     if _remote.is_remote(path):
         src = _remote.open_source(
             path,
@@ -150,13 +259,14 @@ def read_frames(
     return frames
 
 
-def read_frames_sliced(
+def read_frames_sliced(  # noqa: PLR0913  the read/schema/projection options are the contract
     path: str | Path,
     frames: slice,
     threads: int | None = None,
     *,
     schema: SchemaSpec | str | Path | None = None,
     conformance: Conformance = "required",
+    mode: Mode | None = None,
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
@@ -175,8 +285,34 @@ def read_frames_sliced(
 
     `schema` (a `SchemaSpec` or a path to a `.json`/`.yaml`/`.toml` file)
     validates each kept frame against its original index; `conformance` is
-    `"strict"`, `"required"` (default), or `"warn"`. See `oxyz.SchemaSpec`.
+    `"strict"`, `"required"` (default), or `"warn"`. `mode`
+    (`None`/`"validate"`/`"project"`) overrides the schema's own `mode`; under
+    `project` each kept frame is reshaped to the schema. See `oxyz.SchemaSpec`.
     """
+    _require_schema_for_mode(schema, mode)
+    plan = spec = None
+    if schema is not None:
+        plan, spec = _projection(schema, mode)
+
+    if plan is not None:
+        assert spec is not None  # noqa: S101 — set alongside plan above
+        if _remote.is_remote(path):
+            src = _remote.open_source(
+                path,
+                compression=compression,
+                member=member,
+                storage_options=storage_options,
+            )
+            raw = _rust.read_frames_projected_reader(
+                src.obj, src.codec, src.member, threads, plan=plan
+            )
+        else:
+            raw = _rust.read_frames_projected(
+                str(path), threads, compression, member, plan=plan
+            )
+        indices = range(len(raw))[frames]
+        return _keep_projected(raw[frames], conformance, spec, indices)
+
     if _remote.is_remote(path):
         src = _remote.open_source(
             path,
@@ -220,6 +356,7 @@ def iter_frames(
     *,
     schema: SchemaSpec | str | Path | None = None,
     conformance: Conformance = "required",
+    mode: Mode | None = None,
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
@@ -240,8 +377,45 @@ def iter_frames(
 
     `schema` (a `SchemaSpec` or a path to a `.json`/`.yaml`/`.toml` file)
     validates each frame before it is yielded; `conformance` is `"strict"`,
-    `"required"` (default), or `"warn"`. See `oxyz.SchemaSpec`.
+    `"required"` (default), or `"warn"`. `mode` (`None`/`"validate"`/`"project"`)
+    overrides the schema's own `mode`; under `project` each frame is reshaped to
+    the schema and an unfillable frame is dropped under `warn`. See
+    `oxyz.SchemaSpec`.
     """
+    _require_schema_for_mode(schema, mode)
+    plan = spec = None
+    if schema is not None:
+        plan, spec = _projection(schema, mode)
+
+    if plan is not None:
+        assert spec is not None  # noqa: S101 — set alongside plan above
+        from oxyz import _schema_match
+        from oxyz._project import enforce_projection
+
+        if _remote.is_remote(path):
+            src = _remote.open_source(
+                path,
+                compression=compression,
+                member=member,
+                storage_options=storage_options,
+            )
+            projected = _rust.FrameIterProjected.from_reader(
+                src.obj, plan, src.codec, src.member
+            )
+        else:
+            projected = _rust.FrameIterProjected(str(path), plan, compression, member)
+        frame_compiled = _frame_rule_compiled(spec)
+        for index, (data, deviations) in enumerate(projected):
+            keep = enforce_projection(deviations, conformance, index, data is None)
+            if keep and data is not None:
+                frame = _frame_from_data(data)
+                if frame_compiled is not None:
+                    _schema_match.enforce_frame(
+                        frame, frame_compiled, conformance, index
+                    )
+                yield frame
+        return
+
     if _remote.is_remote(path):
         src = _remote.open_source(
             path,
