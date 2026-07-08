@@ -20,7 +20,13 @@ from typing import TYPE_CHECKING, overload
 import numpy as np
 
 from oxyz._convert import UnknownSpeciesError, species_to_numbers
-from oxyz._frames import ColumnValues, Compression, Frame, MetadataValue
+from oxyz._frames import (
+    ColumnValues,
+    Compression,
+    Frame,
+    MetadataValue,
+    _require_schema_for_mode,
+)
 from oxyz._select import frames_for_read, nth_frame, parse_index, sliced_frames
 
 if TYPE_CHECKING:
@@ -28,6 +34,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from oxyz._remote import StorageOptions
+    from oxyz._schema_match import Conformance
+    from oxyz._schema_spec import Mode, SchemaSpec
 
 try:
     from ase import Atoms
@@ -200,6 +208,9 @@ def read(
     index: int | None = ...,
     *,
     format: str | None = ...,
+    schema: SchemaSpec | str | Path | None = ...,
+    conformance: Conformance = ...,
+    mode: Mode | None = ...,
     compression: Compression = ...,
     member: str | None = ...,
     storage_options: StorageOptions | None = ...,
@@ -212,6 +223,9 @@ def read(
     index: slice,
     *,
     format: str | None = ...,
+    schema: SchemaSpec | str | Path | None = ...,
+    conformance: Conformance = ...,
+    mode: Mode | None = ...,
     compression: Compression = ...,
     member: str | None = ...,
     storage_options: StorageOptions | None = ...,
@@ -224,17 +238,23 @@ def read(
     index: str,
     *,
     format: str | None = ...,
+    schema: SchemaSpec | str | Path | None = ...,
+    conformance: Conformance = ...,
+    mode: Mode | None = ...,
     compression: Compression = ...,
     member: str | None = ...,
     storage_options: StorageOptions | None = ...,
 ) -> Atoms | list[Atoms]: ...
 
 
-def read(
+def read(  # noqa: PLR0913  the index/schema/projection/source options are the contract
     path: str | Path,
     index: int | str | slice | None = None,
     *,
     format: str | None = None,
+    schema: SchemaSpec | str | Path | None = None,
+    conformance: Conformance = "required",
+    mode: Mode | None = None,
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: StorageOptions | None = None,
@@ -243,8 +263,11 @@ def read(
 
     Like ASE, the default index is -1: the last frame. Forward selections
     stream; negative or reverse ones resolve via a structural scan and seek,
-    never a full parse. Only requested frames have their contents read —
-    whole-file validation is `oxyz.infer_schema`'s job.
+    never a full parse. Per-frame projection/validation (`schema`, `mode`,
+    `conformance`) is applied to the frames actually read; whole-file inference
+    is `oxyz.infer_schema`'s job. A negative or reverse index with a `schema`
+    reads the whole file (forgoing the seek shortcut) so the sought frames are
+    projected before conversion.
 
     Compressed paths (`.gz`, `.zst`, `.zip`, `.tar.gz`, `.tar`) are read too;
     `compression` and `member` are as in `oxyz.read_frames`. A compressed source
@@ -257,12 +280,16 @@ def read(
     the same as compressed local files.
     """
     _check_format(format)
+    _require_schema_for_mode(schema, mode)
     index = parse_index(-1 if index is None else index)
     if isinstance(index, int):
         return to_atoms(
             nth_frame(
                 path,
                 index,
+                schema=schema,
+                conformance=conformance,
+                mode=mode,
                 compression=compression,
                 member=member,
                 storage_options=storage_options,
@@ -273,6 +300,9 @@ def read(
         for frame in frames_for_read(
             path,
             index,
+            schema=schema,
+            conformance=conformance,
+            mode=mode,
             compression=compression,
             member=member,
             storage_options=storage_options,
@@ -280,17 +310,21 @@ def read(
     ]
 
 
-def iread(
+def iread(  # noqa: PLR0913  the index/schema/projection/source options are the contract
     path: str | Path,
     index: int | str | slice = ":",
     *,
     format: str | None = None,
+    schema: SchemaSpec | str | Path | None = None,
+    conformance: Conformance = "required",
+    mode: Mode | None = None,
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: StorageOptions | None = None,
 ) -> Iterator[Atoms]:
     """Drop-in for `ase.io.iread` on extxyz files: yields one Atoms at a time."""
     _check_format(format)
+    _require_schema_for_mode(schema, mode)
     index = parse_index(index)
     if isinstance(index, int):
         return iter(
@@ -299,6 +333,9 @@ def iread(
                     nth_frame(
                         path,
                         index,
+                        schema=schema,
+                        conformance=conformance,
+                        mode=mode,
                         compression=compression,
                         member=member,
                         storage_options=storage_options,
@@ -311,6 +348,9 @@ def iread(
         for frame in sliced_frames(
             path,
             index,
+            schema=schema,
+            conformance=conformance,
+            mode=mode,
             compression=compression,
             member=member,
             storage_options=storage_options,

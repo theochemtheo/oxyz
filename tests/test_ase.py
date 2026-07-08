@@ -331,3 +331,26 @@ def test_too_many_colons_in_index_is_error() -> None:
 
     with pytest.raises(ValueError, match="invalid slice string"):
         oxyz.ase.read(DATA_DIR / "two_frame_same_schema.xyz", "1:2:3:4")
+
+
+def test_ase_read_projects_before_conversion(tmp_path):
+    import oxyz.ase
+    from oxyz._schema import Kind
+    from oxyz._schema_spec import ColumnRule, SchemaSpec
+
+    f = tmp_path / "mixed.xyz"
+    f.write_text(
+        "1\nProperties=species:S:1:pos:R:3:junk:R:1\nH 0 0 0 9.9\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+    )
+    spec = SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+        ),
+        mode="project",
+    )
+    atoms = oxyz.ase.read(f, slice(None), schema=spec)
+    # 'junk' is dropped by projection, so it is not carried onto the Atoms arrays
+    assert "junk" not in atoms[0].arrays
+    assert len(atoms) == 2

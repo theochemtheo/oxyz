@@ -32,6 +32,7 @@ import numpy as np
 
 from oxyz._batch import Batch, MemoryScaling, iter_batches, read_batch
 from oxyz._convert import UnknownSpeciesError, numbers_to_masses
+from oxyz._frames import _require_schema_for_mode
 from oxyz._scan import scan
 from oxyz._select import parse_index
 
@@ -52,6 +53,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from oxyz._frames import Compression
+    from oxyz._schema_match import Conformance
+    from oxyz._schema_spec import Mode, SchemaSpec
 
 __all__ = ["SimStateSource", "ToSimStateError", "iread", "read"]
 
@@ -72,6 +75,9 @@ def read(  # noqa: PLR0913  keyword options mirror the SimState data model
     system_extras: ExtrasMap | None = None,
     atom_extras: ExtrasMap | None = None,
     threads: int | None = None,
+    schema: SchemaSpec | str | Path | None = None,
+    conformance: Conformance = "required",
+    mode: Mode | None = None,
     compression: Compression = "infer",
     member: str | None = None,
 ) -> SimState:
@@ -89,9 +95,17 @@ def read(  # noqa: PLR0913  keyword options mirror the SimState data model
     Compressed paths are read too (any index: the scan and the selecting read
     both stream); `compression` and `member` are as in `oxyz.read_frames`.
     """
+    _require_schema_for_mode(schema, mode)
     indices = _plan_indices(path, index, compression=compression, member=member)
     batch = read_batch(
-        path, indices, threads=threads, compression=compression, member=member
+        path,
+        indices,
+        threads=threads,
+        schema=schema,
+        conformance=conformance,
+        mode=mode,
+        compression=compression,
+        member=member,
     )
     return _to_state(
         batch, dtype, device, positions_requires_grad, system_extras, atom_extras
@@ -113,6 +127,9 @@ def iread(  # noqa: PLR0913  batching options plus the SimState data model
     system_extras: ExtrasMap | None = None,
     atom_extras: ExtrasMap | None = None,
     threads: int | None = None,
+    schema: SchemaSpec | str | Path | None = None,
+    conformance: Conformance = "required",
+    mode: Mode | None = None,
     compression: Compression = "infer",
     member: str | None = None,
 ) -> Iterator[SimState]:
@@ -127,6 +144,7 @@ def iread(  # noqa: PLR0913  batching options plus the SimState data model
     (it cannot be randomly accessed); see `oxyz.iter_batches`. `compression` and
     `member` are as in `oxyz.read_frames`.
     """
+    _require_schema_for_mode(schema, mode)
     for batch in iter_batches(
         path,
         frames_per_batch=frames_per_batch,
@@ -136,6 +154,9 @@ def iread(  # noqa: PLR0913  batching options plus the SimState data model
         shuffle=shuffle,
         seed=seed,
         threads=threads,
+        schema=schema,
+        conformance=conformance,
+        mode=mode,
         compression=compression,
         member=member,
     ):

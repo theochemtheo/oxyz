@@ -27,6 +27,9 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
     from pathlib import Path
 
+    from oxyz._schema_match import Conformance
+    from oxyz._schema_spec import Mode, SchemaSpec
+
 
 def _is_streaming_only(path: str | Path, compression: Compression) -> bool:
     """A source that cannot seek: a remote URL, or a compressed local file."""
@@ -62,6 +65,9 @@ def nth_frame(
     path: str | Path,
     index: int,
     *,
+    schema: SchemaSpec | str | Path | None = None,
+    conformance: Conformance = "required",
+    mode: Mode | None = None,
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
@@ -71,11 +77,16 @@ def nth_frame(
     A compressed source cannot seek, so a negative index there reads the whole
     file and indexes in memory (as ASE does), losing the partial-read shortcut.
     A remote URL is likewise non-seekable and takes the same in-memory path.
+    With a `schema`, a negative index also reads eagerly so the sought frame is
+    validated/projected before it is returned.
     """
     if index < 0:
-        if _is_streaming_only(path, compression):
+        if schema is not None or _is_streaming_only(path, compression):
             frames = read_frames(
                 path,
+                schema=schema,
+                conformance=conformance,
+                mode=mode,
                 compression=compression,
                 member=member,
                 storage_options=storage_options,
@@ -93,19 +104,16 @@ def nth_frame(
             )
         return indexed.get(index + len(indexed))
 
-    frame = next(
-        islice(
-            iter_frames(
-                path,
-                compression=compression,
-                member=member,
-                storage_options=storage_options,
-            ),
-            index,
-            None,
-        ),
-        None,
+    stream = iter_frames(
+        path,
+        schema=schema,
+        conformance=conformance,
+        mode=mode,
+        compression=compression,
+        member=member,
+        storage_options=storage_options,
     )
+    frame = next(islice(stream, index, None), None)
     if frame is None:
         raise IndexError(f"frame {index} out of range")
     return frame
@@ -120,11 +128,14 @@ def is_forward(frames: slice) -> bool:
     )
 
 
-def frames_for_read(
+def frames_for_read(  # noqa: PLR0913  the read/schema/projection options are the contract
     path: str | Path,
     frames: slice,
     threads: int | None = None,
     *,
+    schema: SchemaSpec | str | Path | None = None,
+    conformance: Conformance = "required",
+    mode: Mode | None = None,
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
@@ -142,6 +153,9 @@ def frames_for_read(
             path,
             slice(frames.start, None, frames.step),
             threads,
+            schema=schema,
+            conformance=conformance,
+            mode=mode,
             compression=compression,
             member=member,
             storage_options=storage_options,
@@ -149,6 +163,9 @@ def frames_for_read(
     return sliced_frames(
         path,
         frames,
+        schema=schema,
+        conformance=conformance,
+        mode=mode,
         compression=compression,
         member=member,
         storage_options=storage_options,
@@ -159,24 +176,41 @@ def sliced_frames(
     path: str | Path,
     frames: slice,
     *,
+    schema: SchemaSpec | str | Path | None = None,
+    conformance: Conformance = "required",
+    mode: Mode | None = None,
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
 ) -> Iterator[Frame]:
     """Forward slices stream; negative bounds or steps go via the index (or, on a
-    compressed or remote source, via a full in-memory read)."""
+    compressed or remote source, or with a `schema`, via a full in-memory read)."""
     if is_forward(frames):
-        return islice(
-            iter_frames(
-                path,
-                compression=compression,
-                member=member,
-                storage_options=storage_options,
-            ),
-            frames.start,
-            frames.stop,
-            frames.step,
+        stream = iter_frames(
+            path,
+            schema=schema,
+            conformance=conformance,
+            mode=mode,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
         )
+        return islice(stream, frames.start, frames.stop, frames.step)
+
+    # A reverse/negative slice needs random access. With a schema we read+apply
+    # it eagerly (the sought frames must be validated/projected); otherwise a
+    # streaming-only source reads in memory and a seekable one uses the index.
+    if schema is not None:
+        projected = read_frames(
+            path,
+            schema=schema,
+            conformance=conformance,
+            mode=mode,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
+        return (projected[i] for i in range(*frames.indices(len(projected))))
 
     if _is_streaming_only(path, compression):
         in_memory = read_frames(
