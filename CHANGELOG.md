@@ -17,6 +17,11 @@ recorded here.
   `persist-credentials: false`, a `zizmor` gate audits the workflows, and the
   PyPI publish environment now requires approval.
 - Widened the `ruff` lint selection.
+- Refreshed the locked Python dependencies (numpy 2.5, ASE 3.29, and the dev
+  and CI toolchain); a `tolist` call was reordered to satisfy numpy 2.5's
+  stricter array stubs, with no change in behaviour.
+- Refreshed the locked Rust dependencies; the `ndarray` pin moves to 0.17 to
+  stay unified with the version the `numpy` crate builds against.
 
 ## [0.5.0] - 2026-07-03
 
