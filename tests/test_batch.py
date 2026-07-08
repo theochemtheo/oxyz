@@ -340,3 +340,79 @@ def test_projected_batch_binding_entries_exist():
     ):
         assert hasattr(_rust, name), name
     assert hasattr(_rust.IndexedFrames, "get_batch_projected")
+
+
+def _mixed_batchable(tmp_path):
+    f = tmp_path / "mixed.xyz"
+    # frame 1 has charge, frame 2 does not -> unbatchable without projection
+    f.write_text(
+        "1\nProperties=species:S:1:pos:R:3:charge:R:1\nH 0 0 0 0.5\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+    )
+    return f
+
+
+def test_projected_batch_is_readable(tmp_path):
+    from oxyz._schema import Kind
+    from oxyz._schema_spec import ColumnRule, SchemaSpec
+
+    f = _mixed_batchable(tmp_path)
+    spec = SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+            ColumnRule("charge", Kind.REAL, required=False),
+        ),
+        mode="project",
+    )
+    batch = oxyz.read_batch(f, schema=spec)
+    assert set(batch.columns) == {"species", "pos", "charge"}
+    assert batch.n_frames == 2
+    assert np.isnan(batch.columns["charge"][1])
+    assert batch.frame_indices.tolist() == [0, 1]
+
+
+def test_warn_drops_unfillable_frame_from_batch(tmp_path):
+    import warnings
+
+    from oxyz._schema import Kind
+    from oxyz._schema_match import SchemaWarning
+    from oxyz._schema_spec import ColumnRule, SchemaSpec
+
+    f = _mixed_batchable(tmp_path)
+    # require an int 'id' with no fill -> both frames lack it -> all dropped
+    spec = SchemaSpec(
+        columns=(ColumnRule("pos", Kind.REAL, width=3), ColumnRule("id", Kind.INT)),
+        mode="project",
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SchemaWarning)
+        batches = list(
+            oxyz.iter_batches(f, frames_per_batch=2, schema=spec, conformance="warn")
+        )
+    # both frames dropped -> the single window is skipped, not yielded empty
+    assert batches == []
+
+
+def test_read_batch_all_dropped_is_empty_not_error(tmp_path):
+    from oxyz._schema import Kind
+    from oxyz._schema_spec import ColumnRule, SchemaSpec
+
+    f = _mixed_batchable(tmp_path)
+    spec = SchemaSpec(
+        columns=(ColumnRule("pos", Kind.REAL, width=3), ColumnRule("id", Kind.INT)),
+        mode="project",
+    )
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        batch = oxyz.read_batch(f, schema=spec, conformance="warn")
+    assert batch.n_frames == 0
+    assert batch.frame_indices.tolist() == []
+
+
+def test_batch_mode_without_schema_errors(tmp_path):
+    f = _mixed_batchable(tmp_path)
+    with pytest.raises(ValueError, match="mode"):
+        oxyz.read_batch(f, mode="project")
