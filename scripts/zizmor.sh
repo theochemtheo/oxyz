@@ -13,9 +13,16 @@ token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 if [ -z "$token" ] && command -v gh >/dev/null 2>&1; then
     token="$(gh auth token 2>/dev/null || true)"
 fi
-if [ -z "$token" ]; then
+
+if [ -n "$token" ]; then
+    export GH_TOKEN="$token"
+else
+    # An *empty* GH_TOKEN is an error to zizmor ("token cannot be empty"), not
+    # "no token", so unset it and let zizmor run its offline audits only. The
+    # dedicated CI zizmor job runs the online audits with a real token.
+    unset GH_TOKEN
     echo "zizmor: no GitHub token (set GH_TOKEN/GITHUB_TOKEN or run 'gh auth" \
-        "login'); online audits will be skipped — CI runs them with a token." >&2
+        "login'); online audits are skipped locally — CI runs them with a token." >&2
 fi
 
-GH_TOKEN="$token" exec uvx zizmor@1.26.1 .github/
+exec uvx zizmor@1.26.1 .github/
