@@ -24,7 +24,12 @@ from typing import TYPE_CHECKING, overload
 import numpy as np
 
 from oxyz._convert import UnknownSpeciesError
-from oxyz._frames import Compression, Frame, read_frames
+from oxyz._frames import (
+    Compression,
+    Frame,
+    _require_schema_for_mode,
+    read_frames,
+)
 from oxyz._select import frames_for_read, nth_frame, parse_index, sliced_frames
 
 try:
@@ -41,6 +46,9 @@ from oxyz._torch import MissingSpeciesError, numbers, resolve_dtype, to_tensor
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+
+    from oxyz._schema_match import Conformance
+    from oxyz._schema_spec import Mode, SchemaSpec
 
 __all__ = ["SystemSource", "ToSystemError", "iread", "read"]
 
@@ -67,6 +75,9 @@ def read(
     device: torch.device | None = ...,
     positions_requires_grad: bool = ...,
     cell_requires_grad: bool = ...,
+    schema: SchemaSpec | str | Path | None = ...,
+    conformance: Conformance = ...,
+    mode: Mode | None = ...,
     threads: int | None = ...,
     compression: Compression = ...,
     member: str | None = ...,
@@ -82,6 +93,9 @@ def read(
     device: torch.device | None = ...,
     positions_requires_grad: bool = ...,
     cell_requires_grad: bool = ...,
+    schema: SchemaSpec | str | Path | None = ...,
+    conformance: Conformance = ...,
+    mode: Mode | None = ...,
     threads: int | None = ...,
     compression: Compression = ...,
     member: str | None = ...,
@@ -97,6 +111,9 @@ def read(
     device: torch.device | None = ...,
     positions_requires_grad: bool = ...,
     cell_requires_grad: bool = ...,
+    schema: SchemaSpec | str | Path | None = ...,
+    conformance: Conformance = ...,
+    mode: Mode | None = ...,
     threads: int | None = ...,
     compression: Compression = ...,
     member: str | None = ...,
@@ -111,6 +128,9 @@ def read(  # noqa: PLR0913  keyword options mirror the System data model
     device: torch.device | None = None,
     positions_requires_grad: bool = False,
     cell_requires_grad: bool = False,
+    schema: SchemaSpec | str | Path | None = None,
+    conformance: Conformance = "required",
+    mode: Mode | None = None,
     threads: int | None = None,
     compression: Compression = "infer",
     member: str | None = None,
@@ -126,20 +146,36 @@ def read(  # noqa: PLR0913  keyword options mirror the System data model
     Compressed paths are read too; `compression` and `member` are as in
     `oxyz.read_frames`.
     """
+    _require_schema_for_mode(schema, mode)
     options = (dtype, device, positions_requires_grad, cell_requires_grad)
     selection = parse_index(index)
     if isinstance(selection, int):
-        frame = nth_frame(path, selection, compression=compression, member=member)
+        frame = nth_frame(
+            path,
+            selection,
+            schema=schema,
+            conformance=conformance,
+            mode=mode,
+            compression=compression,
+            member=member,
+        )
         return _to_system(frame, *options)
     return [
         _to_system(frame, *options)
         for frame in frames_for_read(
-            path, selection, threads, compression=compression, member=member
+            path,
+            selection,
+            threads,
+            schema=schema,
+            conformance=conformance,
+            mode=mode,
+            compression=compression,
+            member=member,
         )
     ]
 
 
-def iread(
+def iread(  # noqa: PLR0913  keyword options mirror the System data model
     path: str | Path,
     index: int | str | slice = ":",
     *,
@@ -147,19 +183,37 @@ def iread(
     device: torch.device | None = None,
     positions_requires_grad: bool = False,
     cell_requires_grad: bool = False,
+    schema: SchemaSpec | str | Path | None = None,
+    conformance: Conformance = "required",
+    mode: Mode | None = None,
     compression: Compression = "infer",
     member: str | None = None,
 ) -> Iterator[System]:
     """Stream `System`s one at a time, in constant memory (serial parse)."""
+    _require_schema_for_mode(schema, mode)
     options = (dtype, device, positions_requires_grad, cell_requires_grad)
     selection = parse_index(index)
     if isinstance(selection, int):
-        frame = nth_frame(path, selection, compression=compression, member=member)
+        frame = nth_frame(
+            path,
+            selection,
+            schema=schema,
+            conformance=conformance,
+            mode=mode,
+            compression=compression,
+            member=member,
+        )
         return iter((_to_system(frame, *options),))
     return (
         _to_system(frame, *options)
         for frame in sliced_frames(
-            path, selection, compression=compression, member=member
+            path,
+            selection,
+            schema=schema,
+            conformance=conformance,
+            mode=mode,
+            compression=compression,
+            member=member,
         )
     )
 

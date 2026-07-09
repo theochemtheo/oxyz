@@ -1,0 +1,25 @@
+# Allowlist for `python -m mypy.stubtest oxyz._rust`.
+#
+# Every entry here is an irreducible stubtest/PyO3 mismatch, not a real stub
+# defect: the gate exists to catch genuine drift (a stub whose signature no
+# longer matches the compiled module), which stubtest reports outside this list.
+#
+# The TypedDicts and `type` aliases below describe the shapes the Rust binding
+# returns/accepts; they live only in the stub for callers to type against and
+# have no runtime object, so stubtest reports them "not present at runtime".
+oxyz._rust.BatchData
+oxyz._rust.ColumnSchemaData
+oxyz._rust.ColumnValues
+oxyz._rust.ColumnVariantData
+oxyz._rust.DeviationData
+oxyz._rust.FrameData
+oxyz._rust.MetadataSchemaData
+oxyz._rust.MetadataValue
+oxyz._rust.MetadataVariantData
+oxyz._rust.ProjectedBatch
+oxyz._rust.ProjectedFrame
+oxyz._rust.ProjectionPlan
+oxyz._rust.ScanData
+oxyz._rust.SchemaData
+# PyO3 generates a module `__all__`; the stub deliberately omits it.
+oxyz._rust.__all__

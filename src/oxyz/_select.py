@@ -27,6 +27,9 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
     from pathlib import Path
 
+    from oxyz._schema_match import Conformance
+    from oxyz._schema_spec import Mode, SchemaSpec
+
 
 def _is_streaming_only(path: str | Path, compression: Compression) -> bool:
     """A source that cannot seek: a remote URL, or a compressed local file."""
@@ -62,6 +65,9 @@ def nth_frame(
     path: str | Path,
     index: int,
     *,
+    schema: SchemaSpec | str | Path | None = None,
+    conformance: Conformance = "required",
+    mode: Mode | None = None,
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
@@ -71,7 +77,28 @@ def nth_frame(
     A compressed source cannot seek, so a negative index there reads the whole
     file and indexes in memory (as ASE does), losing the partial-read shortcut.
     A remote URL is likewise non-seekable and takes the same in-memory path.
+    With a `schema`, any index reads the whole file and applies the schema to
+    every frame before indexing — so validation/projection behaves the same way
+    whatever the index, at the cost of the partial-read shortcut.
     """
+    if schema is not None:
+        frames = read_frames(
+            path,
+            schema=schema,
+            conformance=conformance,
+            mode=mode,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
+        # `len(frames)` is the count actually read: under project+warn some
+        # frames may have been dropped, so say "available" not "file has".
+        if not -len(frames) <= index < len(frames):
+            raise IndexError(
+                f"frame {index} out of range: {len(frames)} frames available"
+            )
+        return frames[index]
+
     if index < 0:
         if _is_streaming_only(path, compression):
             frames = read_frames(
@@ -93,19 +120,10 @@ def nth_frame(
             )
         return indexed.get(index + len(indexed))
 
-    frame = next(
-        islice(
-            iter_frames(
-                path,
-                compression=compression,
-                member=member,
-                storage_options=storage_options,
-            ),
-            index,
-            None,
-        ),
-        None,
+    stream = iter_frames(
+        path, compression=compression, member=member, storage_options=storage_options
     )
+    frame = next(islice(stream, index, None), None)
     if frame is None:
         raise IndexError(f"frame {index} out of range")
     return frame
@@ -120,11 +138,14 @@ def is_forward(frames: slice) -> bool:
     )
 
 
-def frames_for_read(
+def frames_for_read(  # noqa: PLR0913  the read/schema/projection options are the contract
     path: str | Path,
     frames: slice,
     threads: int | None = None,
     *,
+    schema: SchemaSpec | str | Path | None = None,
+    conformance: Conformance = "required",
+    mode: Mode | None = None,
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
@@ -136,7 +157,24 @@ def frames_for_read(
     reverse slices keep the streaming/indexed path, which stops early — an eager
     read must not parse past the frames a bounded slice asks for, and `threads`
     does not apply to it.
+
+    With a `schema`, the whole file is read and the schema applied to every
+    frame, then the slice taken — so a schema error (or a projected drop) is
+    handled the same way whatever the slice's shape, rather than depending on
+    which frames the slice happens to traverse.
     """
+    if schema is not None:
+        validated = read_frames(
+            path,
+            threads=threads,
+            schema=schema,
+            conformance=conformance,
+            mode=mode,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
+        return validated[frames]
     if is_forward(frames) and frames.stop is None:
         return read_frames_sliced(
             path,
@@ -159,24 +197,41 @@ def sliced_frames(
     path: str | Path,
     frames: slice,
     *,
+    schema: SchemaSpec | str | Path | None = None,
+    conformance: Conformance = "required",
+    mode: Mode | None = None,
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
 ) -> Iterator[Frame]:
     """Forward slices stream; negative bounds or steps go via the index (or, on a
-    compressed or remote source, via a full in-memory read)."""
+    compressed or remote source, or with a `schema`, via a full in-memory read)."""
     if is_forward(frames):
-        return islice(
-            iter_frames(
-                path,
-                compression=compression,
-                member=member,
-                storage_options=storage_options,
-            ),
-            frames.start,
-            frames.stop,
-            frames.step,
+        stream = iter_frames(
+            path,
+            schema=schema,
+            conformance=conformance,
+            mode=mode,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
         )
+        return islice(stream, frames.start, frames.stop, frames.step)
+
+    # A reverse/negative slice needs random access. With a schema we read+apply
+    # it eagerly (the sought frames must be validated/projected); otherwise a
+    # streaming-only source reads in memory and a seekable one uses the index.
+    if schema is not None:
+        projected = read_frames(
+            path,
+            schema=schema,
+            conformance=conformance,
+            mode=mode,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
+        return (projected[i] for i in range(*frames.indices(len(projected))))
 
     if _is_streaming_only(path, compression):
         in_memory = read_frames(

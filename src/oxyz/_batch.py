@@ -7,11 +7,21 @@ import numpy as np
 
 import oxyz._rust as _rust
 from oxyz import _remote
-from oxyz._frames import ColumnValues, Compression, _check_threads
+from oxyz._frames import (
+    ColumnValues,
+    Compression,
+    _check_threads,
+    _projection,
+    _require_schema_for_mode,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
     from pathlib import Path
+
+    from oxyz._rust import ProjectedBatch, ProjectionPlan
+    from oxyz._schema_match import Conformance
+    from oxyz._schema_spec import FrameRule, Mode, SchemaSpec
 
 MemoryScaling = Literal["n_atoms", "n_atoms_x_density"]
 
@@ -59,11 +69,14 @@ class Batch:
         return np.repeat(np.arange(self.n_frames), self.n_atoms)
 
 
-def read_batch(
+def read_batch(  # noqa: PLR0913  the read/schema/projection options are the contract
     path: str | Path,
     indices: Sequence[int] | None = None,
     *,
     threads: int | None = None,
+    schema: SchemaSpec | str | Path | None = None,
+    conformance: Conformance = "required",
+    mode: Mode | None = None,
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
@@ -84,8 +97,68 @@ def read_batch(
     A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through
     the same reader (needs the ``oxyz[s3]`` extra); ``storage_options`` passes
     endpoint/credentials to the store.
+
+    `schema` (a `SchemaSpec` or a path) with effective `mode="project"` reshapes
+    every frame to the schema before concatenation — the way to batch a
+    mixed-schema file. `conformance` (`"strict"`/`"required"`/`"warn"`) governs
+    deviations; under `warn` an unfillable frame is dropped from the batch, and a
+    read where every frame drops yields an empty batch. `mode` without a `schema`
+    is an error. Without `schema`, behaviour is unchanged.
+
+    `schema` with effective validate mode (the default) validates each frame the
+    batch contains — columns, metadata, and the frame rule — exactly as the frame
+    readers do, before concatenation; a mixed-schema file still cannot batch, so
+    use `mode="project"` to reshape it.
     """
     _check_threads(threads)
+    _require_schema_for_mode(schema, mode)
+    projection = None
+    spec = None
+    if schema is not None:
+        projection, spec = _projection(schema, mode)
+
+    selection = None if indices is None else [int(i) for i in indices]
+    if selection is not None:
+        for index in selection:
+            if index < 0:
+                # The Rust binding takes unsigned indices; reject negatives here
+                # with the documented out-of-range IndexError rather than leaking
+                # pyo3's OverflowError. Negative indexing is not supported.
+                raise IndexError(
+                    f"frame index {index} out of range: indices must be non-negative"
+                )
+
+    if projection is not None:
+        if _remote.is_remote(path):
+            src = _remote.open_source(
+                path,
+                compression=compression,
+                member=member,
+                storage_options=storage_options,
+            )
+            triple = _rust.read_batch_projected_reader(
+                src.obj, src.codec, selection, threads, src.member, plan=projection
+            )
+        else:
+            triple = _rust.read_batch_projected(
+                str(path), selection, threads, compression, member, plan=projection
+            )
+        result = _resolve_projected_batch(triple, conformance, spec)
+        return result if result is not None else _empty_batch()
+
+    if spec is not None:
+        # Validate-mode schema: validate each constituent frame, then assemble.
+        return _read_batch_validate(
+            path,
+            selection,
+            spec,
+            conformance,
+            threads,
+            compression,
+            member,
+            storage_options,
+        )
+
     if _remote.is_remote(path):
         src = _remote.open_source(
             path,
@@ -93,26 +166,18 @@ def read_batch(
             member=member,
             storage_options=storage_options,
         )
-        plan = [int(i) for i in indices] if indices is not None else None
-        data = _rust.read_batch_reader(src.obj, src.codec, plan, threads, src.member)
+        data = _rust.read_batch_reader(
+            src.obj, src.codec, selection, threads, src.member
+        )
         frame_indices: Sequence[int] = (
-            plan if plan is not None else range(len(data["offsets"]) - 1)
+            selection if selection is not None else range(len(data["offsets"]) - 1)
         )
         return _batch_from_data(data, frame_indices)
-    if indices is None:
+    if selection is None:
         data = _rust.read_batch(str(path), None, threads, compression, member)
         return _batch_from_data(data, range(len(data["offsets"]) - 1))
-    plan = [int(i) for i in indices]
-    for index in plan:
-        if index < 0:
-            # The Rust binding takes unsigned indices; reject negatives here
-            # with the documented out-of-range IndexError rather than leaking
-            # pyo3's OverflowError. Negative indexing is not supported.
-            raise IndexError(
-                f"frame index {index} out of range: indices must be non-negative"
-            )
     return _batch_from_data(
-        _rust.read_batch(str(path), plan, threads, compression, member), plan
+        _rust.read_batch(str(path), selection, threads, compression, member), selection
     )
 
 
@@ -126,6 +191,9 @@ def iter_batches(  # noqa: C901, PLR0913  the keyword options are the batching c
     shuffle: bool = False,
     seed: int | None = None,
     threads: int | None = None,
+    schema: SchemaSpec | str | Path | None = None,
+    conformance: Conformance = "required",
+    mode: Mode | None = None,
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
@@ -160,6 +228,12 @@ def iter_batches(  # noqa: C901, PLR0913  the keyword options are the batching c
     and `memory_scales_with` all need the byte-offset index and raise on a
     compressed source; decompress the file first. `compression` and `member`
     are as in `read_frames`.
+
+    `schema` with effective `mode="project"` reshapes every frame to the schema
+    before batching — the way to batch a mixed-schema file. `conformance` governs
+    deviations; under `warn` an unfillable frame is dropped, so a batch whose
+    frames all drop is skipped and the batch count is not purely a function of
+    the strategy. `mode` without a `schema` is an error.
     """
     strategies = sum(
         knob is not None
@@ -189,6 +263,11 @@ def iter_batches(  # noqa: C901, PLR0913  the keyword options are the batching c
     if seed is not None and not shuffle:
         raise ValueError("seed requires shuffle=True")
     _check_threads(threads)
+    _require_schema_for_mode(schema, mode)
+    projection = None
+    spec = None
+    if schema is not None:
+        projection, spec = _projection(schema, mode)
 
     remote = _remote.is_remote(path)
     # A remote URL or a compressed local file is non-seekable, so only the
@@ -216,7 +295,14 @@ def iter_batches(  # noqa: C901, PLR0913  the keyword options are the batching c
         and (streaming_only or threads == 1)
     ):
         return _sequential_batches(
-            path, frames_per_batch, compression, member, storage_options
+            path,
+            frames_per_batch,
+            compression,
+            member,
+            storage_options,
+            projection,
+            conformance,
+            spec,
         )
     return _planned_batches(
         path,
@@ -227,6 +313,9 @@ def iter_batches(  # noqa: C901, PLR0913  the keyword options are the batching c
         shuffle,
         seed,
         threads,
+        projection,
+        conformance,
+        spec,
     )
 
 
@@ -236,28 +325,78 @@ def _sequential_batches(
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
+    projection: ProjectionPlan | None = None,
+    conformance: Conformance = "required",
+    spec: SchemaSpec | None = None,
 ) -> Iterator[Batch]:
     """Streamed file-order batches: constant memory, no scan."""
-    if _remote.is_remote(path):
-        src = _remote.open_source(
+    remote = _remote.is_remote(path)
+    src = (
+        _remote.open_source(
             path,
             compression=compression,
             member=member,
             storage_options=storage_options,
         )
-        iterator = _rust.BatchIter.from_reader(
+        if remote
+        else None
+    )
+
+    if projection is not None:
+        if src is not None:
+            iterator = _rust.BatchIterProjected.from_reader(
+                src.obj, frames_per_batch, projection, src.codec, src.member
+            )
+        else:
+            iterator = _rust.BatchIterProjected(
+                str(path), frames_per_batch, projection, compression, member
+            )
+        for triple in iterator:
+            batch = _resolve_projected_batch(triple, conformance, spec)
+            if batch is not None:  # a fully-dropped window is skipped
+                yield batch
+        return
+
+    if spec is not None:
+        # Validate-mode schema: parse and validate each frame, then window the
+        # frames into batches (build_batch assembles; a mixed file raises there).
+        from oxyz._frames import _frame_from_data
+        from oxyz._schema_match import enforce_frame, resolve
+
+        compiled = resolve(spec)
+        frames_iter = (
+            _rust.FrameIter.from_reader(src.obj, src.codec, src.member)
+            if src is not None
+            else _rust.FrameIter(str(path), compression, member)
+        )
+        window: list[_rust.FrameData] = []
+        start = 0
+        for i, fdata in enumerate(frames_iter):
+            enforce_frame(_frame_from_data(fdata), compiled, conformance, i)
+            window.append(fdata)
+            if len(window) == frames_per_batch:
+                yield _batch_from_data(_rust.build_batch(window), range(start, i + 1))
+                start, window = i + 1, []
+        if window:
+            yield _batch_from_data(
+                _rust.build_batch(window), range(start, start + len(window))
+            )
+        return
+
+    if src is not None:
+        plain = _rust.BatchIter.from_reader(
             src.obj, frames_per_batch, src.codec, src.member
         )
     else:
-        iterator = _rust.BatchIter(str(path), frames_per_batch, compression, member)
+        plain = _rust.BatchIter(str(path), frames_per_batch, compression, member)
     start = 0
-    for data in iterator:
+    for data in plain:
         n_frames = len(data["offsets"]) - 1
         yield _batch_from_data(data, range(start, start + n_frames))
         start += n_frames
 
 
-def _planned_batches(
+def _planned_batches(  # noqa: PLR0913  the planning knobs plus projection
     path: str | Path,
     frames_per_batch: int | None,
     atoms_per_batch: int | None,
@@ -266,6 +405,9 @@ def _planned_batches(
     shuffle: bool,
     seed: int | None,
     threads: int | None,
+    projection: ProjectionPlan | None = None,
+    conformance: Conformance = "required",
+    spec: SchemaSpec | None = None,
 ) -> Iterator[Batch]:
     """Index-backed batches over a frame order planned up front.
 
@@ -273,6 +415,11 @@ def _planned_batches(
     influence which frames land in which batch. The reader's own index
     supplies the atom counts (and, for density, the cell volumes), so the file
     is scanned exactly once."""
+    validate_compiled = None
+    if spec is not None and projection is None:
+        from oxyz._schema_match import resolve
+
+        validate_compiled = resolve(spec)
     need_volume = memory_scales_with == "n_atoms_x_density"
     reader = _rust.IndexedFrames(str(path), need_volume)
     n_atoms = reader.n_atoms
@@ -296,7 +443,26 @@ def _planned_batches(
         plans = _balanced_bins(order, weights, max_scaler)
 
     for plan in plans:
-        yield _batch_from_data(reader.get_batch(plan, threads), plan)
+        if projection is not None:
+            triple = reader.get_batch_projected(plan, projection, threads)
+            batch = _resolve_projected_batch(triple, conformance, spec)
+            if batch is not None:  # a fully-dropped batch is skipped
+                yield batch
+        elif validate_compiled is not None:
+            from oxyz._frames import _frame_from_data
+            from oxyz._schema_match import enforce_frame
+
+            frames_data = [reader.get(i) for i in plan]
+            for pos, i in enumerate(plan):
+                enforce_frame(
+                    _frame_from_data(frames_data[pos]),
+                    validate_compiled,
+                    conformance,
+                    i,
+                )
+            yield _batch_from_data(_rust.build_batch(frames_data), plan)
+        else:
+            yield _batch_from_data(reader.get_batch(plan, threads), plan)
 
 
 def _greedy_atom_plans(
@@ -370,3 +536,136 @@ def _batch_from_data(data: _rust.BatchData, frame_indices: Sequence[int]) -> Bat
         offsets=data["offsets"],
         frame_indices=np.asarray(frame_indices, dtype=np.intp),
     )
+
+
+def _empty_batch() -> Batch:
+    """A batch with no frames — what a fully-dropped projecting read returns."""
+    return Batch(
+        columns={},
+        metadata={},
+        offsets=np.array([0], dtype=np.intp),
+        frame_indices=np.array([], dtype=np.intp),
+    )
+
+
+def _resolve_projected_batch(
+    triple: ProjectedBatch,
+    conformance: Conformance,
+    spec: SchemaSpec | None = None,
+) -> Batch | None:
+    """Apply projection policy to a `(batch_data, survivors, reports)` triple and
+    return the surviving `Batch`, or `None` when every frame dropped.
+
+    Reports arrive in request order, so the first strict/required violation
+    raised is deterministic and matches the frame readers; `warn` warns per
+    deviation and the caller skips a `None` (empty) result. The frame rule, if
+    the spec has one, is checked against the projected survivors.
+    """
+    from oxyz._project import enforce_projection
+
+    data, survivors, reports = triple
+    survived = set(survivors)
+    for req_index, deviations in reports:
+        dropped = req_index not in survived
+        enforce_projection(deviations, conformance, req_index, dropped)
+    if not survivors:
+        return None
+    batch = _batch_from_data(data, survivors)
+    if spec is not None and spec.frame is not None:
+        _enforce_frame_rule_on_batch(batch, spec.frame, conformance)
+    return batch
+
+
+def _enforce_frame_rule_on_batch(
+    batch: Batch, frame_rule: FrameRule, conformance: Conformance
+) -> None:
+    """Check a batch's per-frame structural facts (`n_atoms` bounds,
+    `lattice_required`) against the frame rule, in frame order — the batch
+    analogue of the frame readers' frame-rule validation. Raises under
+    strict/required on the first violation; warns under warn."""
+    import warnings
+
+    from oxyz._schema_match import SchemaError, SchemaWarning, Violation, message
+
+    lo, hi = frame_rule.n_atoms_min, frame_rule.n_atoms_max
+    n_atoms = batch.n_atoms
+    indices = batch.frame_indices
+    lattice_missing = frame_rule.lattice_required and "Lattice" not in batch.metadata
+    for pos in range(batch.n_frames):
+        idx = int(indices[pos])
+        violations: list[Violation] = []
+        count = int(n_atoms[pos])
+        if (lo is not None and count < lo) or (hi is not None and count > hi):
+            bounds = f"[{'' if lo is None else lo}, {'' if hi is None else hi}]"
+            violations.append(
+                Violation("frame", "n_atoms", "mismatch", bounds, str(count))
+            )
+        if lattice_missing:
+            violations.append(
+                Violation("frame", "Lattice", "missing", "required", None)
+            )
+        for violation in violations:
+            if conformance in ("strict", "required"):
+                raise SchemaError(
+                    message(violation, idx), frame_index=idx, name=violation.name
+                )
+            warnings.warn(message(violation, idx), SchemaWarning, stacklevel=2)
+
+
+def _materialise_batch_frames(
+    path: str | Path,
+    selection: list[int] | None,
+    threads: int | None,
+    compression: Compression,
+    member: str | None,
+    storage_options: _remote.StorageOptions | None,
+) -> tuple[list[_rust.FrameData], list[int]]:
+    """Parse the frames a batch will contain as `FrameData` dicts, with their
+    file indices. A selection reads the whole file and picks (the validate path
+    is not on the hot loop); `indices=None` returns every frame in file order."""
+    if _remote.is_remote(path):
+        src = _remote.open_source(
+            path,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
+        all_data = _rust.read_frames_reader(src.obj, src.codec, src.member, threads)
+    else:
+        all_data = _rust.read_frames(str(path), threads, compression, member)
+    if selection is None:
+        return all_data, list(range(len(all_data)))
+    picked = []
+    for i in selection:
+        if i >= len(all_data):
+            raise IndexError(
+                f"frame index {i} out of range: file has {len(all_data)} frames"
+            )
+        picked.append(all_data[i])
+    return picked, list(selection)
+
+
+def _read_batch_validate(
+    path: str | Path,
+    selection: list[int] | None,
+    spec: SchemaSpec,
+    conformance: Conformance,
+    threads: int | None,
+    compression: Compression,
+    member: str | None,
+    storage_options: _remote.StorageOptions | None,
+) -> Batch:
+    """Validate each constituent frame (columns, metadata, frame rule) then
+    assemble the batch — the validate-mode analogue of the projecting read."""
+    from oxyz._frames import _frame_from_data
+    from oxyz._schema_match import enforce_frame, resolve
+
+    frames_data, frame_indices = _materialise_batch_frames(
+        path, selection, threads, compression, member, storage_options
+    )
+    compiled = resolve(spec)
+    for pos, file_index in enumerate(frame_indices):
+        enforce_frame(
+            _frame_from_data(frames_data[pos]), compiled, conformance, file_index
+        )
+    return _batch_from_data(_rust.build_batch(frames_data), frame_indices)

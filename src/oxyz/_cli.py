@@ -12,6 +12,7 @@ from oxyz import infer_schema, scan
 if TYPE_CHECKING:
     from oxyz._scan import FrameIndex
     from oxyz._schema import Schema
+    from oxyz._schema_spec import SchemaSpec
 
     # scan and infer_schema both report atom-count statistics; the schema adds
     # the column/metadata detail.
@@ -42,6 +43,7 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(metavar="<command>")
     _add_scan_parser(subparsers)
     _add_check_parser(subparsers)
+    _add_freeze_parser(subparsers)
     return parser
 
 
@@ -99,6 +101,14 @@ def _add_scan_parser(subparsers: argparse._SubParsersAction) -> None:
             "the text summary"
         ),
     )
+    scan_parser.add_argument(
+        "--project",
+        action="store_true",
+        help=(
+            "with --emit-schema, emit a pattern-free mode: project schema "
+            "(column families expanded to literal, project-ready rules)"
+        ),
+    )
     scan_parser.set_defaults(func=_cmd_scan)
 
 
@@ -140,6 +150,73 @@ def _add_check_parser(subparsers: argparse._SubParsersAction) -> None:
     check_parser.set_defaults(func=_cmd_check)
 
 
+def _add_freeze_parser(subparsers: argparse._SubParsersAction) -> None:
+    freeze_parser = subparsers.add_parser(
+        "freeze",
+        help="expand a schema's patterns into a project-ready schema",
+        description=(
+            "Load --schema, expand its glob/regex rules against PATH into "
+            "literal, project-ready rules (mode: project), and write the result "
+            "to --out. Columns present in every frame become required, those in "
+            "only some become optional."
+        ),
+    )
+    freeze_parser.add_argument(
+        "path", help="representative extxyz/xyz dataset to scan (compressed too)"
+    )
+    freeze_parser.add_argument(
+        "--schema", required=True, help="input schema (.json/.yaml/.toml)"
+    )
+    freeze_parser.add_argument(
+        "--out", required=True, help="output schema path (.json/.yaml/.yml)"
+    )
+    freeze_parser.add_argument(
+        "--compression",
+        choices=("infer", "none", "gzip", "zstd", "zip"),
+        default="infer",
+    )
+    freeze_parser.add_argument("--member", default=None)
+    freeze_parser.add_argument(
+        "--storage-option",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        dest="storage_options",
+    )
+    freeze_parser.set_defaults(func=_cmd_freeze)
+
+
+def _cmd_freeze(args: argparse.Namespace) -> int:
+    from oxyz._schema_spec import SchemaSpec
+
+    storage_options = _parse_storage_options(args.storage_options)
+    spec = SchemaSpec.from_file(args.schema)
+    frozen = spec.freeze(
+        args.path,
+        compression=args.compression,
+        member=args.member,
+        storage_options=storage_options,
+    )
+    _write_spec(frozen, Path(args.out))
+    return 0
+
+
+def _write_spec(spec: SchemaSpec, out: Path) -> None:
+    """Write a schema to `out`, dispatching on the extension. TOML output is
+    rejected — there is no TOML serialiser, and silently writing YAML under a
+    `.toml` name produces a file that will not re-read."""
+    suffix = out.suffix.lower()
+    if suffix == ".json":
+        out.write_text(spec.to_json())
+    elif suffix in (".yaml", ".yml"):
+        out.write_text(spec.to_yaml())
+    else:
+        raise ValueError(
+            f"cannot write a schema to a {suffix!r} file; use .json, .yaml, or "
+            ".yml (there is no TOML serialiser)"
+        )
+
+
 def _parse_storage_options(items: list[str]) -> dict[str, str] | None:
     if not items:
         return None
@@ -156,6 +233,8 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     # The schema pass keeps the per-frame atom counts, so it yields the same
     # distribution stats as scan -- run only one. --no-schema wants no parse
     # at all, so it falls back to the cheap structural scan.
+    if args.project and args.emit_schema is None:
+        raise ValueError("--project only applies together with --emit-schema")
     storage_options = _parse_storage_options(args.storage_options)
     if args.no_schema:
         stats: StatsSource = scan(
@@ -176,7 +255,20 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     if args.emit_schema is not None:
         if schema is None:
             raise ValueError("--emit-schema needs the schema pass; drop --no-schema")
-        _write_schema(schema, Path(args.emit_schema))
+        out = Path(args.emit_schema)
+        if getattr(args, "project", False):
+            # to_spec() collapses families to `*` globs; freeze expands them
+            # against the file and forces mode: project, giving a literal,
+            # project-ready schema.
+            frozen = schema.to_spec().freeze(
+                args.path,
+                compression=args.compression,
+                member=args.member,
+                storage_options=storage_options,
+            )
+            _write_spec(frozen, out)
+        else:
+            _write_schema(schema, out)
         return 0
     if args.json:
         print(json.dumps(_scan_payload(stats, schema), indent=2))

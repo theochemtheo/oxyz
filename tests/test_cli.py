@@ -187,3 +187,64 @@ def test_check_extra_only_errors_under_strict(tmp_path):
     args = ["check", str(DATA / "schema_extra_column.extxyz"), "--schema", str(spec)]
     assert main(args) == 0  # required: extra column allowed
     assert main([*args, "--conformance", "strict"]) == 1
+
+
+def test_freeze_writes_project_ready_schema(tmp_path: Path) -> None:
+    data = tmp_path / "mixed.xyz"
+    data.write_text(
+        "1\nProperties=species:S:1:pos:R:3:d_0:R:1:d_1:R:1\nH 0 0 0 0.1 0.2\n"
+        "1\nProperties=species:S:1:pos:R:3:d_0:R:1\nH 0 0 0 0.3\n"
+    )
+    in_schema = tmp_path / "in.yaml"
+    in_schema.write_text('mode: project\ncolumns:\n  "d_*": {kind: R}\n')
+    out_schema = tmp_path / "out.yaml"
+    rc = main(
+        ["freeze", str(data), "--schema", str(in_schema), "--out", str(out_schema)]
+    )
+    assert rc == 0
+    text = out_schema.read_text()
+    assert "mode: project" in text
+    assert "d_0" in text
+    assert "d_1" in text
+    assert "d_*" not in text  # pattern expanded away
+
+
+def test_scan_emit_schema_project_is_frozen(tmp_path: Path) -> None:
+    data = tmp_path / "mixed.xyz"
+    data.write_text(
+        "1\nProperties=species:S:1:pos:R:3:d_0:R:1:d_1:R:1\nH 0 0 0 0.1 0.2\n"
+        "1\nProperties=species:S:1:pos:R:3:d_0:R:1\nH 0 0 0 0.3\n"
+    )
+    out = tmp_path / "schema.yaml"
+    rc = main(["scan", str(data), "--emit-schema", str(out), "--project"])
+    assert rc == 0
+    text = out.read_text()
+    assert "mode: project" in text
+    assert "*" not in text  # no glob families; frozen to literals
+
+
+def test_freeze_rejects_toml_output(tmp_path: Path, capsys) -> None:
+    data = tmp_path / "d.xyz"
+    data.write_text("1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n")
+    schema = tmp_path / "in.yaml"
+    schema.write_text("mode: project\ncolumns:\n  species: {kind: S}\n")
+    rc = main(
+        [
+            "freeze",
+            str(data),
+            "--schema",
+            str(schema),
+            "--out",
+            str(tmp_path / "o.toml"),
+        ]
+    )
+    assert rc == 1
+    assert "TOML" in capsys.readouterr().err
+
+
+def test_scan_project_without_emit_errors(tmp_path: Path, capsys) -> None:
+    data = tmp_path / "d.xyz"
+    data.write_text("1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n")
+    rc = main(["scan", str(data), "--project"])
+    assert rc == 1
+    assert "project" in capsys.readouterr().err

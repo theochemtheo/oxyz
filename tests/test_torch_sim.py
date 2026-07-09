@@ -35,6 +35,7 @@ ASE_REJECTS = {
     "stress_voigt6.extxyz",
     "schema_drift_type.extxyz",
     "schema_extra_column.extxyz",
+    "mixed_schema_optional_column.xyz",
 }
 
 GOLDEN = sorted(
@@ -379,3 +380,24 @@ def test_positions_requires_grad_is_honoured(tmp_path: Path) -> None:
     )
     state = oxyz.torch_sim.read(path, positions_requires_grad=True)
     assert state.positions.requires_grad
+
+
+def test_torch_sim_read_projects(tmp_path):
+    import oxyz.torch_sim
+    from oxyz._schema import Kind
+    from oxyz._schema_spec import ColumnRule, SchemaSpec
+
+    f = tmp_path / "m.xyz"
+    f.write_text(
+        "1\nProperties=species:S:1:pos:R:3:junk:R:1\nH 0 0 0 9\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 1 0 0\n"
+    )
+    spec = SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+        ),
+        mode="project",
+    )
+    state = oxyz.torch_sim.read(f, ":", schema=spec)
+    assert int(state.n_systems) == 2

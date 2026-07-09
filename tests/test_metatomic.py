@@ -327,3 +327,24 @@ def test_per_config_inconsistent_shapes_raises(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="inconsistent shapes"):
         oxyz.metatomic.SystemSource(path).per_config("foo")
+
+
+def test_metatomic_read_projects(tmp_path):
+    import oxyz.metatomic
+    from oxyz._schema import Kind
+    from oxyz._schema_spec import ColumnRule, SchemaSpec
+
+    f = tmp_path / "m.xyz"
+    f.write_text(
+        "1\nProperties=species:S:1:pos:R:3:junk:R:1\nH 0 0 0 9\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 1 0 0\n"
+    )
+    spec = SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+        ),
+        mode="project",
+    )
+    systems = oxyz.metatomic.read(f, slice(None), schema=spec)
+    assert len(systems) == 2  # mixed file made readable by projection

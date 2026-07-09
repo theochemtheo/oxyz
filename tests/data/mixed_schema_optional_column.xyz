@@ -1,0 +1,8 @@
+2
+Properties=species:S:1:pos:R:3:charge:R:1
+H 0.0 0.0 0.0 0.5
+H 1.0 0.0 0.0 -0.5
+2
+Properties=species:S:1:pos:R:3
+H 0.0 0.0 0.0
+H 1.0 0.0 0.0

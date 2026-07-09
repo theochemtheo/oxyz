@@ -331,3 +331,70 @@ def test_too_many_colons_in_index_is_error() -> None:
 
     with pytest.raises(ValueError, match="invalid slice string"):
         oxyz.ase.read(DATA_DIR / "two_frame_same_schema.xyz", "1:2:3:4")
+
+
+def test_ase_read_projects_before_conversion(tmp_path):
+    import oxyz.ase
+    from oxyz._schema import Kind
+    from oxyz._schema_spec import ColumnRule, SchemaSpec
+
+    f = tmp_path / "mixed.xyz"
+    f.write_text(
+        "1\nProperties=species:S:1:pos:R:3:junk:R:1\nH 0 0 0 9.9\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+    )
+    spec = SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+        ),
+        mode="project",
+    )
+    atoms = oxyz.ase.read(f, slice(None), schema=spec)
+    # 'junk' is dropped by projection, so it is not carried onto the Atoms arrays
+    assert "junk" not in atoms[0].arrays
+    assert len(atoms) == 2
+
+
+def test_ase_read_missing_pos_raises_not_zeros(tmp_path):
+    import pytest
+
+    import oxyz.ase
+    from oxyz._schema import Kind
+    from oxyz._schema_spec import ColumnRule, SchemaSpec
+    from oxyz.ase import ToAseError
+
+    f = tmp_path / "m.xyz"
+    f.write_text("2\nProperties=species:S:1:pos:R:3\nH 0 0 0\nH 1 0 0\n")
+    spec = SchemaSpec(columns=(ColumnRule("species", Kind.STR),), mode="project")
+    with pytest.raises(ToAseError, match="pos"):
+        oxyz.ase.read(f, 0, schema=spec)
+
+
+def test_schema_slice_enforcement_is_consistent(tmp_path: Path) -> None:
+    """A schema error outside the requested slice aborts the read the same way
+    regardless of the slice's shape (previously '1:' and '1:3' diverged)."""
+    import pytest
+
+    import oxyz.ase
+    from oxyz._schema import Kind
+    from oxyz._schema_match import SchemaError
+    from oxyz._schema_spec import ColumnRule, SchemaSpec
+
+    f = tmp_path / "m.xyz"
+    f.write_text(
+        "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+        "1\nProperties=species:S:1:pos:R:3:charge:R:1\nH 1 0 0 0.1\n"
+        "1\nProperties=species:S:1:pos:R:3:charge:R:1\nH 2 0 0 0.2\n"
+    )
+    spec = SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+            ColumnRule("charge", Kind.REAL),
+        )
+    )
+    for index in ("1:", "1:3", slice(1, None)):
+        with pytest.raises(SchemaError) as exc:
+            oxyz.ase.read(f, index, schema=spec, conformance="strict")
+        assert exc.value.frame_index == 0

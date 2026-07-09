@@ -328,3 +328,358 @@ def test_schema_drift_within_a_batch_is_an_error(tmp_path: Path) -> None:
 
     # Batches that never span the drift are still readable.
     assert len(list(oxyz.iter_batches(path, frames_per_batch=1))) == 2
+
+
+def test_projected_batch_binding_entries_exist():
+    import oxyz._rust as _rust
+
+    for name in (
+        "read_batch_projected",
+        "read_batch_projected_reader",
+        "BatchIterProjected",
+    ):
+        assert hasattr(_rust, name), name
+    assert hasattr(_rust.IndexedFrames, "get_batch_projected")
+
+
+def _mixed_batchable(tmp_path):
+    f = tmp_path / "mixed.xyz"
+    # frame 1 has charge, frame 2 does not -> unbatchable without projection
+    f.write_text(
+        "1\nProperties=species:S:1:pos:R:3:charge:R:1\nH 0 0 0 0.5\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+    )
+    return f
+
+
+def test_projected_batch_is_readable(tmp_path):
+    from oxyz._schema import Kind
+    from oxyz._schema_spec import ColumnRule, SchemaSpec
+
+    f = _mixed_batchable(tmp_path)
+    spec = SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+            ColumnRule("charge", Kind.REAL, required=False),
+        ),
+        mode="project",
+    )
+    batch = oxyz.read_batch(f, schema=spec)
+    assert set(batch.columns) == {"species", "pos", "charge"}
+    assert batch.n_frames == 2
+    assert np.isnan(batch.columns["charge"][1])
+    assert batch.frame_indices.tolist() == [0, 1]
+
+
+def test_warn_drops_unfillable_frame_from_batch(tmp_path):
+    import warnings
+
+    from oxyz._schema import Kind
+    from oxyz._schema_match import SchemaWarning
+    from oxyz._schema_spec import ColumnRule, SchemaSpec
+
+    f = _mixed_batchable(tmp_path)
+    # require an int 'id' with no fill -> both frames lack it -> all dropped
+    spec = SchemaSpec(
+        columns=(ColumnRule("pos", Kind.REAL, width=3), ColumnRule("id", Kind.INT)),
+        mode="project",
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SchemaWarning)
+        batches = list(
+            oxyz.iter_batches(f, frames_per_batch=2, schema=spec, conformance="warn")
+        )
+    # both frames dropped -> the single window is skipped, not yielded empty
+    assert batches == []
+
+
+def test_read_batch_all_dropped_is_empty_not_error(tmp_path):
+    from oxyz._schema import Kind
+    from oxyz._schema_spec import ColumnRule, SchemaSpec
+
+    f = _mixed_batchable(tmp_path)
+    spec = SchemaSpec(
+        columns=(ColumnRule("pos", Kind.REAL, width=3), ColumnRule("id", Kind.INT)),
+        mode="project",
+    )
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        batch = oxyz.read_batch(f, schema=spec, conformance="warn")
+    assert batch.n_frames == 0
+    assert batch.frame_indices.tolist() == []
+
+
+def test_batch_mode_without_schema_errors(tmp_path):
+    f = _mixed_batchable(tmp_path)
+    with pytest.raises(ValueError, match="mode"):
+        oxyz.read_batch(f, mode="project")
+
+
+def _assert_batches_identical(a, b):
+    # assert_array_equal treats same-position NaNs as equal, so the NaN fills
+    # are compared directly rather than masked away.
+    assert a.frame_indices.tolist() == b.frame_indices.tolist()
+    assert_array_equal(a.offsets, b.offsets)
+    assert sorted(a.columns) == sorted(b.columns)
+    for key in a.columns:
+        assert_array_equal(np.asarray(a.columns[key]), np.asarray(b.columns[key]))
+    for key in a.metadata:
+        assert_array_equal(np.asarray(a.metadata[key]), np.asarray(b.metadata[key]))
+
+
+def test_projected_batch_parity_serial_vs_parallel():
+    from oxyz._schema import Kind
+    from oxyz._schema_spec import ColumnRule, SchemaSpec
+
+    fixture = DATA_DIR / "mixed_schema_optional_column.xyz"
+    spec = SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+            ColumnRule("charge", Kind.REAL, required=False),
+        ),
+        mode="project",
+    )
+    _assert_batches_identical(
+        oxyz.read_batch(fixture, schema=spec, threads=1),
+        oxyz.read_batch(fixture, schema=spec, threads=None),
+    )
+
+
+def test_projected_batch_parity_with_warn_drops(tmp_path):
+    import warnings
+
+    from oxyz._schema import Kind
+    from oxyz._schema_match import SchemaWarning
+    from oxyz._schema_spec import ColumnRule, SchemaSpec
+
+    # frames 0,2 carry id; frame 1 does not -> frame 1 drops under warn. Serial
+    # and parallel must drop the *same* frame and agree on survivors/columns.
+    f = tmp_path / "drops.xyz"
+    f.write_text(
+        "1\nProperties=species:S:1:pos:R:3:id:I:1\nH 0 0 0 10\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 1 0 0\n"
+        "1\nProperties=species:S:1:pos:R:3:id:I:1\nH 2 0 0 12\n"
+    )
+    spec = SchemaSpec(
+        columns=(ColumnRule("pos", Kind.REAL, width=3), ColumnRule("id", Kind.INT)),
+        mode="project",
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SchemaWarning)
+        serial = oxyz.read_batch(f, schema=spec, threads=1, conformance="warn")
+        parallel = oxyz.read_batch(f, schema=spec, threads=None, conformance="warn")
+    assert serial.frame_indices.tolist() == [0, 2]  # frame 1 dropped
+    _assert_batches_identical(serial, parallel)
+
+
+def test_projected_batch_parity_which_error_wins(tmp_path):
+    from oxyz._schema import Kind
+    from oxyz._schema_spec import ColumnRule, SchemaSpec
+
+    # A malformed frame 1: the serial and parallel reads must fail with the same
+    # error (the parity promise covers which error wins on a bad file).
+    f = tmp_path / "bad.xyz"
+    f.write_text(
+        "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+        "1\nProperties=species:S:1:pos:R:3\nnot-a-count\n"
+    )
+    spec = SchemaSpec(columns=(ColumnRule("pos", Kind.REAL, width=3),), mode="project")
+    errs = {}
+    for threads in (1, None):
+        try:
+            oxyz.read_batch(f, schema=spec, threads=threads)
+        except ValueError as exc:  # ParseError/SchemaError are ValueErrors
+            errs[threads] = str(exc)
+    assert errs[1] == errs[None]
+
+
+def test_get_batch_projected_empty_indices_errors():
+    import oxyz._rust as _rust
+
+    idx = _rust.IndexedFrames(str(DATA_DIR / "mixed_schema_optional_column.xyz"))
+    plan = ([("pos", "R", 3, True, float("nan"))], [])
+    with pytest.raises(ValueError, match="empty"):
+        idx.get_batch_projected([], plan)
+
+
+def test_build_plan_rejects_multidim_metadata_shape():
+    import oxyz._rust as _rust
+
+    plan = ([], [("stress", "R", (2, 3), False, 0.0)])  # 2-D shape unsupported
+    with pytest.raises(ValueError, match="dimension"):
+        _rust.read_first_frame_projected(
+            str(DATA_DIR / "mixed_schema_optional_column.xyz"), plan=plan
+        )
+
+
+def _batch_schema(mode="validate"):
+    from oxyz._schema import Kind
+    from oxyz._schema_spec import ColumnRule, SchemaSpec
+
+    return SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+            ColumnRule("charge", Kind.REAL, width=1),  # required
+        ),
+        mode=mode,
+    )
+
+
+def test_validate_batch_matches_frame_reader(tmp_path):
+    from oxyz._schema_match import SchemaError
+
+    spec = _batch_schema("validate")
+    # uniform-conforming: batch reads fine and honours the schema
+    ok = tmp_path / "ok.xyz"
+    ok.write_text(
+        "1\nProperties=species:S:1:pos:R:3:charge:R:1\nH 0 0 0 0.5\n"
+        "1\nProperties=species:S:1:pos:R:3:charge:R:1\nH 1 0 0 -0.5\n"
+    )
+    assert oxyz.read_batch(ok, schema=spec).n_frames == 2
+
+    # uniform-violating: same frame-indexed SchemaError as read_frames
+    bad = tmp_path / "bad.xyz"
+    bad.write_text(
+        "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 1 0 0\n"
+    )
+    with pytest.raises(SchemaError) as batch_exc:
+        oxyz.read_batch(bad, schema=spec)
+    with pytest.raises(SchemaError) as frame_exc:
+        oxyz.read_frames(bad, schema=spec)
+    assert str(batch_exc.value) == str(frame_exc.value)
+    assert batch_exc.value.frame_index == 0
+
+    # mixed file: a schema error naming the offending frame, not a raw BatchError
+    mixed = tmp_path / "mixed.xyz"
+    mixed.write_text(
+        "1\nProperties=species:S:1:pos:R:3:charge:R:1\nH 0 0 0 0.5\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 1 0 0\n"
+    )
+    with pytest.raises(SchemaError) as exc:
+        oxyz.read_batch(mixed, schema=spec)
+    assert exc.value.frame_index == 1
+
+
+def test_validate_batch_warn_keeps_uniform_batch(tmp_path):
+
+    from oxyz._schema_match import SchemaWarning
+
+    spec = _batch_schema("validate")
+    bad = tmp_path / "bad.xyz"
+    bad.write_text(
+        "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 1 0 0\n"
+    )
+    with pytest.warns(SchemaWarning, match="charge"):
+        batch = oxyz.read_batch(bad, schema=spec, conformance="warn")
+    assert batch.n_frames == 2
+    assert "charge" not in batch.columns  # validation does not reshape
+
+
+def test_validate_batch_mode_via_iter_batches(tmp_path):
+    from oxyz._schema_match import SchemaError
+
+    spec = _batch_schema("validate")
+    bad = tmp_path / "bad.xyz"
+    bad.write_text(
+        "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 1 0 0\n"
+    )
+    with pytest.raises(SchemaError, match="charge"):
+        # threads=1 takes the sequential path; default threads the planned path
+        list(oxyz.iter_batches(bad, frames_per_batch=1, schema=spec, threads=1))
+    with pytest.raises(SchemaError, match="charge"):
+        list(oxyz.iter_batches(bad, frames_per_batch=1, schema=spec))
+
+
+def test_project_batch_enforces_frame_rule(tmp_path):
+    from oxyz._schema import Kind
+    from oxyz._schema_match import SchemaError
+    from oxyz._schema_spec import ColumnRule, FrameRule, SchemaSpec
+
+    f = tmp_path / "counts.xyz"
+    f.write_text(
+        "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+        "2\nProperties=species:S:1:pos:R:3\nH 0 0 0\nH 1 0 0\n"
+    )
+    spec = SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+        ),
+        frame=FrameRule(n_atoms_min=2),
+        mode="project",
+    )
+    # frame 0 has 1 atom < 2 -> the frame rule fires on the projected batch
+    with pytest.raises(SchemaError) as exc:
+        oxyz.read_batch(f, schema=spec)
+    assert exc.value.frame_index == 0
+    assert "n_atoms" in str(exc.value)
+
+
+def test_project_batch_frame_rule_lattice_warn(tmp_path):
+    from oxyz._schema import Kind
+    from oxyz._schema_match import SchemaWarning
+    from oxyz._schema_spec import ColumnRule, FrameRule, SchemaSpec
+
+    f = tmp_path / "nolattice.xyz"
+    f.write_text(
+        "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 1 0 0\n"
+    )
+    spec = SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+        ),
+        frame=FrameRule(lattice_required=True),
+        mode="project",
+    )
+    # No frame carries a Lattice: under warn the batch survives but every frame
+    # warns (the lattice-missing frame-rule branch).
+    with pytest.warns(SchemaWarning, match="Lattice"):
+        batch = oxyz.read_batch(f, schema=spec, conformance="warn")
+    assert batch.n_frames == 2
+
+
+def test_validate_batch_warn_via_sequential_stream(tmp_path):
+    """threads=1 iter_batches takes the sequential windowing path; warn keeps
+    every frame, so the window is actually assembled and yielded."""
+    from oxyz._schema_match import SchemaWarning
+
+    spec = _batch_schema("validate")
+    bad = tmp_path / "bad.xyz"
+    bad.write_text(
+        "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 1 0 0\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 2 0 0\n"
+    )
+    with pytest.warns(SchemaWarning, match="charge"):
+        batches = list(
+            oxyz.iter_batches(
+                bad, frames_per_batch=2, schema=spec, threads=1, conformance="warn"
+            )
+        )
+    # two windows (2 + 1), both assembled and yielded
+    assert [b.n_frames for b in batches] == [2, 1]
+
+
+def test_validate_batch_selection_and_out_of_range(tmp_path):
+    """read_batch validate-mode with an explicit index list, and the
+    out-of-range IndexError from the materialise-and-pick path."""
+    spec = _batch_schema("validate")
+    ok = tmp_path / "ok.xyz"
+    ok.write_text(
+        "1\nProperties=species:S:1:pos:R:3:charge:R:1\nH 0 0 0 0.5\n"
+        "1\nProperties=species:S:1:pos:R:3:charge:R:1\nH 1 0 0 -0.5\n"
+    )
+    batch = oxyz.read_batch(ok, [1, 0, 1], schema=spec)
+    assert batch.frame_indices.tolist() == [1, 0, 1]
+    with pytest.raises(IndexError, match="out of range"):
+        oxyz.read_batch(ok, [5], schema=spec)

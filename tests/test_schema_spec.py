@@ -150,3 +150,111 @@ def test_empty_frame_rule_renders_no_frame_section():
     empty = SchemaSpec(frame=FrameRule())
     assert empty.to_dict()["frame"] == {}
     assert "frame:" not in render_yaml(empty)
+
+
+def test_mode_defaults_to_validate_and_roundtrips():
+    spec = SchemaSpec.from_dict({"columns": {"pos": {"kind": "R", "width": 3}}})
+    assert spec.mode == "validate"
+    assert "mode" not in spec.to_dict()  # validate is the default, not emitted
+
+
+def test_project_mode_roundtrips_through_dict_and_yaml():
+    spec = SchemaSpec.from_dict(
+        {"mode": "project", "columns": {"pos": {"kind": "R", "width": 3}}}
+    )
+    assert spec.mode == "project"
+    assert spec.to_dict()["mode"] == "project"
+    assert "mode: project" in spec.to_yaml()
+    assert SchemaSpec.from_yaml_text(spec.to_yaml()).mode == "project"
+
+
+def test_unknown_mode_rejected():
+    with pytest.raises(ValueError, match="mode"):
+        SchemaSpec.from_dict({"mode": "reshape"})
+
+
+def test_fill_roundtrips_on_column_and_metadata():
+    spec = SchemaSpec.from_dict(
+        {
+            "columns": {"id": {"kind": "I", "required": False, "fill": -1}},
+            "metadata": {"tag": {"kind": "S", "required": False, "fill": "none"}},
+        }
+    )
+    assert spec.columns[0].fill == -1
+    assert spec.metadata[0].fill == "none"
+    reloaded = SchemaSpec.from_yaml_text(spec.to_yaml())
+    assert reloaded.columns[0].fill == -1
+    assert reloaded.metadata[0].fill == "none"
+    assert spec.to_dict()["columns"]["id"]["fill"] == -1
+
+
+def test_freeze_expands_patterns_and_marks_optional(tmp_path):
+    f = tmp_path / "mixed.xyz"
+    # frame 1 has d_0,d_1; frame 2 has only d_0 -> d_1 present in some frames
+    f.write_text(
+        "1\nProperties=species:S:1:pos:R:3:d_0:R:1:d_1:R:1\nH 0 0 0 0.1 0.2\n"
+        "1\nProperties=species:S:1:pos:R:3:d_0:R:1\nH 0 0 0 0.3\n"
+    )
+    spec = SchemaSpec(columns=(ColumnRule(name="d_*", kind=Kind.REAL),), mode="project")
+    frozen = spec.freeze(f)
+    assert frozen.mode == "project"
+    names = {c.name: c for c in frozen.columns}
+    assert names.keys() == {"d_0", "d_1"}
+    assert names["d_0"].required is True  # in every frame
+    assert names["d_1"].required is False  # only some frames
+
+
+def test_freeze_expands_metadata_patterns(tmp_path):
+    from oxyz._schema_spec import MetadataRule
+
+    f = tmp_path / "meta.xyz"
+    # frame 1 has e_a and e_b metadata; frame 2 only e_a -> e_b optional
+    f.write_text(
+        "1\ne_a=1.0 e_b=2.0 Properties=species:S:1:pos:R:3\nH 0 0 0\n"
+        "1\ne_a=3.0 Properties=species:S:1:pos:R:3\nH 0 0 0\n"
+    )
+    spec = SchemaSpec(
+        metadata=(MetadataRule(name="e_*", kind=Kind.REAL),), mode="project"
+    )
+    frozen = spec.freeze(f)
+    names = {m.name: m for m in frozen.metadata}
+    assert names.keys() == {"e_a", "e_b"}
+    assert names["e_a"].required is True
+    assert names["e_b"].required is False  # only in some frames, fills NaN
+
+
+def test_freeze_raises_on_kind_conflict(tmp_path):
+    from oxyz import SchemaError
+
+    f = tmp_path / "conflict.xyz"
+    f.write_text(
+        "1\nProperties=species:S:1:pos:R:3:x:R:1\nH 0 0 0 0.1\n"
+        "1\nProperties=species:S:1:pos:R:3:x:S:1\nH 0 0 0 tag\n"
+    )
+    spec = SchemaSpec(columns=(ColumnRule(name="x*", kind=Kind.REAL),), mode="project")
+    with pytest.raises(SchemaError, match="x"):
+        spec.freeze(f)
+
+
+def test_string_fill_with_quotes_roundtrips_through_yaml():
+    spec = SchemaSpec.from_dict(
+        {"columns": {"tag": {"kind": "S", "required": False, "fill": 'a"b\\c'}}}
+    )
+    reloaded = SchemaSpec.from_yaml_text(spec.to_yaml())
+    assert reloaded.columns[0].fill == 'a"b\\c'
+
+
+def test_freeze_optional_non_real_without_fill_raises(tmp_path):
+    import pytest
+
+    from oxyz._schema_match import SchemaError
+
+    f = tmp_path / "mixed.xyz"
+    # label:S present only in frame 1 -> optional STR, no natural null, no fill
+    f.write_text(
+        "1\nProperties=species:S:1:pos:R:3:label:S:1\nH 0 0 0 a\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+    )
+    spec = SchemaSpec(columns=(ColumnRule("label*", Kind.STR),), mode="project")
+    with pytest.raises(SchemaError, match="fill"):
+        spec.freeze(f)

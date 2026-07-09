@@ -1,4 +1,4 @@
-from typing import NotRequired, TypedDict
+from typing import NotRequired, TypedDict, final
 
 import numpy as np
 
@@ -37,6 +37,24 @@ class BatchData(TypedDict):
     columns: dict[str, ColumnValues]
     metadata: dict[str, ColumnValues]
 
+class DeviationData(TypedDict):
+    axis: str
+    name: str
+    deviation: str
+    expected: str
+    found: str | None
+
+# A projection plan crosses as a tuple of two lists, columns then metadata,
+# each holding one per-field tuple built in oxyz._project. A column field is
+# name, letter, width, required, fill-or-None; a metadata field carries a shape
+# tuple in place of width (empty for a scalar, length-one for an array).
+type ProjectionPlan = tuple[list[tuple], list[tuple]]
+# A dropped frame has None in place of its FrameData; deviations report why.
+type ProjectedFrame = tuple[FrameData | None, list[DeviationData]]
+# A projected batch: the survivors' data, their file indices, and a
+# (frame_index, deviations) report per requested frame (survivors and drops).
+type ProjectedBatch = tuple[BatchData, list[int], list[tuple[int, list[DeviationData]]]]
+
 class ColumnVariantData(TypedDict):
     kind: str
     width: int
@@ -72,10 +90,11 @@ class SchemaData(TypedDict):
 
 # `compression` is one of "infer", "none", "gzip", "zstd", "zip"; `member`
 # names an entry inside an archive (.zip/.tar/.tar.gz).
+@final
 class FrameIter:
-    def __init__(
-        self, path: str, compression: str = "infer", member: str | None = None
-    ) -> None: ...
+    def __new__(
+        cls, path: str, compression: str = "infer", member: str | None = None
+    ) -> FrameIter: ...
     def __iter__(self) -> FrameIter: ...
     def __next__(self) -> FrameData: ...
     @staticmethod
@@ -83,8 +102,9 @@ class FrameIter:
         source: object, codec: str, member: str | None = None
     ) -> FrameIter: ...
 
+@final
 class IndexedFrames:
-    def __init__(self, path: str, with_volume: bool = False) -> None: ...
+    def __new__(cls, path: str, with_volume: bool = False) -> IndexedFrames: ...
     def __len__(self) -> int: ...
     @property
     def n_atoms(self) -> np.ndarray: ...
@@ -94,15 +114,19 @@ class IndexedFrames:
     def get_batch(
         self, indices: list[int], threads: int | None = None
     ) -> BatchData: ...
+    def get_batch_projected(
+        self, indices: list[int], plan: ProjectionPlan, threads: int | None = None
+    ) -> ProjectedBatch: ...
 
+@final
 class BatchIter:
-    def __init__(
-        self,
+    def __new__(
+        cls,
         path: str,
         frames_per_batch: int,
         compression: str = "infer",
         member: str | None = None,
-    ) -> None: ...
+    ) -> BatchIter: ...
     def __iter__(self) -> BatchIter: ...
     def __next__(self) -> BatchData: ...
     @staticmethod
@@ -112,6 +136,46 @@ class BatchIter:
         codec: str,
         member: str | None = None,
     ) -> BatchIter: ...
+
+@final
+class FrameIterProjected:
+    def __new__(
+        cls,
+        path: str,
+        plan: ProjectionPlan,
+        compression: str = "infer",
+        member: str | None = None,
+    ) -> FrameIterProjected: ...
+    def __iter__(self) -> FrameIterProjected: ...
+    def __next__(self) -> ProjectedFrame: ...
+    @staticmethod
+    def from_reader(
+        source: object,
+        plan: ProjectionPlan,
+        codec: str,
+        member: str | None = None,
+    ) -> FrameIterProjected: ...
+
+@final
+class BatchIterProjected:
+    def __new__(
+        cls,
+        path: str,
+        frames_per_batch: int,
+        plan: ProjectionPlan,
+        compression: str = "infer",
+        member: str | None = None,
+    ) -> BatchIterProjected: ...
+    def __iter__(self) -> BatchIterProjected: ...
+    def __next__(self) -> ProjectedBatch: ...
+    @staticmethod
+    def from_reader(
+        source: object,
+        frames_per_batch: int,
+        plan: ProjectionPlan,
+        codec: str,
+        member: str | None = None,
+    ) -> BatchIterProjected: ...
 
 def read_first_frame(
     path: str, compression: str = "infer", member: str | None = None
@@ -129,6 +193,55 @@ def read_batch(
     compression: str = "infer",
     member: str | None = None,
 ) -> BatchData: ...
+def build_batch(frames: list[FrameData]) -> BatchData: ...
+def read_frames_projected(
+    path: str,
+    threads: int | None = None,
+    compression: str = "infer",
+    member: str | None = None,
+    *,
+    plan: ProjectionPlan,
+) -> list[ProjectedFrame]: ...
+def read_first_frame_projected(
+    path: str,
+    compression: str = "infer",
+    member: str | None = None,
+    *,
+    plan: ProjectionPlan,
+) -> ProjectedFrame: ...
+def read_frames_projected_reader(
+    source: object,
+    codec: str,
+    member: str | None = None,
+    threads: int | None = None,
+    *,
+    plan: ProjectionPlan,
+) -> list[ProjectedFrame]: ...
+def read_first_frame_projected_reader(
+    source: object,
+    codec: str,
+    member: str | None = None,
+    *,
+    plan: ProjectionPlan,
+) -> ProjectedFrame: ...
+def read_batch_projected(
+    path: str,
+    indices: list[int] | None = None,
+    threads: int | None = None,
+    compression: str = "infer",
+    member: str | None = None,
+    *,
+    plan: ProjectionPlan,
+) -> ProjectedBatch: ...
+def read_batch_projected_reader(
+    source: object,
+    codec: str,
+    indices: list[int] | None = None,
+    threads: int | None = None,
+    member: str | None = None,
+    *,
+    plan: ProjectionPlan,
+) -> ProjectedBatch: ...
 def infer_schema(
     path: str, compression: str = "infer", member: str | None = None
 ) -> SchemaData: ...
@@ -181,14 +294,15 @@ def write(
     threads: int | None = None,
 ) -> None: ...
 
+@final
 class FrameWriter:
-    def __init__(
-        self,
+    def __new__(
+        cls,
         path: str,
         compression: str = "infer",
         level: int | None = None,
         append: bool = False,
         batch: int | None = None,
-    ) -> None: ...
+    ) -> FrameWriter: ...
     def write(self, frame: FrameData) -> None: ...
     def close(self) -> None: ...

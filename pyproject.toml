@@ -75,6 +75,7 @@ dev = [
     "metatomic-torch",
     "boto3>=1.35",
     "moto[s3,server]>=5",
+    "mypy>=1.13",
     "obstore>=0.11",
     "prek>=0.4.4",
     "pytest>=9.0.3",

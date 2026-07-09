@@ -217,6 +217,29 @@ metadata:
 --schema schema.yaml` reports every violation at once; `oxyz scan --emit-schema
 schema.yaml file.extxyz` writes a starting schema from a file you trust.
 
+### Projecting to a fixed shape
+
+A schema validates by default. Add `mode: project` (or pass `mode="project"` at
+the call site) and it instead *reshapes* each frame to exactly the fields it
+declares — undeclared columns and metadata dropped, absent optionals filled.
+That makes a mixed-schema file, where an optional property is present only in
+some frames, readable as one batch:
+
+```python
+frames = oxyz.read_frames("mixed.extxyz", schema=spec)        # spec.mode == "project"
+batch = oxyz.read_batch("mixed.extxyz", schema=spec)          # now batchable
+```
+
+Projection works across the frame readers, the batch readers, and the
+`oxyz.ase`/`oxyz.metatomic`/`oxyz.torch_sim` targets, all through the same
+`schema=`/`mode=`/`conformance=` arguments. An absent REAL column fills `NaN`;
+INT, BOOL, and STR have no natural null, so an optional one needs an explicit
+`fill` value. Pattern rules (`descriptor_*`) cannot describe a fixed shape, so
+`SchemaSpec.freeze(sample)` expands them against a representative file into
+literal rules — required where a column appears in every frame, optional where
+it appears in only some. `oxyz freeze` and `oxyz scan --emit-schema --project`
+write a frozen, project-ready schema. Validate mode is unchanged.
+
 ## What you get beyond ASE
 
 **Array-native frames.** A `Frame` is a frozen dataclass holding the file's
@@ -371,8 +394,9 @@ oxyz.iter_batches(path, *, frames_per_batch=None, atoms_per_batch=None,
 oxyz.scan(path)                              -> FrameIndex
 oxyz.infer_schema(path)                      -> Schema
 
-# Every reader above also takes compression="infer" and member=None; the
-# per-frame readers additionally take schema=None and conformance="required".
+# Every reader above also takes compression="infer" and member=None; the frame
+# and batch readers additionally take schema=None, conformance="required", and
+# mode=None (None/"validate"/"project", overriding the schema's own mode).
 
 oxyz.write(path, obj, *, append=False, compression="infer", level=None, threads=None) -> None
 oxyz.Writer(path, *, append=False, compression="infer", level=None, batch=None)   # incremental, a context manager
@@ -388,10 +412,12 @@ dataclasses; everything ships with type stubs.
 The command line mirrors a subset:
 
 ```text
-oxyz scan  <path> [--no-schema] [--emit-schema PATH] [--json]
-                  [--compression C] [--member M] [--storage-option K=V]
-oxyz check <path> --schema S [--conformance strict|required] [--json]
-                  [--compression C] [--member M] [--storage-option K=V]
+oxyz scan   <path> [--no-schema] [--emit-schema PATH [--project]] [--json]
+                   [--compression C] [--member M] [--storage-option K=V]
+oxyz check  <path> --schema S [--conformance strict|required] [--json]
+                   [--compression C] [--member M] [--storage-option K=V]
+oxyz freeze <path> --schema IN --out OUT
+                   [--compression C] [--member M] [--storage-option K=V]
 ```
 
 ### Compressed files

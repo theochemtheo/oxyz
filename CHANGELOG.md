@@ -10,6 +10,20 @@ recorded here.
 
 ## [Unreleased]
 
+### Added
+
+- Schema **projection**: set `mode="project"` on a `SchemaSpec` (or per call)
+  to reshape every frame to a declared fixed schema — undeclared fields dropped,
+  absent optionals filled — making a mixed-schema file batchable. Available on
+  the frame readers (`read_frames`, `read_first`, `read_frames_sliced`,
+  `iter_frames`), the batch readers, and the `oxyz.ase`/`oxyz.metatomic`/
+  `oxyz.torch_sim` output targets, all via `schema=`/`mode=`/`conformance=`.
+  REAL columns fill `NaN` by default; other kinds take an explicit per-field
+  `fill`. `SchemaSpec.freeze(path)` expands pattern rules into a project-ready
+  schema, exposed on the CLI as `oxyz freeze` and `scan --emit-schema
+  --project`. The batch readers (`read_batch`, `iter_batches`) now also accept
+  `schema=`/`conformance=`. Validate-mode behaviour is unchanged.
+
 ### Internal
 
 - Hardened the CI and release workflows: every GitHub Action is pinned to a
