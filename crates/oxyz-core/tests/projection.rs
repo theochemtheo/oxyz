@@ -361,3 +361,164 @@ fn materialises_non_real_fills() {
         &["none".to_string(), "none".to_string()]
     );
 }
+
+fn plain_meta(name: &str, kind: ColumnKind, shape: Option<usize>, fill: Fill) -> PlanMetadata {
+    PlanMetadata {
+        name: name.into(),
+        kind,
+        shape,
+        required: false,
+        fill: Some(fill),
+    }
+}
+
+#[test]
+fn keeps_conforming_metadata_of_every_kind_and_shape() {
+    // Exercises every value_kind_shape arm: a conforming occurrence of each
+    // scalar and array kind is kept verbatim, no deviation.
+    let f = frame_meta(
+        1,
+        vec![
+            ("i".into(), Value::Int(3)),
+            ("b".into(), Value::Bool(true)),
+            ("ia".into(), Value::IntArray(vec![1, 2])),
+            ("ba".into(), Value::BoolArray(vec![false, true])),
+            ("sa".into(), Value::StrArray(vec!["x".into(), "y".into()])),
+        ],
+    );
+    let plan = ProjectionPlan {
+        columns: Vec::new(),
+        metadata: vec![
+            plain_meta("i", ColumnKind::Int, None, Fill::Int(0)),
+            plain_meta("b", ColumnKind::Bool, None, Fill::Bool(false)),
+            plain_meta("ia", ColumnKind::Int, Some(2), Fill::Int(0)),
+            plain_meta("ba", ColumnKind::Bool, Some(2), Fill::Bool(false)),
+            plain_meta("sa", ColumnKind::Str, Some(2), Fill::Str(String::new())),
+        ],
+    };
+    let p = oxyz_core::project::project_frame(&f, &plan);
+    assert!(!p.dropped);
+    assert!(p.deviations.is_empty());
+    assert_eq!(p.frame.metadata[0].1, Value::Int(3));
+    assert_eq!(p.frame.metadata[3].1, Value::BoolArray(vec![false, true]));
+    assert_eq!(
+        p.frame.metadata[4].1,
+        Value::StrArray(vec!["x".into(), "y".into()])
+    );
+}
+
+#[test]
+fn materialises_absent_optional_metadata_of_every_kind() {
+    // Every valid materialise_value arm: an absent optional scalar and array of
+    // each non-real kind fills with its declared sentinel.
+    let f = frame_meta(1, Vec::new());
+    let plan = ProjectionPlan {
+        columns: Vec::new(),
+        metadata: vec![
+            plain_meta("i", ColumnKind::Int, None, Fill::Int(-1)),
+            plain_meta("b", ColumnKind::Bool, None, Fill::Bool(true)),
+            plain_meta("s", ColumnKind::Str, None, Fill::Str("none".into())),
+            plain_meta("ia", ColumnKind::Int, Some(2), Fill::Int(-1)),
+            plain_meta("ba", ColumnKind::Bool, Some(2), Fill::Bool(true)),
+            plain_meta("sa", ColumnKind::Str, Some(2), Fill::Str("none".into())),
+        ],
+    };
+    let p = oxyz_core::project::project_frame(&f, &plan);
+    assert!(!p.dropped);
+    assert!(p.deviations.is_empty()); // absent optional is silent
+    assert_eq!(p.frame.metadata[0].1, Value::Int(-1));
+    assert_eq!(p.frame.metadata[1].1, Value::Bool(true));
+    assert_eq!(p.frame.metadata[2].1, Value::Str("none".into()));
+    assert_eq!(p.frame.metadata[3].1, Value::IntArray(vec![-1, -1]));
+    assert_eq!(p.frame.metadata[4].1, Value::BoolArray(vec![true, true]));
+    assert_eq!(
+        p.frame.metadata[5].1,
+        Value::StrArray(vec!["none".into(), "none".into()])
+    );
+}
+
+#[test]
+fn required_metadata_absent_without_fill_drops_frame() {
+    // The metadata analogue of the column drop: a required key with no fill has
+    // no value to hold the fixed shape, so the frame is dropped with a Missing.
+    let f = frame_meta(1, Vec::new());
+    let plan = ProjectionPlan {
+        columns: Vec::new(),
+        metadata: vec![PlanMetadata {
+            name: "energy".into(),
+            kind: ColumnKind::Int,
+            shape: None,
+            required: true,
+            fill: None,
+        }],
+    };
+    let p = oxyz_core::project::project_frame(&f, &plan);
+    assert!(p.dropped);
+    assert_eq!(p.deviations.len(), 1);
+    assert_eq!(p.deviations[0].axis, Axis::Metadata);
+    assert_eq!(p.deviations[0].kind, DeviationKind::Missing);
+    assert_eq!(p.deviations[0].name, "energy");
+}
+
+#[test]
+fn kind_mismatched_fill_falls_back_instead_of_panicking() {
+    // A plan whose fill kind disagrees with the field kind is a construction
+    // bug the Python compiler prevents; the core must still not panic. Each
+    // defensive arm produces the declared kind's zero. An empty frame forces
+    // every absent optional through the fill path.
+    let f = frame(2, Vec::new());
+    let mismatched = |name: &str, kind: ColumnKind| PlanColumn {
+        name: name.into(),
+        kind,
+        width: 1,
+        required: false,
+        fill: Some(Fill::Bool(true)), // deliberately wrong for R/I/S
+    };
+    let plan = ProjectionPlan {
+        columns: vec![
+            mismatched("r", ColumnKind::Real),
+            mismatched("i", ColumnKind::Int),
+            mismatched("s", ColumnKind::Str),
+            // Bool with a non-Bool fill exercises the remaining column arm.
+            PlanColumn {
+                name: "b".into(),
+                kind: ColumnKind::Bool,
+                width: 1,
+                required: false,
+                fill: Some(Fill::Int(9)),
+            },
+        ],
+        metadata: vec![
+            plain_meta("mr", ColumnKind::Real, None, Fill::Int(1)),
+            plain_meta("mi", ColumnKind::Int, None, Fill::Bool(true)),
+            plain_meta("mb", ColumnKind::Bool, None, Fill::Int(1)),
+            plain_meta("ms", ColumnKind::Str, None, Fill::Int(1)),
+            plain_meta("mra", ColumnKind::Real, Some(1), Fill::Int(1)),
+            plain_meta("mia", ColumnKind::Int, Some(1), Fill::Bool(true)),
+            plain_meta("mba", ColumnKind::Bool, Some(1), Fill::Int(1)),
+            plain_meta("msa", ColumnKind::Str, Some(1), Fill::Int(1)),
+        ],
+    };
+    let p = oxyz_core::project::project_frame(&f, &plan);
+    assert!(!p.dropped);
+    assert!(
+        p.frame.columns[0]
+            .data
+            .as_real()
+            .unwrap()
+            .iter()
+            .all(|x| x.is_nan())
+    );
+    assert_eq!(p.frame.columns[1].data.as_int().unwrap(), &[0, 0]);
+    assert_eq!(
+        p.frame.columns[2].data.as_str().unwrap(),
+        &["".to_string(), "".to_string()]
+    );
+    assert_eq!(p.frame.columns[3].data.as_bool().unwrap(), &[false, false]);
+    assert_eq!(p.frame.metadata[1].1, Value::Int(0));
+    assert_eq!(p.frame.metadata[2].1, Value::Bool(false));
+    assert_eq!(p.frame.metadata[3].1, Value::Str(String::new()));
+    assert_eq!(p.frame.metadata[5].1, Value::IntArray(vec![0]));
+    assert_eq!(p.frame.metadata[6].1, Value::BoolArray(vec![false]));
+    assert_eq!(p.frame.metadata[7].1, Value::StrArray(vec![String::new()]));
+}

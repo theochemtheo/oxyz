@@ -87,3 +87,99 @@ def test_missing_object_raises(s3_store):
     # obstore surfaces a FileNotFoundError (404 Not Found from the store).
     with pytest.raises(FileNotFoundError):
         oxyz.read_frames(s3_store.url("nope.xyz"), storage_options=s3_store.options)
+
+
+# A mixed-schema body: frame 0 carries 'charge', frame 1 does not — the case
+# projection reshapes into a uniform, batchable set (charge filled with NaN).
+MIXED_BODY = (
+    b"1\nProperties=species:S:1:pos:R:3:charge:R:1\nH 0 0 0 0.5\n"
+    b"1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+)
+
+
+def _project_spec():
+    from oxyz._schema import Kind
+    from oxyz._schema_spec import ColumnRule, SchemaSpec
+
+    return SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+            ColumnRule("charge", Kind.REAL, required=False),
+        ),
+        mode="project",
+    )
+
+
+def test_read_frames_projected_remote(s3_store):
+    """The reader-source projected frame path: read_frames_projected_reader."""
+    import math
+
+    import numpy as np
+
+    s3_store.put("mixed.extxyz", MIXED_BODY)
+    spec = _project_spec()
+    frames = oxyz.read_frames(
+        s3_store.url("mixed.extxyz"), schema=spec, storage_options=s3_store.options
+    )
+    assert [set(fr.columns) for fr in frames] == [
+        {"species", "pos", "charge"},
+        {"species", "pos", "charge"},
+    ]
+    assert math.isnan(np.asarray(frames[1].columns["charge"])[0])  # filled
+
+
+def test_read_first_and_iter_projected_remote(s3_store):
+    """read_first_frame_projected_reader and FrameIterProjected.from_reader."""
+    s3_store.put("mixed.extxyz", MIXED_BODY)
+    url = s3_store.url("mixed.extxyz")
+    spec = _project_spec()
+    first = oxyz.read_first(url, schema=spec, storage_options=s3_store.options)
+    assert "charge" in first.columns
+    streamed = list(
+        oxyz.iter_frames(url, schema=spec, storage_options=s3_store.options)
+    )
+    assert len(streamed) == 2
+    assert all("charge" in fr.columns for fr in streamed)
+
+
+def test_read_batch_projected_remote(s3_store):
+    """The reader-source projected batch path: read_batch_projected_reader."""
+    s3_store.put("mixed.extxyz", MIXED_BODY)
+    spec = _project_spec()
+    batch = oxyz.read_batch(
+        s3_store.url("mixed.extxyz"), schema=spec, storage_options=s3_store.options
+    )
+    assert batch.n_frames == 2
+    assert "charge" in batch.columns  # mixed file made batchable by projection
+
+
+def test_iter_batches_projected_remote(s3_store):
+    """Streaming projected batches over a reader: BatchIterProjected.from_reader."""
+    s3_store.put("mixed.extxyz", MIXED_BODY)
+    spec = _project_spec()
+    batches = list(
+        oxyz.iter_batches(
+            s3_store.url("mixed.extxyz"),
+            frames_per_batch=1,
+            schema=spec,
+            storage_options=s3_store.options,
+        )
+    )
+    assert len(batches) == 2
+    assert all("charge" in b.columns for b in batches)
+
+
+def test_ase_read_projected_remote(s3_store):
+    """Output-target projection over a remote source (nth_frame + slice paths)."""
+    pytest.importorskip("ase")
+    import oxyz.ase
+
+    s3_store.put("mixed.extxyz", MIXED_BODY)
+    url = s3_store.url("mixed.extxyz")
+    spec = _project_spec()
+    options = s3_store.options
+    last = oxyz.ase.read(url, index=-1, schema=spec, storage_options=options)
+    assert len(last) == 1  # one-atom frame, projected then converted
+    both = oxyz.ase.read(url, index=":", schema=spec, storage_options=options)
+    assert len(both) == 2

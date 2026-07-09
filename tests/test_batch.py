@@ -621,3 +621,65 @@ def test_project_batch_enforces_frame_rule(tmp_path):
         oxyz.read_batch(f, schema=spec)
     assert exc.value.frame_index == 0
     assert "n_atoms" in str(exc.value)
+
+
+def test_project_batch_frame_rule_lattice_warn(tmp_path):
+    from oxyz._schema import Kind
+    from oxyz._schema_match import SchemaWarning
+    from oxyz._schema_spec import ColumnRule, FrameRule, SchemaSpec
+
+    f = tmp_path / "nolattice.xyz"
+    f.write_text(
+        "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 1 0 0\n"
+    )
+    spec = SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+        ),
+        frame=FrameRule(lattice_required=True),
+        mode="project",
+    )
+    # No frame carries a Lattice: under warn the batch survives but every frame
+    # warns (the lattice-missing frame-rule branch).
+    with pytest.warns(SchemaWarning, match="Lattice"):
+        batch = oxyz.read_batch(f, schema=spec, conformance="warn")
+    assert batch.n_frames == 2
+
+
+def test_validate_batch_warn_via_sequential_stream(tmp_path):
+    """threads=1 iter_batches takes the sequential windowing path; warn keeps
+    every frame, so the window is actually assembled and yielded."""
+    from oxyz._schema_match import SchemaWarning
+
+    spec = _batch_schema("validate")
+    bad = tmp_path / "bad.xyz"
+    bad.write_text(
+        "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 1 0 0\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 2 0 0\n"
+    )
+    with pytest.warns(SchemaWarning, match="charge"):
+        batches = list(
+            oxyz.iter_batches(
+                bad, frames_per_batch=2, schema=spec, threads=1, conformance="warn"
+            )
+        )
+    # two windows (2 + 1), both assembled and yielded
+    assert [b.n_frames for b in batches] == [2, 1]
+
+
+def test_validate_batch_selection_and_out_of_range(tmp_path):
+    """read_batch validate-mode with an explicit index list, and the
+    out-of-range IndexError from the materialise-and-pick path."""
+    spec = _batch_schema("validate")
+    ok = tmp_path / "ok.xyz"
+    ok.write_text(
+        "1\nProperties=species:S:1:pos:R:3:charge:R:1\nH 0 0 0 0.5\n"
+        "1\nProperties=species:S:1:pos:R:3:charge:R:1\nH 1 0 0 -0.5\n"
+    )
+    batch = oxyz.read_batch(ok, [1, 0, 1], schema=spec)
+    assert batch.frame_indices.tolist() == [1, 0, 1]
+    with pytest.raises(IndexError, match="out of range"):
+        oxyz.read_batch(ok, [5], schema=spec)

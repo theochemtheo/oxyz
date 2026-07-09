@@ -204,6 +204,25 @@ def test_freeze_expands_patterns_and_marks_optional(tmp_path):
     assert names["d_1"].required is False  # only some frames
 
 
+def test_freeze_expands_metadata_patterns(tmp_path):
+    from oxyz._schema_spec import MetadataRule
+
+    f = tmp_path / "meta.xyz"
+    # frame 1 has e_a and e_b metadata; frame 2 only e_a -> e_b optional
+    f.write_text(
+        "1\ne_a=1.0 e_b=2.0 Properties=species:S:1:pos:R:3\nH 0 0 0\n"
+        "1\ne_a=3.0 Properties=species:S:1:pos:R:3\nH 0 0 0\n"
+    )
+    spec = SchemaSpec(
+        metadata=(MetadataRule(name="e_*", kind=Kind.REAL),), mode="project"
+    )
+    frozen = spec.freeze(f)
+    names = {m.name: m for m in frozen.metadata}
+    assert names.keys() == {"e_a", "e_b"}
+    assert names["e_a"].required is True
+    assert names["e_b"].required is False  # only in some frames, fills NaN
+
+
 def test_freeze_raises_on_kind_conflict(tmp_path):
     from oxyz import SchemaError
 

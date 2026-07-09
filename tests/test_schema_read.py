@@ -316,3 +316,40 @@ def test_warn_drop_emits_warning_naming_field(tmp_path):
     with pytest.warns(SchemaWarning, match="id"):
         frames = list(oxyz.iter_frames(f, schema=spec, conformance="warn"))
     assert frames == []  # every frame dropped (unfillable required id)
+
+
+def _proj_spec():
+    return SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+            ColumnRule("charge", Kind.REAL, required=False),
+        ),
+        mode="project",
+    )
+
+
+def test_read_frames_sliced_projects_kept_frames(tmp_path):
+    import math
+
+    import numpy as np
+
+    f = _mixed_file(tmp_path)
+    # Slice off the first frame: the projected branch reshapes only what the
+    # slice keeps, indexed by original position.
+    frames = read_frames_sliced(f, slice(1, None), schema=_proj_spec())
+    assert len(frames) == 1
+    assert set(frames[0].columns) == {"species", "pos", "charge"}
+    assert math.isnan(np.asarray(frames[0].columns["charge"])[0])  # filled
+
+
+def test_reverse_slice_with_schema_projects(tmp_path):
+    pytest.importorskip("ase")
+    import oxyz.ase
+
+    f = _mixed_file(tmp_path)
+    # A reverse slice with a schema takes sliced_frames' read-and-project path
+    # (the streaming/index shortcut is skipped so the sought frames are shaped).
+    atoms = list(oxyz.ase.iread(f, "::-1", schema=_proj_spec()))
+    assert len(atoms) == 2
+    assert all(len(a) == 1 for a in atoms)
