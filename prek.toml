@@ -117,6 +117,17 @@ always_run = true
 stages = ["pre-push"]
 
 [[repos.hooks]]
+id = "zizmor"
+name = "zizmor (GitHub Actions audit)"
+# Mirrors the CI zizmor job; the wrapper supplies a GitHub token so the online
+# audits (which catch drifted action pins) run locally, not CI-only.
+language = "system"
+entry = "bash scripts/zizmor.sh"
+pass_filenames = false
+always_run = true
+stages = ["pre-push"]
+
+[[repos.hooks]]
 id = "cargo-fmt-check"
 name = "cargo fmt --check"
 language = "system"
