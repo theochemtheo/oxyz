@@ -209,3 +209,110 @@ def test_iter_frames_projects_and_drops(tmp_path):
         warnings.simplefilter("ignore")
         frames = list(oxyz.iter_frames(f, schema=spec, conformance="warn"))
     assert frames == []
+
+
+def test_strict_and_required_collapse_under_project(tmp_path):
+    import oxyz
+
+    f = _mixed_file(tmp_path)  # frame 0 has an undeclared 'charge'
+    spec = SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+        ),
+        mode="project",
+    )
+    strict = oxyz.read_frames(f, schema=spec, conformance="strict")
+    required = oxyz.read_frames(f, schema=spec, conformance="required")
+    # Under project, an undeclared field is dropped, never a violation — so
+    # strict and required behave identically (neither raises on 'charge').
+    assert [set(fr.columns) for fr in strict] == [set(fr.columns) for fr in required]
+    assert all(set(fr.columns) == {"species", "pos"} for fr in strict)
+
+
+def test_metadata_projection_through_reader(tmp_path):
+    import numpy as np
+
+    import oxyz
+
+    f = tmp_path / "meta.xyz"
+    f.write_text(
+        "1\nProperties=species:S:1:pos:R:3 "
+        'energy=-1.0 stress="1.0 2.0 3.0 4.0 5.0 6.0"\n'
+        "H 0 0 0\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 1 0 0\n"
+    )
+    spec = SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+        ),
+        metadata=(
+            MetadataRule("energy", Kind.REAL, required=False),
+            MetadataRule("stress", Kind.REAL, shape=(6,), required=False),
+        ),
+        mode="project",
+    )
+    frames = oxyz.read_frames(f, schema=spec)
+    assert frames[0].metadata["energy"] == -1.0
+    assert np.asarray(frames[0].metadata["stress"]).tolist() == [1, 2, 3, 4, 5, 6]
+    # frame 1 lacks both -> filled (scalar NaN, and a 6-length NaN array)
+    assert np.isnan(np.asarray(frames[1].metadata["energy"]))
+    assert np.isnan(np.asarray(frames[1].metadata["stress"])).all()
+    assert np.asarray(frames[1].metadata["stress"]).shape == (6,)
+
+
+def test_wrong_kind_under_warn_fills_nan_and_warns(tmp_path):
+    import numpy as np
+
+    import oxyz
+
+    f = tmp_path / "w.xyz"
+    # 'val' is Int in the file but the schema declares it Real -> wrong kind
+    f.write_text("1\nProperties=species:S:1:pos:R:3:val:I:1\nH 0 0 0 7\n")
+    spec = SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+            ColumnRule("val", Kind.REAL),
+        ),
+        mode="project",
+    )
+    with pytest.warns(SchemaWarning, match="val"):
+        frames = oxyz.read_frames(f, schema=spec, conformance="warn")
+    # the real int 7 is discarded and replaced with a NaN fill (data loss)
+    assert np.isnan(np.asarray(frames[0].columns["val"])[0])
+
+
+def test_falsy_fills_survive_projection(tmp_path):
+    import numpy as np
+
+    import oxyz
+
+    f = tmp_path / "m.xyz"
+    f.write_text("1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n")  # no id / tag
+    spec = SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+            ColumnRule("id", Kind.INT, required=False, fill=0),
+            ColumnRule("tag", Kind.STR, required=False, fill=""),
+        ),
+        mode="project",
+    )
+    fr = oxyz.read_frames(f, schema=spec)[0]
+    assert np.asarray(fr.columns["id"]).tolist() == [0]  # 0 is a real fill, not absence
+    assert list(fr.columns["tag"]) == [""]
+
+
+def test_warn_drop_emits_warning_naming_field(tmp_path):
+    import oxyz
+
+    f = _mixed_file(tmp_path)  # neither frame carries 'id'
+    spec = SchemaSpec(
+        columns=(ColumnRule("pos", Kind.REAL, width=3), ColumnRule("id", Kind.INT)),
+        mode="project",
+    )
+    with pytest.warns(SchemaWarning, match="id"):
+        frames = list(oxyz.iter_frames(f, schema=spec, conformance="warn"))
+    assert frames == []  # every frame dropped (unfillable required id)

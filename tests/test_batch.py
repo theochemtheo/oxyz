@@ -418,6 +418,18 @@ def test_batch_mode_without_schema_errors(tmp_path):
         oxyz.read_batch(f, mode="project")
 
 
+def _assert_batches_identical(a, b):
+    # assert_array_equal treats same-position NaNs as equal, so the NaN fills
+    # are compared directly rather than masked away.
+    assert a.frame_indices.tolist() == b.frame_indices.tolist()
+    assert_array_equal(a.offsets, b.offsets)
+    assert sorted(a.columns) == sorted(b.columns)
+    for key in a.columns:
+        assert_array_equal(np.asarray(a.columns[key]), np.asarray(b.columns[key]))
+    for key in a.metadata:
+        assert_array_equal(np.asarray(a.metadata[key]), np.asarray(b.metadata[key]))
+
+
 def test_projected_batch_parity_serial_vs_parallel():
     from oxyz._schema import Kind
     from oxyz._schema_spec import ColumnRule, SchemaSpec
@@ -431,15 +443,58 @@ def test_projected_batch_parity_serial_vs_parallel():
         ),
         mode="project",
     )
-    serial = oxyz.read_batch(fixture, schema=spec, threads=1)
-    parallel = oxyz.read_batch(fixture, schema=spec, threads=None)
-    assert serial.frame_indices.tolist() == parallel.frame_indices.tolist()
-    assert_array_equal(serial.offsets, parallel.offsets)
-    for key in serial.columns:
-        # charge carries a NaN fill (frame 2), so compare with NaNs neutralised.
-        left = np.nan_to_num(np.asarray(serial.columns[key]))
-        right = np.nan_to_num(np.asarray(parallel.columns[key]))
-        assert_array_equal(left, right)
+    _assert_batches_identical(
+        oxyz.read_batch(fixture, schema=spec, threads=1),
+        oxyz.read_batch(fixture, schema=spec, threads=None),
+    )
+
+
+def test_projected_batch_parity_with_warn_drops(tmp_path):
+    import warnings
+
+    from oxyz._schema import Kind
+    from oxyz._schema_match import SchemaWarning
+    from oxyz._schema_spec import ColumnRule, SchemaSpec
+
+    # frames 0,2 carry id; frame 1 does not -> frame 1 drops under warn. Serial
+    # and parallel must drop the *same* frame and agree on survivors/columns.
+    f = tmp_path / "drops.xyz"
+    f.write_text(
+        "1\nProperties=species:S:1:pos:R:3:id:I:1\nH 0 0 0 10\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 1 0 0\n"
+        "1\nProperties=species:S:1:pos:R:3:id:I:1\nH 2 0 0 12\n"
+    )
+    spec = SchemaSpec(
+        columns=(ColumnRule("pos", Kind.REAL, width=3), ColumnRule("id", Kind.INT)),
+        mode="project",
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SchemaWarning)
+        serial = oxyz.read_batch(f, schema=spec, threads=1, conformance="warn")
+        parallel = oxyz.read_batch(f, schema=spec, threads=None, conformance="warn")
+    assert serial.frame_indices.tolist() == [0, 2]  # frame 1 dropped
+    _assert_batches_identical(serial, parallel)
+
+
+def test_projected_batch_parity_which_error_wins(tmp_path):
+    from oxyz._schema import Kind
+    from oxyz._schema_spec import ColumnRule, SchemaSpec
+
+    # A malformed frame 1: the serial and parallel reads must fail with the same
+    # error (the parity promise covers which error wins on a bad file).
+    f = tmp_path / "bad.xyz"
+    f.write_text(
+        "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+        "1\nProperties=species:S:1:pos:R:3\nnot-a-count\n"
+    )
+    spec = SchemaSpec(columns=(ColumnRule("pos", Kind.REAL, width=3),), mode="project")
+    errs = {}
+    for threads in (1, None):
+        try:
+            oxyz.read_batch(f, schema=spec, threads=threads)
+        except ValueError as exc:  # ParseError/SchemaError are ValueErrors
+            errs[threads] = str(exc)
+    assert errs[1] == errs[None]
 
 
 def test_get_batch_projected_empty_indices_errors():

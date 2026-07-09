@@ -109,3 +109,10 @@ def test_fill_kind_mismatch_is_spec_error():
     spec = SchemaSpec(columns=(ColumnRule("id", Kind.INT, fill="oops"),))
     with pytest.raises(SchemaError, match="fill"):
         compile_projection(spec, "project")
+
+
+@pytest.mark.parametrize("kind", [Kind.INT, Kind.BOOL, Kind.STR])
+def test_optional_no_natural_null_without_fill_is_spec_error(kind):
+    spec = SchemaSpec(columns=(ColumnRule("x", kind, required=False),))
+    with pytest.raises(SchemaError, match="fill"):
+        compile_projection(spec, "project")

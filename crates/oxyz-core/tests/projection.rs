@@ -321,3 +321,43 @@ fn duplicate_metadata_prefers_conforming_occurrence() {
     assert!(deviations.is_empty());
     assert_eq!(frame.metadata[0], ("energy".into(), Value::Real(-1.0)));
 }
+
+#[test]
+fn materialises_non_real_fills() {
+    // Absent optional Int/Bool/Str columns fill with their declared sentinel.
+    let f = frame(2, Vec::new());
+    let plan = ProjectionPlan {
+        columns: vec![
+            PlanColumn {
+                name: "id".into(),
+                kind: ColumnKind::Int,
+                width: 1,
+                required: false,
+                fill: Some(Fill::Int(-1)),
+            },
+            PlanColumn {
+                name: "ok".into(),
+                kind: ColumnKind::Bool,
+                width: 1,
+                required: false,
+                fill: Some(Fill::Bool(true)),
+            },
+            PlanColumn {
+                name: "tag".into(),
+                kind: ColumnKind::Str,
+                width: 1,
+                required: false,
+                fill: Some(Fill::Str("none".into())),
+            },
+        ],
+        metadata: Vec::new(),
+    };
+    let p = oxyz_core::project::project_frame(&f, &plan);
+    assert!(!p.dropped);
+    assert_eq!(p.frame.columns[0].data.as_int().unwrap(), &[-1, -1]);
+    assert_eq!(p.frame.columns[1].data.as_bool().unwrap(), &[true, true]);
+    assert_eq!(
+        p.frame.columns[2].data.as_str().unwrap(),
+        &["none".to_string(), "none".to_string()]
+    );
+}
