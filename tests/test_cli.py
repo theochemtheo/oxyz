@@ -189,6 +189,14 @@ def test_check_extra_only_errors_under_strict(tmp_path):
     assert main([*args, "--conformance", "strict"]) == 1
 
 
+def test_check_accepts_warn_conformance(tmp_path):
+    # `warn` is a valid --conformance level (parity with the Python API); like
+    # strict it reports extra columns/keys.
+    spec = _write_spec(tmp_path)
+    args = ["check", str(DATA / "schema_extra_column.extxyz"), "--schema", str(spec)]
+    assert main([*args, "--conformance", "warn"]) == 1
+
+
 def test_freeze_writes_project_ready_schema(tmp_path: Path) -> None:
     data = tmp_path / "mixed.xyz"
     data.write_text(

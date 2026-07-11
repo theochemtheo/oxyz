@@ -40,6 +40,8 @@ recorded here.
   with the already-exported `Conformance`, `Compression`, and `MemoryScaling`.
 - `SchemaSpec` gains `from_json` and `to_file`, so every serialisation format
   now has a matching `from_`/`to_` pair (`dict`, `json`, `yaml`, `file`).
+- `oxyz check --conformance` accepts `warn`, matching the Python API's
+  conformance levels; like `strict` it reports extra columns/keys.
 
 ### Changed
 

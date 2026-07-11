@@ -127,9 +127,12 @@ def _add_check_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     check_parser.add_argument(
         "--conformance",
-        choices=("strict", "required"),
+        choices=("strict", "required", "warn"),
         default="required",
-        help="strict rejects extra columns/keys; required (default) allows them",
+        help=(
+            "strict and warn report extra columns/keys; required (default) "
+            "allows them (all levels report missing/mismatch/count)"
+        ),
     )
     check_parser.add_argument(
         "--json", action="store_true", help="emit a JSON object instead of text"

@@ -417,7 +417,7 @@ The command line mirrors a subset:
 ```text
 oxyz scan   <path> [--no-schema] [--emit-schema PATH [--project]] [--json]
                    [--compression C] [--member M] [--storage-option K=V]
-oxyz check  <path> --schema S [--conformance strict|required] [--json]
+oxyz check  <path> --schema S [--conformance strict|required|warn] [--json]
                    [--compression C] [--member M] [--storage-option K=V]
 oxyz freeze <path> --schema IN --out OUT
                    [--compression C] [--member M] [--storage-option K=V]
