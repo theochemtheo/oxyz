@@ -57,6 +57,8 @@ recorded here.
   mapping key either way).
 - `ParseError.line_number` is renamed to `ParseError.line`, matching
   `Violation.line`; both now pair `line` with `column`.
+- `Frame.to_ase()` is renamed to `Frame.to_atoms()`, matching the
+  `oxyz.ase.to_atoms` function it delegates to.
 - `read_batch`'s `indices=` parameter becomes `index=`, taking `read`'s full
   selection grammar (`":"`, an int, a slice or slice string, or a sequence);
   the default `":"` reads the whole file, as `indices=None` did.

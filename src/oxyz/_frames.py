@@ -41,7 +41,7 @@ class Frame:
     columns: dict[str, ColumnValues]
     metadata: dict[str, MetadataValue]
 
-    def to_ase(self) -> Atoms:
+    def to_atoms(self) -> Atoms:
         """Convert to `ase.Atoms` (requires the optional `ase` extra)."""
         from oxyz.ase import to_atoms
 

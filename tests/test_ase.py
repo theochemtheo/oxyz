@@ -272,13 +272,15 @@ def test_non_scalar_species_is_strict_error(tmp_path: Path) -> None:
         oxyz.ase.read(path, index=0)
 
 
-def test_frame_to_ase_method() -> None:
+def test_frame_to_atoms_method() -> None:
     import ase.io
 
     import oxyz
 
     path = DATA_DIR / "minimal_periodic.extxyz"
-    atoms = oxyz.read(path, 0).to_ase()
+    frame = oxyz.read(path, 0)
+    atoms = frame.to_atoms()
+    assert not hasattr(frame, "to_ase")  # renamed to match oxyz.ase.to_atoms
     assert_atoms_match(atoms, ase.io.read(path, index=0, format="extxyz"))
 
 
