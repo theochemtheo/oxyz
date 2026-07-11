@@ -17,6 +17,15 @@ from oxyz._schema_spec import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+
+def test_metadata_rule_identifier_is_key() -> None:
+    # The metadata identifier is `key` (columns use `name`), matching
+    # MetadataSchema.key so the concept is spelled the same across the model.
+    rule = MetadataRule("energy", Kind.REAL)
+    assert rule.key == "energy"
+    assert not hasattr(rule, "name")
+
+
 SPEC_DICT = {
     "columns": {
         "species": {"kind": "S"},
@@ -41,9 +50,9 @@ def test_from_dict_builds_typed_rules():
         name="forces", kind=Kind.REAL, width=3, required=False
     )
     assert spec.columns[3] == ColumnRule(name="descriptor_*", kind=Kind.REAL, count=5)
-    assert spec.metadata[0] == MetadataRule(name="energy", kind=Kind.REAL)
+    assert spec.metadata[0] == MetadataRule(key="energy", kind=Kind.REAL)
     assert spec.metadata[1] == MetadataRule(
-        name="stress", kind=Kind.REAL, shape=(9,), required=False
+        key="stress", kind=Kind.REAL, shape=(9,), required=False
     )
     assert spec.frame == FrameRule(
         n_atoms_min=1, n_atoms_max=512, lattice_required=True
@@ -107,7 +116,7 @@ def test_render_yaml_omits_defaults_and_quotes_patterns():
 
 
 def test_render_yaml_notes_render_as_trailing_comments():
-    spec = SchemaSpec(metadata=(MetadataRule(name="charge", kind=Kind.REAL),))
+    spec = SchemaSpec(metadata=(MetadataRule(key="charge", kind=Kind.REAL),))
     text = render_yaml(
         spec, notes={"charge": "drift: R:1 in 3/5, I:1 in 2/5 — using R"}
     )
@@ -214,13 +223,13 @@ def test_freeze_expands_metadata_patterns(tmp_path):
         "1\ne_a=3.0 Properties=species:S:1:pos:R:3\nH 0 0 0\n"
     )
     spec = SchemaSpec(
-        metadata=(MetadataRule(name="e_*", kind=Kind.REAL),), mode="project"
+        metadata=(MetadataRule(key="e_*", kind=Kind.REAL),), mode="project"
     )
     frozen = spec.freeze(f)
-    names = {m.name: m for m in frozen.metadata}
-    assert names.keys() == {"e_a", "e_b"}
-    assert names["e_a"].required is True
-    assert names["e_b"].required is False  # only in some frames, fills NaN
+    keys = {m.key: m for m in frozen.metadata}
+    assert keys.keys() == {"e_a", "e_b"}
+    assert keys["e_a"].required is True
+    assert keys["e_b"].required is False  # only in some frames, fills NaN
 
 
 def test_freeze_raises_on_kind_conflict(tmp_path):

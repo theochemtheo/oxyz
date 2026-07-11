@@ -52,10 +52,12 @@ class ColumnRule:
 
 @dataclass(frozen=True, slots=True)
 class MetadataRule:
-    """One expected comment-line key. `shape` is `()` for a scalar, `(n,)` for an
-    array of length n. Pattern cardinality works as for `ColumnRule`."""
+    """One expected comment-line entry. `key` is a literal, a glob, or a regex,
+    as `ColumnRule.name` is (the metadata identifier is `key`, matching
+    `MetadataSchema.key`). `shape` is `()` for a scalar, `(n,)` for an array of
+    length n. Pattern cardinality works as for `ColumnRule`."""
 
-    name: str
+    key: str
     kind: Kind
     shape: tuple[int, ...] = ()
     required: bool = True
@@ -95,10 +97,10 @@ def _column_rule(name: str, attrs: Mapping[str, Any]) -> ColumnRule:
     )
 
 
-def _metadata_rule(name: str, attrs: Mapping[str, Any]) -> MetadataRule:
+def _metadata_rule(key: str, attrs: Mapping[str, Any]) -> MetadataRule:
     shape = attrs.get("shape", ())
     return MetadataRule(
-        name=name,
+        key=key,
         kind=_kind(attrs["kind"]),
         shape=tuple(int(n) for n in shape),
         required=bool(attrs.get("required", True)),
@@ -179,7 +181,7 @@ class SchemaSpec:
             out["columns"] = {rule.name: _column_attrs(rule) for rule in self.columns}
         if self.metadata:
             out["metadata"] = {
-                rule.name: _metadata_attrs(rule) for rule in self.metadata
+                rule.key: _metadata_attrs(rule) for rule in self.metadata
             }
         if self.frame is not None:
             out["frame"] = _frame_attrs(self.frame)
@@ -310,7 +312,7 @@ def render_yaml(spec: SchemaSpec, notes: Mapping[str, str] | None = None) -> str
             lines.append(line)
 
     emit("columns", {rule.name: _column_attrs(rule) for rule in spec.columns})
-    emit("metadata", {rule.name: _metadata_attrs(rule) for rule in spec.metadata})
+    emit("metadata", {rule.key: _metadata_attrs(rule) for rule in spec.metadata})
     if spec.frame is not None:
         frame_attrs = _frame_attrs(spec.frame)
         if frame_attrs:
