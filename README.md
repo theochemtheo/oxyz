@@ -446,9 +446,10 @@ decompress the file first if you need them.
 
 ### Reading from object storage
 
-`read`, `iread`, `scan`, `infer_schema`, the batch readers, and
-`oxyz.ase.read`/`iread` accept S3-compatible URLs when the `s3` extra is
-installed (see [Install](#install)):
+`read`, `iread`, `scan`, `infer_schema`, the batch readers, and the output
+targets (`oxyz.ase`, `oxyz.metatomic`, `oxyz.torch_sim` readers and their
+`SystemSource`/`SimStateSource`) accept S3-compatible URLs when the `s3` extra
+is installed (see [Install](#install)):
 
 ```python
 frames = oxyz.read("s3://bucket/train.extxyz.gz")

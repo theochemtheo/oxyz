@@ -81,6 +81,29 @@ def test_ase_read_remote(s3_store):
     assert len(oxyz.ase.read(url, index=-1, storage_options=options)) > 0
 
 
+def test_metatomic_read_remote(s3_store):
+    pytest.importorskip("metatomic.torch")
+    import oxyz.metatomic
+
+    s3_store.put("train.extxyz", KEY_DATA)
+    url = s3_store.url("train.extxyz")
+    options = s3_store.options
+    assert len(oxyz.metatomic.read(url, storage_options=options)) > 0
+    assert sum(1 for _ in oxyz.metatomic.iread(url, storage_options=options)) > 0
+    assert len(oxyz.metatomic.SystemSource(url, storage_options=options)) > 0
+
+
+def test_torch_sim_read_remote(s3_store):
+    pytest.importorskip("torch_sim")
+    import oxyz.torch_sim
+
+    s3_store.put("train.extxyz", KEY_DATA)
+    url = s3_store.url("train.extxyz")
+    options = s3_store.options
+    assert oxyz.torch_sim.read(url, storage_options=options).n_atoms > 0
+    assert len(oxyz.torch_sim.SimStateSource(url, storage_options=options)) > 0
+
+
 def test_missing_object_raises(s3_store):
     # obstore surfaces a FileNotFoundError (404 Not Found from the store).
     with pytest.raises(FileNotFoundError):

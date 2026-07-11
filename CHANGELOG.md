@@ -23,6 +23,10 @@ recorded here.
   schema, exposed on the CLI as `oxyz freeze` and `scan --emit-schema
   --project`. The batch readers (`read_batch`, `iread_batch`) now also accept
   `schema=`/`conformance=`. Validate-mode behaviour is unchanged.
+- `oxyz.metatomic` and `oxyz.torch_sim` `read`/`iread` and their
+  `SystemSource`/`SimStateSource` gain `storage_options=`, so reading from an
+  S3-compatible URL works from every output target, as it already did for
+  `oxyz.ase` and the native readers.
 
 ### Changed
 

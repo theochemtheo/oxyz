@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
+    from oxyz._remote import StorageOptions
     from oxyz._schema_match import Conformance
     from oxyz._schema_spec import Mode, SchemaSpec
 
@@ -81,6 +82,7 @@ def read(
     threads: int | None = ...,
     compression: Compression = ...,
     member: str | None = ...,
+    storage_options: StorageOptions | None = ...,
 ) -> System: ...
 
 
@@ -99,6 +101,7 @@ def read(
     threads: int | None = ...,
     compression: Compression = ...,
     member: str | None = ...,
+    storage_options: StorageOptions | None = ...,
 ) -> list[System]: ...
 
 
@@ -117,6 +120,7 @@ def read(
     threads: int | None = ...,
     compression: Compression = ...,
     member: str | None = ...,
+    storage_options: StorageOptions | None = ...,
 ) -> System | list[System]: ...
 
 
@@ -134,6 +138,7 @@ def read(  # noqa: PLR0913  keyword options mirror the System data model
     threads: int | None = None,
     compression: Compression = "infer",
     member: str | None = None,
+    storage_options: StorageOptions | None = None,
 ) -> System | list[System]:
     """Read frames into `System`s; default `index=":"` reads the whole file.
 
@@ -144,7 +149,9 @@ def read(  # noqa: PLR0913  keyword options mirror the System data model
     seek.
 
     Compressed paths are read too; `compression` and `member` are as in
-    `oxyz.read`.
+    `oxyz.read`. A remote URL (``s3://``, ``gs://``, ``az://``) is read through
+    the same parser; ``storage_options`` passes endpoint/credentials to the
+    store (needs the ``oxyz[s3]`` extra).
     """
     _require_schema_for_mode(schema, mode)
     options = (dtype, device, positions_requires_grad, cell_requires_grad)
@@ -158,6 +165,7 @@ def read(  # noqa: PLR0913  keyword options mirror the System data model
             mode=mode,
             compression=compression,
             member=member,
+            storage_options=storage_options,
         )
         return _to_system(frame, *options)
     return [
@@ -171,6 +179,7 @@ def read(  # noqa: PLR0913  keyword options mirror the System data model
             mode=mode,
             compression=compression,
             member=member,
+            storage_options=storage_options,
         )
     ]
 
@@ -188,6 +197,7 @@ def iread(  # noqa: PLR0913  keyword options mirror the System data model
     mode: Mode | None = None,
     compression: Compression = "infer",
     member: str | None = None,
+    storage_options: StorageOptions | None = None,
 ) -> Iterator[System]:
     """Stream `System`s one at a time, in constant memory (serial parse)."""
     _require_schema_for_mode(schema, mode)
@@ -202,6 +212,7 @@ def iread(  # noqa: PLR0913  keyword options mirror the System data model
             mode=mode,
             compression=compression,
             member=member,
+            storage_options=storage_options,
         )
         return iter((_to_system(frame, *options),))
     return (
@@ -214,6 +225,7 @@ def iread(  # noqa: PLR0913  keyword options mirror the System data model
             mode=mode,
             compression=compression,
             member=member,
+            storage_options=storage_options,
         )
     )
 
@@ -233,9 +245,14 @@ class SystemSource:
         threads: int | None = None,
         compression: Compression = "infer",
         member: str | None = None,
+        storage_options: StorageOptions | None = None,
     ) -> None:
         self._frames: list[Frame] = _read_all(
-            path, threads=threads, compression=compression, member=member
+            path,
+            threads=threads,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
         )
 
     def __len__(self) -> int:

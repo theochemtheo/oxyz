@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from oxyz._frames import Compression
+    from oxyz._remote import StorageOptions
     from oxyz._schema_match import Conformance
     from oxyz._schema_spec import Mode, SchemaSpec
 
@@ -80,6 +81,7 @@ def read(  # noqa: PLR0913  keyword options mirror the SimState data model
     mode: Mode | None = None,
     compression: Compression = "infer",
     member: str | None = None,
+    storage_options: StorageOptions | None = None,
 ) -> SimState:
     """Read selected frames into one batched `SimState`; default reads the file.
 
@@ -93,10 +95,18 @@ def read(  # noqa: PLR0913  keyword options mirror the SimState data model
     sets the parallel parse (`None`: all cores).
 
     Compressed paths are read too (any index: the scan and the selecting read
-    both stream); `compression` and `member` are as in `oxyz.read`.
+    both stream); `compression` and `member` are as in `oxyz.read`. A remote URL
+    (``s3://``, ``gs://``, ``az://``) is read through the same parser via
+    ``storage_options`` (needs the ``oxyz[s3]`` extra).
     """
     _require_schema_for_mode(schema, mode)
-    indices = _plan_indices(path, index, compression=compression, member=member)
+    indices = _plan_indices(
+        path,
+        index,
+        compression=compression,
+        member=member,
+        storage_options=storage_options,
+    )
     batch = read_batch(
         path,
         ":" if indices is None else indices,
@@ -106,6 +116,7 @@ def read(  # noqa: PLR0913  keyword options mirror the SimState data model
         mode=mode,
         compression=compression,
         member=member,
+        storage_options=storage_options,
     )
     return _to_state(
         batch, dtype, device, positions_requires_grad, system_extras, atom_extras
@@ -132,6 +143,7 @@ def iread(  # noqa: PLR0913  batching options plus the SimState data model
     mode: Mode | None = None,
     compression: Compression = "infer",
     member: str | None = None,
+    storage_options: StorageOptions | None = None,
 ) -> Iterator[SimState]:
     """Stream the file as `SimState` batches, one per step.
 
@@ -159,6 +171,7 @@ def iread(  # noqa: PLR0913  batching options plus the SimState data model
         mode=mode,
         compression=compression,
         member=member,
+        storage_options=storage_options,
     ):
         yield _to_state(
             batch, dtype, device, positions_requires_grad, system_extras, atom_extras
@@ -182,9 +195,14 @@ class SimStateSource:
         threads: int | None = None,
         compression: Compression = "infer",
         member: str | None = None,
+        storage_options: StorageOptions | None = None,
     ) -> None:
         self._batch: Batch = read_batch(
-            path, threads=threads, compression=compression, member=member
+            path,
+            threads=threads,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
         )
 
     def __len__(self) -> int:
@@ -246,13 +264,21 @@ def _plan_indices(
     *,
     compression: Compression = "infer",
     member: str | None = None,
+    storage_options: StorageOptions | None = None,
 ) -> list[int] | None:
     """Resolve an ASE-style index to a list of frame indices, or `None` for the
     whole file (read in a single pass)."""
     selection = parse_index(index)
     if isinstance(selection, slice) and selection == slice(None, None, None):
         return None
-    universe = range(scan(path, compression=compression, member=member).n_frames)
+    universe = range(
+        scan(
+            path,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        ).n_frames
+    )
     if isinstance(selection, int):
         try:
             return [universe[selection]]
