@@ -29,8 +29,8 @@ KEY_DATA = (DATA / "minimal_periodic.extxyz").read_bytes()
 )
 def test_read_frames_remote_matches_local(s3_store, key, body):
     s3_store.put(key, body)
-    remote = oxyz.read_frames(s3_store.url(key), storage_options=s3_store.options)
-    local = oxyz.read_frames(str(DATA / "minimal_periodic.extxyz"))
+    remote = oxyz.read(s3_store.url(key), storage_options=s3_store.options)
+    local = oxyz.read(str(DATA / "minimal_periodic.extxyz"))
     assert len(remote) == len(local)
     assert remote[0].n_atoms == local[0].n_atoms
 
@@ -40,10 +40,8 @@ def test_read_frames_remote_zip(s3_store):
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("inner.xyz", KEY_DATA)
     s3_store.put("train.zip", buf.getvalue())
-    remote = oxyz.read_frames(
-        s3_store.url("train.zip"), storage_options=s3_store.options
-    )
-    local = oxyz.read_frames(str(DATA / "minimal_periodic.extxyz"))
+    remote = oxyz.read(s3_store.url("train.zip"), storage_options=s3_store.options)
+    local = oxyz.read(str(DATA / "minimal_periodic.extxyz"))
     assert len(remote) == len(local)
 
 
@@ -55,10 +53,10 @@ def test_read_frames_remote_targz_member(s3_store):
             info.size = len(KEY_DATA)
             tar.addfile(info, io.BytesIO(KEY_DATA))
     s3_store.put("train.tar.gz", buf.getvalue())
-    remote = oxyz.read_frames(
+    remote = oxyz.read(
         s3_store.url("train.tar.gz"), member="b.xyz", storage_options=s3_store.options
     )
-    local = oxyz.read_frames(str(DATA / "minimal_periodic.extxyz"))
+    local = oxyz.read(str(DATA / "minimal_periodic.extxyz"))
     assert len(remote) == len(local)
 
 
@@ -66,7 +64,7 @@ def test_iter_scan_schema_remote(s3_store):
     s3_store.put("train.extxyz", KEY_DATA)
     url = s3_store.url("train.extxyz")
     options = s3_store.options
-    assert sum(1 for _ in oxyz.iter_frames(url, storage_options=options)) > 0
+    assert sum(1 for _ in oxyz.iread(url, storage_options=options)) > 0
     assert oxyz.scan(url, storage_options=options).n_frames > 0
     assert oxyz.infer_schema(url, storage_options=options).n_frames > 0
     assert oxyz.read_batch(url, storage_options=options).n_frames > 0
@@ -86,7 +84,7 @@ def test_ase_read_remote(s3_store):
 def test_missing_object_raises(s3_store):
     # obstore surfaces a FileNotFoundError (404 Not Found from the store).
     with pytest.raises(FileNotFoundError):
-        oxyz.read_frames(s3_store.url("nope.xyz"), storage_options=s3_store.options)
+        oxyz.read(s3_store.url("nope.xyz"), storage_options=s3_store.options)
 
 
 # A mixed-schema body: frame 0 carries 'charge', frame 1 does not — the case
@@ -119,7 +117,7 @@ def test_read_frames_projected_remote(s3_store):
 
     s3_store.put("mixed.extxyz", MIXED_BODY)
     spec = _project_spec()
-    frames = oxyz.read_frames(
+    frames = oxyz.read(
         s3_store.url("mixed.extxyz"), schema=spec, storage_options=s3_store.options
     )
     assert [set(fr.columns) for fr in frames] == [
@@ -134,11 +132,9 @@ def test_read_first_and_iter_projected_remote(s3_store):
     s3_store.put("mixed.extxyz", MIXED_BODY)
     url = s3_store.url("mixed.extxyz")
     spec = _project_spec()
-    first = oxyz.read_first(url, schema=spec, storage_options=s3_store.options)
+    first = oxyz.read(url, 0, schema=spec, storage_options=s3_store.options)
     assert "charge" in first.columns
-    streamed = list(
-        oxyz.iter_frames(url, schema=spec, storage_options=s3_store.options)
-    )
+    streamed = list(oxyz.iread(url, schema=spec, storage_options=s3_store.options))
     assert len(streamed) == 2
     assert all("charge" in fr.columns for fr in streamed)
 

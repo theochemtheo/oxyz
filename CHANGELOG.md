@@ -15,14 +15,29 @@ recorded here.
 - Schema **projection**: set `mode="project"` on a `SchemaSpec` (or per call)
   to reshape every frame to a declared fixed schema — undeclared fields dropped,
   absent optionals filled — making a mixed-schema file batchable. Available on
-  the frame readers (`read_frames`, `read_first`, `read_frames_sliced`,
-  `iter_frames`), the batch readers, and the `oxyz.ase`/`oxyz.metatomic`/
-  `oxyz.torch_sim` output targets, all via `schema=`/`mode=`/`conformance=`.
+  the frame readers (`read`, `iread`), the batch readers, and the
+  `oxyz.ase`/`oxyz.metatomic`/`oxyz.torch_sim` output targets, all via
+  `schema=`/`mode=`/`conformance=`.
   REAL columns fill `NaN` by default; other kinds take an explicit per-field
   `fill`. `SchemaSpec.freeze(path)` expands pattern rules into a project-ready
   schema, exposed on the CLI as `oxyz freeze` and `scan --emit-schema
   --project`. The batch readers (`read_batch`, `iter_batches`) now also accept
   `schema=`/`conformance=`. Validate-mode behaviour is unchanged.
+
+### Changed
+
+- The native frame readers are unified under `read` and `iread`. Both take an
+  `index` selection — an int (one `Frame`), a slice or slice-string like
+  `"1:10:2"`, or a sequence of non-negative ints (a list, in order); the default
+  `":"` reads every frame. `read_frames` becomes `read`, `iter_frames` becomes
+  `iread`, and the selection that previously needed separate helpers is now a
+  parameter. Selecting a single frame with a schema (`read(path, 0, schema=...)`)
+  validates the whole file before indexing, consistent with `oxyz.ase.read`.
+
+### Removed
+
+- `read_first` — use `read(path, 0)`. The never-public `read_frames_sliced`
+  helper is absorbed into `read`'s slice handling.
 
 ### Internal
 

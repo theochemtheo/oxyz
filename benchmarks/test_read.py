@@ -90,7 +90,7 @@ def run(benchmark, read, path: Path, shape: tuple[int, int] | str | None = "file
 def oxyz_read_all_with(threads: int | None):
     @row("numpy frames", "serial" if threads == 1 else "parallel", threads=threads)
     def read(path: Path) -> list:
-        return oxyz.read_frames(path, threads=threads)
+        return oxyz.read(path, threads=threads)
 
     return read
 
@@ -98,7 +98,7 @@ def oxyz_read_all_with(threads: int | None):
 def oxyz_read_all_schema_with(conformance: oxyz.Conformance):
     @row("numpy frames", f"schema-{conformance}")
     def read(path: Path) -> list:
-        return oxyz.read_frames(path, schema=read.spec, conformance=conformance)
+        return oxyz.read(path, schema=read.spec, conformance=conformance)
 
     read.spec = None  # set per file by the test below, before timing starts
     return read
@@ -108,12 +108,12 @@ def oxyz_read_all_schema_with(conformance: oxyz.Conformance):
 def oxyz_iter_read_all(path: Path) -> list:
     # The constant-memory streaming path; collected so every read_all row
     # does the same total work.
-    return list(oxyz.iter_frames(path))
+    return list(oxyz.iread(path))
 
 
 @row("numpy frames", "serial")
 def oxyz_read_first(path: Path) -> object:
-    return oxyz.read_first(path)
+    return oxyz.read(path, 0)
 
 
 @row("ase.Atoms", "serial")

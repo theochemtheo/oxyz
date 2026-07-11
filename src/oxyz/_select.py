@@ -18,13 +18,13 @@ from oxyz._frames import (
     Compression,
     Frame,
     IndexedFrames,
-    iter_frames,
-    read_frames,
-    read_frames_sliced,
+    _iter_all,
+    _read_all,
+    _read_all_sliced,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Iterable, Iterator, Sequence
     from pathlib import Path
 
     from oxyz._schema_match import Conformance
@@ -82,7 +82,7 @@ def nth_frame(
     whatever the index, at the cost of the partial-read shortcut.
     """
     if schema is not None:
-        frames = read_frames(
+        frames = _read_all(
             path,
             schema=schema,
             conformance=conformance,
@@ -101,7 +101,7 @@ def nth_frame(
 
     if index < 0:
         if _is_streaming_only(path, compression):
-            frames = read_frames(
+            frames = _read_all(
                 path,
                 compression=compression,
                 member=member,
@@ -120,13 +120,71 @@ def nth_frame(
             )
         return indexed.get(index + len(indexed))
 
-    stream = iter_frames(
+    stream = _iter_all(
         path, compression=compression, member=member, storage_options=storage_options
     )
     frame = next(islice(stream, index, None), None)
     if frame is None:
         raise IndexError(f"frame {index} out of range")
     return frame
+
+
+def _in_range(index: int, n_frames: int) -> int:
+    """A non-negative index below `n_frames`, or an IndexError. Explicit-set
+    selection (`read(path, [i, j, ...])`) is non-negative only, matching
+    `read_batch`; a negative index is rejected rather than wrapped."""
+    if index < 0 or index >= n_frames:
+        raise IndexError(
+            f"frame index {index} out of range: file has {n_frames} frames"
+        )
+    return index
+
+
+def gathered_frames(  # noqa: PLR0913  the read/schema/projection options are the contract
+    path: str | Path,
+    indices: Sequence[int],
+    threads: int | None = None,
+    *,
+    schema: SchemaSpec | str | Path | None = None,
+    conformance: Conformance = "required",
+    mode: Mode | None = None,
+    compression: Compression = "infer",
+    member: str | None = None,
+    storage_options: _remote.StorageOptions | None = None,
+) -> list[Frame]:
+    """An explicit set of frames, in the given order (repeats allowed).
+
+    With a `schema`, or on a streaming-only (compressed/remote) source, the
+    whole file is read once and the requested frames are picked; a seekable
+    plain file uses the byte-offset index to fetch only those frames. Indices
+    are non-negative, matching `read_batch`.
+    """
+    picks = [int(i) for i in indices]
+    if schema is not None:
+        frames = _read_all(
+            path,
+            threads=threads,
+            schema=schema,
+            conformance=conformance,
+            mode=mode,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
+        return [frames[_in_range(i, len(frames))] for i in picks]
+    if _is_streaming_only(path, compression):
+        frames = _read_all(
+            path,
+            threads=threads,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
+        return [frames[_in_range(i, len(frames))] for i in picks]
+    _reject_member_on_plain(member)
+    indexed = IndexedFrames(path)
+    n_frames = len(indexed)
+    return [indexed.get(_in_range(i, n_frames)) for i in picks]
 
 
 def is_forward(frames: slice) -> bool:
@@ -164,7 +222,7 @@ def frames_for_read(  # noqa: PLR0913  the read/schema/projection options are th
     which frames the slice happens to traverse.
     """
     if schema is not None:
-        validated = read_frames(
+        validated = _read_all(
             path,
             threads=threads,
             schema=schema,
@@ -176,7 +234,7 @@ def frames_for_read(  # noqa: PLR0913  the read/schema/projection options are th
         )
         return validated[frames]
     if is_forward(frames) and frames.stop is None:
-        return read_frames_sliced(
+        return _read_all_sliced(
             path,
             slice(frames.start, None, frames.step),
             threads,
@@ -207,7 +265,7 @@ def sliced_frames(
     """Forward slices stream; negative bounds or steps go via the index (or, on a
     compressed or remote source, or with a `schema`, via a full in-memory read)."""
     if is_forward(frames):
-        stream = iter_frames(
+        stream = _iter_all(
             path,
             schema=schema,
             conformance=conformance,
@@ -222,7 +280,7 @@ def sliced_frames(
     # it eagerly (the sought frames must be validated/projected); otherwise a
     # streaming-only source reads in memory and a seekable one uses the index.
     if schema is not None:
-        projected = read_frames(
+        projected = _read_all(
             path,
             schema=schema,
             conformance=conformance,
@@ -234,7 +292,7 @@ def sliced_frames(
         return (projected[i] for i in range(*frames.indices(len(projected))))
 
     if _is_streaming_only(path, compression):
-        in_memory = read_frames(
+        in_memory = _read_all(
             path,
             compression=compression,
             member=member,

@@ -5,7 +5,8 @@ import oxyz
 
 def test_public_api_imports() -> None:
     assert oxyz.Frame is not None
-    assert oxyz.read_first is not None
+    assert oxyz.read is not None
+    assert oxyz.iread is not None
 
 
 def test_schema_public_api_exported():

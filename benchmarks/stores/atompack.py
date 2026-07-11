@@ -36,7 +36,7 @@ def _ingest(src: Path, dest: Path) -> None:
 
     db = atompack.Database(str(dest), overwrite=True)
     chunk = []
-    for frame in oxyz.iter_frames(src):
+    for frame in oxyz.iread(src):
         record = frame_record(frame)
         chunk.append(
             atompack.Molecule.from_arrays(

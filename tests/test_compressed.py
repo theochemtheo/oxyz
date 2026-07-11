@@ -36,30 +36,30 @@ def _frames_equal(a: oxyz.Frame, b: oxyz.Frame) -> bool:
 
 @pytest.fixture
 def plain_frames() -> list[oxyz.Frame]:
-    return oxyz.read_frames(PLAIN)
+    return oxyz.read(PLAIN)
 
 
 @pytest.mark.parametrize("name", CODECS)
 def test_read_frames_matches_plain(name: str, plain_frames: list[oxyz.Frame]) -> None:
-    frames = oxyz.read_frames(DATA_DIR / name)
+    frames = oxyz.read(DATA_DIR / name)
     assert len(frames) == len(plain_frames)
     assert all(_frames_equal(a, b) for a, b in zip(frames, plain_frames, strict=True))
 
 
 @pytest.mark.parametrize("name", CODECS)
 def test_serial_and_parallel_agree(name: str) -> None:
-    serial = oxyz.read_frames(DATA_DIR / name, threads=1)
-    parallel = oxyz.read_frames(DATA_DIR / name, threads=None)
+    serial = oxyz.read(DATA_DIR / name, threads=1)
+    parallel = oxyz.read(DATA_DIR / name, threads=None)
     assert len(serial) == len(parallel) == 2
 
 
 @pytest.mark.parametrize("name", CODECS)
 def test_streaming_and_scan_and_schema(name: str) -> None:
     path = DATA_DIR / name
-    assert len(list(oxyz.iter_frames(path))) == 2
+    assert len(list(oxyz.iread(path))) == 2
     assert oxyz.scan(path).n_frames == 2
     assert oxyz.infer_schema(path).n_frames == 2
-    assert oxyz.read_first(path).n_atoms == 2
+    assert oxyz.read(path, 0).n_atoms == 2
     assert oxyz.read_batch(path).n_frames == 2
     # A streamed selection works on a compressed source.
     assert oxyz.read_batch(path, [1, 0]).n_frames == 2
@@ -67,46 +67,46 @@ def test_streaming_and_scan_and_schema(name: str) -> None:
 
 def test_concatenated_gzip_reads_all_members() -> None:
     # concat.xyz.gz holds two gzip members; both must be read.
-    assert len(oxyz.read_frames(DATA_DIR / "compressed/concat.xyz.gz")) == 4
+    assert len(oxyz.read(DATA_DIR / "compressed/concat.xyz.gz")) == 4
 
 
 def test_concatenated_zstd_reads_all_frames() -> None:
     # concat.xyz.zst holds two zstd frames; both must be read.
-    assert len(oxyz.read_frames(DATA_DIR / "compressed/concat.xyz.zst")) == 4
+    assert len(oxyz.read(DATA_DIR / "compressed/concat.xyz.zst")) == 4
 
 
 def test_member_selects_one_from_archive(plain_frames: list[oxyz.Frame]) -> None:
-    frames = oxyz.read_frames(DATA_DIR / "compressed/multi_member.zip", member="a.xyz")
+    frames = oxyz.read(DATA_DIR / "compressed/multi_member.zip", member="a.xyz")
     assert len(frames) == len(plain_frames)
 
 
 def test_ambiguous_archive_raises_listing_members() -> None:
     with pytest.raises(ValueError, match="multiple extxyz members"):
-        oxyz.read_frames(DATA_DIR / "compressed/multi_member.zip")
+        oxyz.read(DATA_DIR / "compressed/multi_member.zip")
 
 
 def test_missing_member_raises() -> None:
     with pytest.raises(ValueError, match="not found"):
-        oxyz.read_frames(DATA_DIR / "compressed/multi_member.zip", member="nope.xyz")
+        oxyz.read(DATA_DIR / "compressed/multi_member.zip", member="nope.xyz")
 
 
 def test_member_on_plain_file_raises() -> None:
     with pytest.raises(ValueError, match="non-archive"):
-        oxyz.read_frames(PLAIN, member="x.xyz")
+        oxyz.read(PLAIN, member="x.xyz")
 
 
 def test_compression_override_forces_and_disables() -> None:
     gz = DATA_DIR / "compressed/two_frame.xyz.gz"
     # Forcing the right codec on an unhelpfully-named file works.
-    assert len(oxyz.read_frames(gz, compression="gzip")) == 2
+    assert len(oxyz.read(gz, compression="gzip")) == 2
     # Disabling decompression makes the gzip bytes fail to parse as text.
     with pytest.raises(oxyz.ParseError):
-        oxyz.read_frames(gz, compression="none")
+        oxyz.read(gz, compression="none")
 
 
 def test_unknown_compression_raises() -> None:
     with pytest.raises(ValueError, match="unknown compression"):
-        oxyz.read_frames(PLAIN, compression="lz4")  # ty: ignore[invalid-argument-type]
+        oxyz.read(PLAIN, compression="lz4")  # ty: ignore[invalid-argument-type]
 
 
 class TestBatching:

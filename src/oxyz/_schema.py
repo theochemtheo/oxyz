@@ -114,7 +114,7 @@ class Schema(AtomCountStats):
     def to_spec(self) -> SchemaSpec:
         """Best-effort prescriptive schema from what was observed: partial-presence
         entries optional, enumerable column families collapsed to `*` globs, no
-        `frame` bounds. Feed it back to `read_frames(..., schema=...)`."""
+        `frame` bounds. Feed it back to `read(..., schema=...)`."""
         from oxyz._schema_emit import spec_from_schema
 
         return spec_from_schema(self)
@@ -163,7 +163,7 @@ def infer_schema(
     Parses every frame; for the structure alone, use `scan`.
 
     A compressed path is decoded while streaming; `compression` and `member`
-    work as in `read_frames`.
+    work as in `read`.
 
     A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through
     the same parser (needs the ``oxyz[s3]`` extra); ``storage_options`` passes

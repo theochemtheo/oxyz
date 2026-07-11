@@ -2,7 +2,7 @@
 the codecs, and ASE equivalence through `oxyz.ase.from_atoms`.
 
 The corpus round-trip is the central promise: every frame that has both a
-`species` and a `pos` column survives `write` then `read_frames` bit for bit;
+`species` and a `pos` column survives `write` then `read` bit for bit;
 those without are rejected, since the result would not be valid extxyz.
 """
 
@@ -56,7 +56,7 @@ def has_species_and_pos(frames: list[Frame]) -> bool:
 
 @pytest.mark.parametrize("name", FIXTURES)
 def test_corpus_round_trips_losslessly(name: str, tmp_path: Path) -> None:
-    frames = oxyz.read_frames(DATA_DIR / name)
+    frames = oxyz.read(DATA_DIR / name)
     out = tmp_path / "out.extxyz"
 
     if not has_species_and_pos(frames):
@@ -67,7 +67,7 @@ def test_corpus_round_trips_losslessly(name: str, tmp_path: Path) -> None:
         return
 
     oxyz.write(out, frames)
-    assert_frames_equivalent(frames, oxyz.read_frames(out))
+    assert_frames_equivalent(frames, oxyz.read(out))
 
 
 def test_reals_round_trip_bit_exact(tmp_path: Path) -> None:
@@ -82,7 +82,7 @@ def test_reals_round_trip_bit_exact(tmp_path: Path) -> None:
     )
     out = tmp_path / "reals.extxyz"
     oxyz.write(out, frame)
-    back = oxyz.read_frames(out)[0]
+    back = oxyz.read(out)[0]
     assert np.array_equal(back.columns["pos"], frame.columns["pos"])
     assert back.metadata["energy"] == frame.metadata["energy"]
 
@@ -141,21 +141,21 @@ def test_string_array_column_is_written(tmp_path: Path) -> None:
     )
     out = tmp_path / "strcol.extxyz"
     oxyz.write(out, frame)
-    assert list(oxyz.read_frames(out)[0].columns["species"]) == ["O", "H"]
+    assert list(oxyz.read(out)[0].columns["species"]) == ["O", "H"]
 
 
 @pytest.mark.parametrize(
     "suffix", ["xyz", "extxyz", "xyz.gz", "xyz.zip", "tar", "tar.gz"]
 )
 def test_every_codec_round_trips(suffix: str, tmp_path: Path) -> None:
-    frames = oxyz.read_frames(DATA_DIR / "two_frame_same_schema.xyz")
+    frames = oxyz.read(DATA_DIR / "two_frame_same_schema.xyz")
     out = tmp_path / f"frames.{suffix}"
     oxyz.write(out, frames)
-    assert_frames_equivalent(frames, oxyz.read_frames(out))
+    assert_frames_equivalent(frames, oxyz.read(out))
 
 
 def test_zstd_write_is_rejected(tmp_path: Path) -> None:
-    frames = oxyz.read_frames(DATA_DIR / "two_frame_same_schema.xyz")
+    frames = oxyz.read(DATA_DIR / "two_frame_same_schema.xyz")
     with pytest.raises(ValueError, match="zstd"):
         oxyz.write(tmp_path / "x.xyz.zst", frames)
     with pytest.raises(ValueError, match="zstd"):
@@ -163,39 +163,39 @@ def test_zstd_write_is_rejected(tmp_path: Path) -> None:
 
 
 def test_level_out_of_range_is_rejected(tmp_path: Path) -> None:
-    frames = oxyz.read_frames(DATA_DIR / "two_frame_same_schema.xyz")
+    frames = oxyz.read(DATA_DIR / "two_frame_same_schema.xyz")
     with pytest.raises(ValueError, match="level"):
         oxyz.write(tmp_path / "x.xyz.gz", frames, level=12)
 
 
 @pytest.mark.parametrize("suffix", ["xyz", "xyz.gz"])
 def test_append_concatenates(suffix: str, tmp_path: Path) -> None:
-    frames = oxyz.read_frames(DATA_DIR / "two_frame_same_schema.xyz")
+    frames = oxyz.read(DATA_DIR / "two_frame_same_schema.xyz")
     out = tmp_path / f"a.{suffix}"
     oxyz.write(out, frames)
     oxyz.write(out, frames, append=True)
-    assert len(oxyz.read_frames(out)) == 2 * len(frames)
+    assert len(oxyz.read(out)) == 2 * len(frames)
 
 
 @pytest.mark.parametrize("suffix", ["zip", "tar", "tar.gz"])
 def test_append_rejected_for_archives(suffix: str, tmp_path: Path) -> None:
-    frames = oxyz.read_frames(DATA_DIR / "two_frame_same_schema.xyz")
+    frames = oxyz.read(DATA_DIR / "two_frame_same_schema.xyz")
     with pytest.raises(ValueError, match="append"):
         oxyz.write(tmp_path / f"a.{suffix}", frames, append=True)
 
 
 def test_stdout_target(capfd: pytest.CaptureFixture[str], tmp_path: Path) -> None:
-    frames = oxyz.read_frames(DATA_DIR / "two_frame_same_schema.xyz")
+    frames = oxyz.read(DATA_DIR / "two_frame_same_schema.xyz")
     oxyz.write("-", frames)
     captured = capfd.readouterr().out
     # Round-trip the captured text through a file to confirm it is valid extxyz.
     echo = tmp_path / "echo.extxyz"
     echo.write_text(captured)
-    assert_frames_equivalent(frames, oxyz.read_frames(echo))
+    assert_frames_equivalent(frames, oxyz.read(echo))
 
 
 def test_writer_matches_one_shot(tmp_path: Path) -> None:
-    frames = oxyz.read_frames(DATA_DIR / "two_frame_same_schema.xyz")
+    frames = oxyz.read(DATA_DIR / "two_frame_same_schema.xyz")
     one_shot = tmp_path / "one.extxyz"
     incremental = tmp_path / "inc.extxyz"
 
@@ -210,7 +210,7 @@ def test_writer_matches_one_shot(tmp_path: Path) -> None:
 def test_threads_produce_identical_bytes(suffix: str, tmp_path: Path) -> None:
     # The parity promise at the Python surface: output is independent of the
     # thread count, byte for byte, for every codec.
-    frames = oxyz.read_frames(DATA_DIR / "two_frame_same_schema.xyz") * 60
+    frames = oxyz.read(DATA_DIR / "two_frame_same_schema.xyz") * 60
     # One path, reused: the archive codecs embed the file name in their header,
     # so byte-identity is only meaningful for the same path.
     out = tmp_path / f"frames.{suffix}"
@@ -219,12 +219,12 @@ def test_threads_produce_identical_bytes(suffix: str, tmp_path: Path) -> None:
     for threads in (None, 2, 8):
         oxyz.write(out, frames, threads=threads)
         assert out.read_bytes() == reference, f"threads={threads}"
-    assert_frames_equivalent(frames, oxyz.read_frames(out))
+    assert_frames_equivalent(frames, oxyz.read(out))
 
 
 @pytest.mark.parametrize("batch", [1, 7, 1000])
 def test_writer_batch_matches_streaming(batch: int, tmp_path: Path) -> None:
-    frames = oxyz.read_frames(DATA_DIR / "two_frame_same_schema.xyz") * 40
+    frames = oxyz.read(DATA_DIR / "two_frame_same_schema.xyz") * 40
     streamed = tmp_path / "stream.extxyz"
     batched = tmp_path / "batch.extxyz"
 
@@ -251,11 +251,11 @@ ase_only = pytest.mark.skipif(not has_ase, reason="ase not installed")
 def test_mixed_frame_and_atoms_iterable(tmp_path: Path) -> None:
     import oxyz.ase
 
-    frames = oxyz.read_frames(DATA_DIR / "two_frame_same_schema.xyz")
+    frames = oxyz.read(DATA_DIR / "two_frame_same_schema.xyz")
     atoms = oxyz.ase.read(DATA_DIR / "two_frame_same_schema.xyz", index=0)
     out = tmp_path / "mixed.extxyz"
     oxyz.write(out, [frames[0], atoms])
-    assert len(oxyz.read_frames(out)) == 2
+    assert len(oxyz.read(out)) == 2
 
 
 @ase_only

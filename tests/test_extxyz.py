@@ -28,7 +28,7 @@ def as_array(value: object) -> np.ndarray:
 
 @pytest.mark.parametrize("path", CORPUS, ids=lambda path: path.name)
 def test_every_fixture_converts_to_python(path: Path) -> None:
-    frame = oxyz.read_first(path)
+    frame = oxyz.read(path, 0)
 
     assert frame.n_atoms > 0
     assert frame.columns
@@ -37,7 +37,7 @@ def test_every_fixture_converts_to_python(path: Path) -> None:
 
 
 def test_read_frames_trajectory() -> None:
-    frames = oxyz.read_frames(DATA_DIR / "varying_atom_counts.xyz")
+    frames = oxyz.read(DATA_DIR / "varying_atom_counts.xyz")
 
     assert [frame.n_atoms for frame in frames] == [3, 1, 2]
     assert [frame.metadata["energy"] for frame in frames] == [-76.3, -13.6, -31.8]
@@ -52,7 +52,7 @@ def test_read_frames_error_carries_frame_index(tmp_path: Path) -> None:
     broken.write_text(text + "not-a-count\n")
 
     with pytest.raises(oxyz.ParseError, match="frame 3") as excinfo:
-        oxyz.read_frames(broken)
+        oxyz.read(broken)
     assert excinfo.value.frame_index == 3
 
 
@@ -67,7 +67,7 @@ def test_parse_error_locates_a_short_atom_line(tmp_path: Path) -> None:
     path.write_text(good + short)
 
     with pytest.raises(oxyz.ParseError) as excinfo:
-        oxyz.read_frames(path)
+        oxyz.read(path)
     error = excinfo.value
     assert error.frame_index == 1
     assert error.line_number == 6  # 1-based file line of the short atom row
@@ -79,7 +79,7 @@ def test_parse_error_names_the_offending_column(tmp_path: Path) -> None:
     path.write_text("1\nProperties=species:S:1:pos:R:3\nH 0 zzz 0\n")
 
     with pytest.raises(oxyz.ParseError) as excinfo:
-        oxyz.read_frames(path)
+        oxyz.read(path)
     error = excinfo.value
     assert error.frame_index == 0
     assert error.column == "pos"
@@ -91,7 +91,7 @@ def test_parse_error_location_defaults_to_none(tmp_path: Path) -> None:
     path.write_text("not-a-count\ncomment\n")
 
     with pytest.raises(oxyz.ParseError) as excinfo:
-        oxyz.read_frames(path)
+        oxyz.read(path)
     error = excinfo.value
     assert error.frame_index == 0
     assert error.line_number is None
@@ -115,13 +115,13 @@ def test_out_of_range_is_index_error_not_parse_error(tmp_path: Path) -> None:
 
 def test_missing_file_is_os_error(tmp_path: Path) -> None:
     with pytest.raises(OSError):
-        oxyz.read_frames(tmp_path / "does-not-exist.xyz")
+        oxyz.read(tmp_path / "does-not-exist.xyz")
 
 
 @pytest.mark.parametrize("path", CORPUS, ids=lambda path: path.name)
 def test_parallel_read_frames_matches_serial(path: Path) -> None:
-    serial = oxyz.read_frames(path, threads=1)
-    parallel = oxyz.read_frames(path, threads=4)
+    serial = oxyz.read(path, threads=1)
+    parallel = oxyz.read(path, threads=4)
 
     assert len(parallel) == len(serial)
     for left, right in zip(parallel, serial, strict=True):
@@ -136,7 +136,7 @@ def test_parallel_read_frames_matches_serial(path: Path) -> None:
 
 
 def test_iter_frames_streams_the_trajectory() -> None:
-    frames = oxyz.iter_frames(DATA_DIR / "varying_atom_counts.xyz")
+    frames = oxyz.iread(DATA_DIR / "varying_atom_counts.xyz")
 
     assert [frame.n_atoms for frame in frames] == [3, 1, 2]
 
@@ -146,7 +146,7 @@ def test_iter_frames_yields_good_frames_then_raises_then_fuses(tmp_path: Path) -
     broken = tmp_path / "broken.xyz"
     broken.write_text(text + "not-a-count\n")
 
-    frames = oxyz.iter_frames(broken)
+    frames = oxyz.iread(broken)
     assert [next(frames).n_atoms for _ in range(3)] == [3, 1, 2]
     with pytest.raises(ValueError, match="frame 3"):
         next(frames)
@@ -156,7 +156,7 @@ def test_iter_frames_yields_good_frames_then_raises_then_fuses(tmp_path: Path) -
 
 def test_two_iterators_are_independent() -> None:
     path = DATA_DIR / "varying_atom_counts.xyz"
-    first, second = oxyz.iter_frames(path), oxyz.iter_frames(path)
+    first, second = oxyz.iread(path), oxyz.iread(path)
 
     next(first)
     assert next(first).n_atoms == 1
@@ -209,7 +209,7 @@ def test_trailing_blank_line_is_tolerated(tmp_path: Path) -> None:
     for suffix in ("\n", "\n\n", "   \n", "\t\n"):
         path = tmp_path / "trailing.xyz"
         path.write_text(_FRAME + suffix)
-        assert len(oxyz.read_frames(path)) == 1, repr(suffix)
+        assert len(oxyz.read(path)) == 1, repr(suffix)
         assert oxyz.scan(path).n_frames == 1, repr(suffix)
         assert oxyz.infer_schema(path).n_frames == 1, repr(suffix)
 
@@ -218,14 +218,14 @@ def test_blank_line_between_frames_stops_the_read(tmp_path: Path) -> None:
     # ASE truncates at the blank; oxyz matches, reading only the first frame.
     path = tmp_path / "interspersed.xyz"
     path.write_text(_FRAME + "\n" + _FRAME)
-    assert len(oxyz.read_frames(path)) == 1
+    assert len(oxyz.read(path)) == 1
     assert oxyz.scan(path).n_frames == 1
 
 
 def test_leading_blank_line_yields_no_frames(tmp_path: Path) -> None:
     path = tmp_path / "leading.xyz"
     path.write_text("\n" + _FRAME)
-    assert oxyz.read_frames(path) == []
+    assert oxyz.read(path) == []
     assert oxyz.scan(path).n_frames == 0
 
 
@@ -238,7 +238,7 @@ def test_infer_schema_report() -> None:
 
 
 def test_read_first_simple_extxyz() -> None:
-    frame = oxyz.read_first(DATA_DIR / "simple.extxyz")
+    frame = oxyz.read(DATA_DIR / "simple.extxyz", 0)
 
     assert frame.n_atoms == 1
     assert list(frame.columns) == ["species", "pos", "forces"]
@@ -277,7 +277,7 @@ def test_read_first_simple_extxyz() -> None:
 
 
 def test_nonorthogonal_lattice_preserved_as_written() -> None:
-    frame = oxyz.read_first(DATA_DIR / "nonorthogonal.extxyz")
+    frame = oxyz.read(DATA_DIR / "nonorthogonal.extxyz", 0)
 
     lattice = as_array(frame.metadata["Lattice"])
     assert_allclose(lattice, np.array([10.0, 1.0, 2.0, 0.0, 11.0, 3.0, 0.0, 0.0, 12.0]))
@@ -288,7 +288,7 @@ def test_nonorthogonal_lattice_preserved_as_written() -> None:
 
 
 def test_integer_and_string_columns() -> None:
-    frame = oxyz.read_first(DATA_DIR / "id_and_selection.extxyz")
+    frame = oxyz.read(DATA_DIR / "id_and_selection.extxyz", 0)
 
     assert list(frame.columns) == ["id", "species", "pos", "selection"]
 
@@ -303,7 +303,7 @@ def test_integer_and_string_columns() -> None:
 
 
 def test_metadata_value_typing() -> None:
-    frame = oxyz.read_first(DATA_DIR / "quoted_strings_booleans_scalars.extxyz")
+    frame = oxyz.read(DATA_DIR / "quoted_strings_booleans_scalars.extxyz", 0)
 
     assert frame.metadata["source"] == "generated for parser study"
     assert frame.metadata["split"] == "train"
@@ -319,7 +319,7 @@ def test_metadata_value_typing() -> None:
 
 
 def test_bracket_array_metadata() -> None:
-    frame = oxyz.read_first(DATA_DIR / "newstyle_array_metadata.extxyz")
+    frame = oxyz.read(DATA_DIR / "newstyle_array_metadata.extxyz", 0)
 
     kpoints = as_array(frame.metadata["kpoints"])
     assert kpoints.dtype == np.int64
@@ -333,7 +333,7 @@ def test_bracket_array_metadata() -> None:
 
 
 def test_mace_training_schema_names_preserved() -> None:
-    frame = oxyz.read_first(DATA_DIR / "mace_ref_energy_forces_stress.xyz")
+    frame = oxyz.read(DATA_DIR / "mace_ref_energy_forces_stress.xyz", 0)
 
     ref_forces = as_array(frame.columns["REF_forces"])
     assert ref_forces.shape == (3, 3)

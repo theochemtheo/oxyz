@@ -93,7 +93,7 @@ def read(  # noqa: PLR0913  keyword options mirror the SimState data model
     sets the parallel parse (`None`: all cores).
 
     Compressed paths are read too (any index: the scan and the selecting read
-    both stream); `compression` and `member` are as in `oxyz.read_frames`.
+    both stream); `compression` and `member` are as in `oxyz.read`.
     """
     _require_schema_for_mode(schema, mode)
     indices = _plan_indices(path, index, compression=compression, member=member)
@@ -142,7 +142,7 @@ def iread(  # noqa: PLR0913  batching options plus the SimState data model
 
     A compressed source supports only `frames_per_batch` without `shuffle`
     (it cannot be randomly accessed); see `oxyz.iter_batches`. `compression` and
-    `member` are as in `oxyz.read_frames`.
+    `member` are as in `oxyz.read`.
     """
     _require_schema_for_mode(schema, mode)
     for batch in iter_batches(

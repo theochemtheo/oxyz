@@ -277,7 +277,7 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
     projected before conversion.
 
     Compressed paths (`.gz`, `.zst`, `.zip`, `.tar.gz`, `.tar`) are read too;
-    `compression` and `member` are as in `oxyz.read_frames`. A compressed source
+    `compression` and `member` are as in `oxyz.read`. A compressed source
     cannot seek, so a negative or reverse index reads the whole file and indexes
     in memory (as ASE does), forgoing the partial-read shortcut.
 

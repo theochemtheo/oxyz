@@ -27,7 +27,7 @@ def _ingest(src: Path, dest: Path) -> None:
 
     env = lmdb.open(str(dest), map_size=MAP_SIZE, subdir=False)
     with env.begin(write=True) as txn:
-        for i, frame in enumerate(oxyz.iter_frames(src)):
+        for i, frame in enumerate(oxyz.iread(src)):
             txn.put(key(i), pickle.dumps(frame_record(frame), protocol=5))
     env.sync()
     env.close()

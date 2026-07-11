@@ -31,7 +31,7 @@ def test_sequential_batches_chunk_the_file() -> None:
 
 
 def test_batch_columns_concatenate_frames() -> None:
-    frames = oxyz.read_frames(VARYING)
+    frames = oxyz.read(VARYING)
     (batch,) = oxyz.iter_batches(VARYING, frames_per_batch=3)
 
     stacked = np.vstack([as_array(frame.columns["pos"]) for frame in frames])
@@ -161,7 +161,7 @@ def test_shuffled_batches_are_seeded_and_partition_the_file() -> None:
 
 
 def test_read_batch_gathers_in_requested_order() -> None:
-    frames = oxyz.read_frames(VARYING)
+    frames = oxyz.read(VARYING)
     batch = oxyz.read_batch(VARYING, [2, 0])
 
     assert_array_equal(batch.frame_indices, [2, 0])
@@ -174,7 +174,7 @@ def test_read_batch_gathers_in_requested_order() -> None:
 
 
 def test_read_batch_whole_file_concatenates_every_frame() -> None:
-    frames = oxyz.read_frames(VARYING)
+    frames = oxyz.read(VARYING)
     batch = oxyz.read_batch(VARYING)
 
     assert batch.n_frames == len(frames)
@@ -224,7 +224,7 @@ def test_zero_threads_is_rejected() -> None:
     with pytest.raises(ValueError, match="threads must be"):
         oxyz.read_batch(VARYING, [0], threads=0)
     with pytest.raises(ValueError, match="threads must be"):
-        oxyz.read_frames(VARYING, threads=0)
+        oxyz.read(VARYING, threads=0)
 
 
 def assert_batches_equal(left: oxyz.Batch, right: oxyz.Batch) -> None:
@@ -273,7 +273,7 @@ def test_read_batch_ignores_damage_past_the_last_requested_frame(
 
     # A whole-file read must still reject the damage.
     with pytest.raises(ValueError, match="invalid atom count"):
-        oxyz.read_frames(path)
+        oxyz.read(path)
 
 
 def test_read_batch_out_of_range_raises_index_error(tmp_path: Path) -> None:
@@ -542,7 +542,7 @@ def test_validate_batch_matches_frame_reader(tmp_path):
     )
     assert oxyz.read_batch(ok, schema=spec).n_frames == 2
 
-    # uniform-violating: same frame-indexed SchemaError as read_frames
+    # uniform-violating: same frame-indexed SchemaError as read
     bad = tmp_path / "bad.xyz"
     bad.write_text(
         "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
@@ -551,7 +551,7 @@ def test_validate_batch_matches_frame_reader(tmp_path):
     with pytest.raises(SchemaError) as batch_exc:
         oxyz.read_batch(bad, schema=spec)
     with pytest.raises(SchemaError) as frame_exc:
-        oxyz.read_frames(bad, schema=spec)
+        oxyz.read(bad, schema=spec)
     assert str(batch_exc.value) == str(frame_exc.value)
     assert batch_exc.value.frame_index == 0
 

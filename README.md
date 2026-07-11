@@ -13,7 +13,7 @@ tells you whether a training file is what you think it is.
 ```python
 import oxyz
 
-frames = oxyz.read_frames("train.extxyz")        # all cores, one pass
+frames = oxyz.read("train.extxyz")        # all cores, one pass
 frames[0].columns["pos"]                         # float64 ndarray, shape (n_atoms, 3)
 frames[0].metadata["energy"]                     # float
 
@@ -196,7 +196,7 @@ Assert what a file should contain and have it checked as you read:
 ```python
 import oxyz
 
-frames = oxyz.read_frames("train.extxyz", schema="schema.yaml")   # conformance="required"
+frames = oxyz.read("train.extxyz", schema="schema.yaml")   # conformance="required"
 ```
 
 A schema names expected columns, metadata, and structural facts, using the
@@ -226,7 +226,7 @@ That makes a mixed-schema file, where an optional property is present only in
 some frames, readable as one batch:
 
 ```python
-frames = oxyz.read_frames("mixed.extxyz", schema=spec)        # spec.mode == "project"
+frames = oxyz.read("mixed.extxyz", schema=spec)        # spec.mode == "project"
 batch = oxyz.read_batch("mixed.extxyz", schema=spec)          # now batchable
 ```
 
@@ -329,7 +329,7 @@ frames:      3
 atoms total: 6
 atoms/frame: min 1  max 3  mean 2.00  median 2.00  std 0.82
 
-# schema — paste into a .yaml and read with read_frames(..., schema=...)
+# schema — paste into a .yaml and read with read(..., schema=...)
 columns:
   species: {kind: S}
   pos: {kind: R, width: 3}
@@ -349,7 +349,7 @@ the environment, and the fixture definitions are in
 [benchmarks/run.py](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/run.py)
 reproduces them.
 
-Whole-file reads to numpy (`oxyz.read_frames` vs [cextxyz], the libAtoms C
+Whole-file reads to numpy (`oxyz.read` vs [cextxyz], the libAtoms C
 parser, via its `read_dicts`):
 
 | workload | oxyz | oxyz `threads=1` | cextxyz |
@@ -371,7 +371,7 @@ wrapping the same C parser, vs `ase.io.read`):
 
 Beyond whole-file reads: on selective reads (every 20th frame of the
 small-frames file) `oxyz.read_batch` takes 1.8 ms against 21 ms for ASE;
-on peak memory, streaming `iter_frames` through the small-frames file
+on peak memory, streaming `iread` through the small-frames file
 grows RSS by 12 MiB where `ase.io.iread` grows it by 56 MiB
 ([benchmarks/MEMORY.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/MEMORY.md)).
 The one place a text parser is predictably slower is against binary
@@ -385,15 +385,18 @@ for those comparisons.
 ## API
 
 ```python
-oxyz.read_frames(path, *, threads=None)      -> list[Frame]
-oxyz.iter_frames(path)                       -> Iterator[Frame]   # constant memory
-oxyz.read_first(path)                        -> Frame
+oxyz.read(path, index=":", *, threads=None)  -> Frame | list[Frame]  # int index: one Frame
+oxyz.iread(path, index=":")                   -> Iterator[Frame]   # constant memory
 oxyz.read_batch(path, indices=None, *, threads=None) -> Batch    # indices=None: whole file
 oxyz.iter_batches(path, *, frames_per_batch=None, atoms_per_batch=None,
                   shuffle=False, seed=None, threads=None) -> Iterator[Batch]
 oxyz.scan(path)                              -> FrameIndex
 oxyz.infer_schema(path)                      -> Schema
 
+# read/iread select with index: an int (one Frame), a slice or slice string like
+# "1:10:2", or a sequence of non-negative ints (a list, in order). The default
+# ":" reads every frame.
+#
 # Every reader above also takes compression="infer" and member=None; the frame
 # and batch readers additionally take schema=None, conformance="required", and
 # mode=None (None/"validate"/"project", overriding the schema's own mode).
@@ -423,13 +426,13 @@ oxyz freeze <path> --schema IN --out OUT
 ### Compressed files
 
 Any reader takes a compressed path and decodes it while streaming, so
-`read_frames("run.xyz.gz")` just works and stays parallel without
+`read("run.xyz.gz")` just works and stays parallel without
 decompressing to a temporary file:
 
 ```python
-oxyz.read_frames("run.xyz.gz")               # .gz, .tar.gz, .zip, .zst, .tar
-oxyz.read_frames("runs.zip", member="run2.xyz")   # pick one archive entry
-oxyz.read_frames("run.bin", compression="gzip")   # force a codec by hand
+oxyz.read("run.xyz.gz")               # .gz, .tar.gz, .zip, .zst, .tar
+oxyz.read("runs.zip", member="run2.xyz")   # pick one archive entry
+oxyz.read("run.bin", compression="gzip")   # force a codec by hand
 ```
 
 The codec is inferred from the extension (then the magic bytes), or set with
@@ -443,19 +446,19 @@ decompress the file first if you need them.
 
 ### Reading from object storage
 
-`read_frames`, `iter_frames`, `scan`, `infer_schema`, the batch readers, and
+`read`, `iread`, `scan`, `infer_schema`, the batch readers, and
 `oxyz.ase.read`/`iread` accept S3-compatible URLs when the `s3` extra is
 installed (see [Install](#install)):
 
 ```python
-frames = oxyz.read_frames("s3://bucket/train.extxyz.gz")
+frames = oxyz.read("s3://bucket/train.extxyz.gz")
 ```
 
 Credentials and endpoint come from `AWS_*` environment variables by default;
 pass `storage_options=` to point at a non-AWS store (MinIO, R2, Ceph):
 
 ```python
-oxyz.read_frames(
+oxyz.read(
     "s3://bucket/train.extxyz",
     storage_options={"endpoint": "https://minio.example", "region": "us-east-1"},
 )
@@ -506,8 +509,8 @@ for the archive codecs and for stdout. Writing `.zst` is not yet supported.
 
 Contracts worth knowing before relying on them:
 
-- **Mixed-schema files read per-frame, but do not batch.** `read_frames` and
-  `iter_frames` handle files whose frames disagree (the MACE
+- **Mixed-schema files read per-frame, but do not batch.** `read` and
+  `iread` handle files whose frames disagree (the MACE
   isolated-atom-plus-bulk pattern) without complaint — each `Frame` stands
   alone. `Batch` assembly currently requires every gathered frame to share
   a schema; `infer_schema` tells you in advance whether a file qualifies.

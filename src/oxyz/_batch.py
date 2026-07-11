@@ -92,7 +92,7 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
     way.
 
     Works on a compressed source (the selection still streams in one pass);
-    `compression` and `member` are as in `read_frames`.
+    `compression` and `member` are as in `read`.
 
     A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through
     the same reader (needs the ``oxyz[s3]`` extra); ``storage_options`` passes
@@ -227,7 +227,7 @@ def iter_batches(  # noqa: C901, PLR0913  the keyword options are the batching c
     supported there — it streams in constant memory. `shuffle`, `atoms_per_batch`
     and `memory_scales_with` all need the byte-offset index and raise on a
     compressed source; decompress the file first. `compression` and `member`
-    are as in `read_frames`.
+    are as in `read`.
 
     `schema` with effective `mode="project"` reshapes every frame to the schema
     before batching — the way to batch a mixed-schema file. `conformance` governs

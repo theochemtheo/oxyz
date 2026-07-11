@@ -278,7 +278,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
 
 
 def _cmd_check(args: argparse.Namespace) -> int:
-    from oxyz import iter_frames
+    from oxyz import iread
     from oxyz._schema_match import body, resolve, validate_frame
 
     compiled = resolve(args.schema)
@@ -288,7 +288,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
     line = 1
     n_frames = 0
     for index, frame in enumerate(
-        iter_frames(
+        iread(
             args.path,
             compression=args.compression,
             member=args.member,
@@ -398,7 +398,5 @@ def _print_scan_summary(stats: StatsSource, schema: Schema | None) -> None:
         )
     if schema is not None:
         print()
-        print(
-            "# schema — paste into a .yaml and read with read_frames(..., schema=...)"
-        )
+        print("# schema — paste into a .yaml and read with read(..., schema=...)")
         print(_schema_block(schema).rstrip("\n"))

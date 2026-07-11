@@ -1,8 +1,8 @@
 """Fast extxyz reading for atomistic machine learning.
 
-A Rust parser behind a small, typed Python API. `read_frames`/`iter_frames`
-return frames as numpy arrays; `read_batch`/`iter_batches` concatenate frames
-into batches; `scan` and `infer_schema` report a file's structure. A
+A Rust parser behind a small, typed Python API. `read`/`iread` return frames as
+numpy arrays; `read_batch`/`iter_batches` concatenate frames into batches; `scan`
+and `infer_schema` report a file's structure. A
 `SchemaSpec` supplied to the read functions validates frames against an
 expected structure. ASE conversion lives in the optional `oxyz.ase`
 submodule.
@@ -18,9 +18,8 @@ from oxyz._frames import (
     Compression,
     Frame,
     MetadataValue,
-    iter_frames,
-    read_first,
-    read_frames,
+    iread,
+    read,
 )
 from oxyz._remote import StorageOptions
 from oxyz._rust import ParseError
@@ -69,11 +68,10 @@ __all__ = [
     "Violation",
     "Writer",
     "infer_schema",
+    "iread",
     "iter_batches",
-    "iter_frames",
+    "read",
     "read_batch",
-    "read_first",
-    "read_frames",
     "scan",
     "write",
 ]

@@ -50,8 +50,8 @@ def test_read_frames_routes_remote(monkeypatch):
     monkeypatch.setattr(oxyz._remote, "is_remote", lambda p: True)
     monkeypatch.setattr(oxyz._remote, "open_source", fake_open_source)
 
-    remote = oxyz.read_frames("s3://bucket/minimal_periodic.extxyz")
-    local = oxyz.read_frames(str(path))
+    remote = oxyz.read("s3://bucket/minimal_periodic.extxyz")
+    local = oxyz.read(str(path))
     assert len(remote) == len(local)
     assert remote[0].n_atoms == local[0].n_atoms
 

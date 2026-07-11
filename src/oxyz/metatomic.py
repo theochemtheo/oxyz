@@ -27,8 +27,8 @@ from oxyz._convert import UnknownSpeciesError
 from oxyz._frames import (
     Compression,
     Frame,
+    _read_all,
     _require_schema_for_mode,
-    read_frames,
 )
 from oxyz._select import frames_for_read, nth_frame, parse_index, sliced_frames
 
@@ -144,7 +144,7 @@ def read(  # noqa: PLR0913  keyword options mirror the System data model
     seek.
 
     Compressed paths are read too; `compression` and `member` are as in
-    `oxyz.read_frames`.
+    `oxyz.read`.
     """
     _require_schema_for_mode(schema, mode)
     options = (dtype, device, positions_requires_grad, cell_requires_grad)
@@ -234,7 +234,7 @@ class SystemSource:
         compression: Compression = "infer",
         member: str | None = None,
     ) -> None:
-        self._frames: list[Frame] = read_frames(
+        self._frames: list[Frame] = _read_all(
             path, threads=threads, compression=compression, member=member
         )
 
