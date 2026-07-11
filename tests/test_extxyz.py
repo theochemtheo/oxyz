@@ -70,7 +70,7 @@ def test_parse_error_locates_a_short_atom_line(tmp_path: Path) -> None:
         oxyz.read(path)
     error = excinfo.value
     assert error.frame_index == 1
-    assert error.line_number == 6  # 1-based file line of the short atom row
+    assert error.line == 6  # 1-based file line of the short atom row
     assert error.column is None
 
 
@@ -94,13 +94,13 @@ def test_parse_error_location_defaults_to_none(tmp_path: Path) -> None:
         oxyz.read(path)
     error = excinfo.value
     assert error.frame_index == 0
-    assert error.line_number is None
+    assert error.line is None
     assert error.column is None
 
     # And a directly constructed instance carries None on every axis.
     bare = oxyz.ParseError("boom")
     assert bare.frame_index is None
-    assert bare.line_number is None
+    assert bare.line is None
     assert bare.column is None
 
 

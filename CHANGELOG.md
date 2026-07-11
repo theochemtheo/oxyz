@@ -55,6 +55,8 @@ recorded here.
   `MetadataSchema.key` and the metadata `key=` used elsewhere; `ColumnRule`
   keeps `name`. The YAML/JSON schema format is unchanged (the identifier is the
   mapping key either way).
+- `ParseError.line_number` is renamed to `ParseError.line`, matching
+  `Violation.line`; both now pair `line` with `column`.
 - `read_batch`'s `indices=` parameter becomes `index=`, taking `read`'s full
   selection grammar (`":"`, an int, a slice or slice string, or a sequence);
   the default `":"` reads the whole file, as `indices=None` did.

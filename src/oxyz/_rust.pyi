@@ -15,13 +15,13 @@ class ParseError(OxyzError):
     """Raised when extxyz content cannot be parsed.
 
     An `OxyzError` (and so a `ValueError`) subclass. Carries the location of
-    the offending input as attributes — `frame_index`, `line_number`, `column`
-    — each `None` when the parser cannot pin that dimension down, so callers
-    can find the bad frame without parsing the message string.
+    the offending input as attributes — `frame_index`, `line`, `column` — each
+    `None` when the parser cannot pin that dimension down, so callers can find
+    the bad frame without parsing the message string.
     """
 
     frame_index: int | None
-    line_number: int | None
+    line: int | None
     column: str | None
 
 type ColumnValues = np.ndarray | list[str] | list[list[str]]

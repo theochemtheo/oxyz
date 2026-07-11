@@ -523,7 +523,7 @@ Contracts worth knowing before relying on them:
 - **Errors carry frame context.** Malformed input raises
   `oxyz.ParseError` with the frame index and the offending line or value in
   the message, and the same location on the exception as attributes —
-  `frame_index`, `line_number`, `column`, each `None` where the parser cannot
+  `frame_index`, `line`, `column`, each `None` where the parser cannot
   pin it down — so you can find the bad frame without parsing the message.
   Every error oxyz raises subclasses `oxyz.OxyzError` (itself a `ValueError`),
   so `except oxyz.OxyzError` catches the package's errors while
