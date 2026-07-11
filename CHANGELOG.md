@@ -36,6 +36,9 @@ recorded here.
 - The streaming batch reader `iter_batches` becomes `iread_batch`, so
   `read`/`iread` and `read_batch`/`iread_batch` share one rule: `read`
   materialises, `iread` streams.
+- `read_batch`'s `indices=` parameter becomes `index=`, taking `read`'s full
+  selection grammar (`":"`, an int, a slice or slice string, or a sequence);
+  the default `":"` reads the whole file, as `indices=None` did.
 
 ### Removed
 

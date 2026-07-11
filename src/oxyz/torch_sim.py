@@ -99,7 +99,7 @@ def read(  # noqa: PLR0913  keyword options mirror the SimState data model
     indices = _plan_indices(path, index, compression=compression, member=member)
     batch = read_batch(
         path,
-        indices,
+        ":" if indices is None else indices,
         threads=threads,
         schema=schema,
         conformance=conformance,

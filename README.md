@@ -387,7 +387,7 @@ for those comparisons.
 ```python
 oxyz.read(path, index=":", *, threads=None)  -> Frame | list[Frame]  # int index: one Frame
 oxyz.iread(path, index=":")                   -> Iterator[Frame]   # constant memory
-oxyz.read_batch(path, indices=None, *, threads=None) -> Batch    # indices=None: whole file
+oxyz.read_batch(path, index=":", *, threads=None) -> Batch    # ":" (default): whole file
 oxyz.iread_batch(path, *, frames_per_batch=None, atoms_per_batch=None,
                   shuffle=False, seed=None, threads=None) -> Iterator[Batch]
 oxyz.scan(path)                              -> FrameIndex

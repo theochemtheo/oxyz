@@ -69,9 +69,57 @@ class Batch:
         return np.repeat(np.arange(self.n_frames), self.n_atoms)
 
 
+def _scan_count(
+    path: str | Path,
+    compression: Compression,
+    member: str | None,
+    storage_options: _remote.StorageOptions | None,
+) -> int:
+    """Frame count from a structural scan (no value parsing), for resolving a
+    slice or negative index against the file length."""
+    from oxyz._scan import scan
+
+    return scan(
+        path, compression=compression, member=member, storage_options=storage_options
+    ).n_frames
+
+
+def _resolve_batch_indices(
+    index: int | str | slice | Sequence[int],
+    path: str | Path,
+    compression: Compression,
+    member: str | None,
+    storage_options: _remote.StorageOptions | None,
+) -> list[int] | None:
+    """Turn `read_batch`'s `index` into a concrete selection: `None` for the
+    whole file (fast path, no scan) or a list of frame indices to gather in
+    order. A slice or negative int resolves against the frame count; `":"` and an
+    explicit sequence do not scan."""
+    from oxyz._select import parse_index
+
+    if isinstance(index, str):
+        index = parse_index(index)
+    if isinstance(index, slice):
+        if index.start is None and index.stop is None and index.step is None:
+            return None
+        n_frames = _scan_count(path, compression, member, storage_options)
+        return list(range(*index.indices(n_frames)))
+    if isinstance(index, int):
+        if index >= 0:
+            return [index]
+        n_frames = _scan_count(path, compression, member, storage_options)
+        resolved = index + n_frames
+        if resolved < 0:
+            raise IndexError(
+                f"frame index {index} out of range: file has {n_frames} frames"
+            )
+        return [resolved]
+    return [int(i) for i in index]
+
+
 def read_batch(  # noqa: PLR0913  the read/schema/projection options are the contract
     path: str | Path,
-    indices: Sequence[int] | None = None,
+    index: int | str | slice | Sequence[int] = ":",
     *,
     threads: int | None = None,
     schema: SchemaSpec | str | Path | None = None,
@@ -83,13 +131,16 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
 ) -> Batch:
     """Gather frames into one batch.
 
-    `indices=None` reads every frame in file order; a sequence gathers those
-    frames (in order, repeats allowed). Single pass: the file is read once, and
-    for a selection only as far as the last requested frame — structure and
-    contents beyond it are never inspected. For repeated gathers from one file
-    prefer `iread_batch`, which scans once and reuses the index. `threads=None`
-    parses on every core, `threads=1` serially; the batch is identical either
-    way.
+    `index` is `read`'s selection grammar: the default `":"` reads every frame
+    in file order; an int, slice, or slice string like `"1:10:2"` selects a
+    range; an explicit sequence of non-negative ints gathers those frames (in
+    order, repeats allowed). Slices and negative ints resolve against the frame
+    count via a structural scan; `":"` and an explicit sequence do not. Single
+    pass: the file is read once, and for an explicit selection only as far as the
+    last requested frame — structure and contents beyond it are never inspected.
+    For repeated gathers from one file prefer `iread_batch`, which scans once and
+    reuses the index. `threads=None` parses on every core, `threads=1` serially;
+    the batch is identical either way.
 
     Works on a compressed source (the selection still streams in one pass);
     `compression` and `member` are as in `read`.
@@ -117,15 +168,18 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
     if schema is not None:
         projection, spec = _projection(schema, mode)
 
-    selection = None if indices is None else [int(i) for i in indices]
+    selection = _resolve_batch_indices(
+        index, path, compression, member, storage_options
+    )
     if selection is not None:
-        for index in selection:
-            if index < 0:
-                # The Rust binding takes unsigned indices; reject negatives here
-                # with the documented out-of-range IndexError rather than leaking
-                # pyo3's OverflowError. Negative indexing is not supported.
+        for i in selection:
+            if i < 0:
+                # The Rust binding takes unsigned indices; reject negatives in an
+                # explicit sequence here with the documented out-of-range
+                # IndexError rather than leaking pyo3's OverflowError. (A negative
+                # *int* index is resolved against the frame count above.)
                 raise IndexError(
-                    f"frame index {index} out of range: indices must be non-negative"
+                    f"frame index {i} out of range: indices must be non-negative"
                 )
 
     if projection is not None:

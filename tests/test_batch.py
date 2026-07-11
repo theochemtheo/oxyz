@@ -168,6 +168,27 @@ def test_shuffled_batches_are_seeded_and_partition_the_file() -> None:
     assert flat == [0, 1, 2]
 
 
+def test_read_batch_index_shares_the_read_selection_grammar() -> None:
+    # read_batch's `index` takes the same forms as read: ':' (all), an int,
+    # a slice or slice string, or an explicit sequence.
+    frames = oxyz.read(VARYING)
+    whole = oxyz.read_batch(VARYING, ":")
+    assert whole.n_frames == len(frames)
+
+    single = oxyz.read_batch(VARYING, 1)
+    assert_array_equal(single.frame_indices, [1])
+
+    by_str = oxyz.read_batch(VARYING, "0:2")
+    assert_array_equal(by_str.frame_indices, [0, 1])
+
+    by_slice = oxyz.read_batch(VARYING, slice(0, 2))
+    assert_array_equal(by_slice.frame_indices, [0, 1])
+
+    # A negative index resolves against the frame count, as read does.
+    last = oxyz.read_batch(VARYING, -1)
+    assert_array_equal(last.frame_indices, [len(frames) - 1])
+
+
 def test_read_batch_gathers_in_requested_order() -> None:
     frames = oxyz.read(VARYING)
     batch = oxyz.read_batch(VARYING, [2, 0])
