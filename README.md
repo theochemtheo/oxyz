@@ -30,7 +30,19 @@ The same single pass can also tell you the dataset's schema — which columns
 and metadata keys appear, with what types and shapes, and how consistently
 — which is the part of dataset ingestion that usually goes unchecked.
 
-Pre-1.0: minor versions may change the API.
+## Stability
+
+The public API is the names exported from `oxyz` and its documented submodules
+(`oxyz.ase`, `oxyz.metatomic`, `oxyz.torch_sim`), together with the `oxyz`
+command-line verbs and their options. From 1.0 onward oxyz follows
+[Semantic Versioning](https://semver.org): within a major version no release
+removes or incompatibly changes a public name, though new ones may be added.
+
+Explicitly outside that promise, and free to change in any release: any
+underscore-prefixed name, the `oxyz._rust` extension module, and any behaviour
+the documentation does not state. The surface is settled for 1.0; the remaining
+pre-1.0 releases finish the benchmarks, correctness hardening, and docs against
+it rather than moving it.
 
 ## Install
 
@@ -87,7 +99,8 @@ to return the last frame.
 `oxyz.ase.read` matches `ase.io.read` field for field on the test corpus
 except for the cases below — two deliberate, two that follow from
 honouring the extxyz grammar and oxyz's typed model where ASE's parser
-does not.
+does not. These four are settled design choices under the 1.0 contract, not
+gaps awaiting a fix: each is the behaviour oxyz intends to keep.
 
 **Deliberate** — an error or an acceptance, never a silently different
 value:
@@ -408,9 +421,13 @@ oxyz.Writer(path, *, append=False, compression="infer", level=None, batch=None) 
 The output-target converters — `oxyz.ase`, `oxyz.metatomic`, `oxyz.torch_sim`
 — share the reader index grammar; their signatures are in the sections above.
 
-`Frame`, `Batch`, `FrameIndex`, `Schema` and its parts (`ColumnSchema`,
-`MetadataSchema`, the variant records, the `Kind` enum) are frozen
-dataclasses; everything ships with type stubs.
+`Frame`, `Batch`, `FrameIndex`, `Violation`, `Schema` and its parts
+(`ColumnSchema`, `MetadataSchema`, the variant records, the `Kind` enum), and
+the `SchemaSpec` rule types (`ColumnRule`, `MetadataRule`, `FrameRule`) are
+frozen dataclasses. Every error oxyz raises subclasses `oxyz.OxyzError` (a
+`ValueError`): `ParseError`, `SchemaError`, and the converters' errors. The
+keyword/value types `Compression`, `Conformance`, `Mode`, `MemoryScaling`, and
+`Writable` are exported aliases. Everything ships with type stubs.
 
 The command line mirrors a subset:
 
