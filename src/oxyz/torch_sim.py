@@ -33,6 +33,7 @@ import numpy as np
 from oxyz._batch import Batch, MemoryScaling, iread_batch, read_batch
 from oxyz._convert import UnknownSpeciesError, numbers_to_masses
 from oxyz._frames import _require_schema_for_mode
+from oxyz._rust import OxyzError
 from oxyz._scan import scan
 from oxyz._select import parse_index
 
@@ -62,7 +63,7 @@ __all__ = ["SimStateSource", "ToSimStateError", "iread", "read"]
 ExtrasMap = Mapping[str, str]
 
 
-class ToSimStateError(ValueError):
+class ToSimStateError(OxyzError):
     """The frames have no faithful `SimState` representation (strict: no repair)."""
 
 

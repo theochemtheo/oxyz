@@ -521,13 +521,15 @@ Contracts worth knowing before relying on them:
 - **`Batch.batch` is computed per access** (`np.repeat` over the atom
   counts); hoist it out of a hot loop.
 - **Errors carry frame context.** Malformed input raises
-  `oxyz.ParseError` (a `ValueError` subclass) with the frame index and the
-  offending line or value in the message, and the same location on the
-  exception as attributes — `frame_index`, `line_number`, `column`, each
-  `None` where the parser cannot pin it down — so you can find the bad
-  frame without parsing the message. Out-of-range frame requests raise
-  `IndexError`; I/O problems raise `OSError`. After a parse error,
-  streaming iterators stop rather than guess at a resynchronisation point.
+  `oxyz.ParseError` with the frame index and the offending line or value in
+  the message, and the same location on the exception as attributes —
+  `frame_index`, `line_number`, `column`, each `None` where the parser cannot
+  pin it down — so you can find the bad frame without parsing the message.
+  Every error oxyz raises subclasses `oxyz.OxyzError` (itself a `ValueError`),
+  so `except oxyz.OxyzError` catches the package's errors while
+  `except ValueError` still works. Out-of-range frame requests raise
+  `IndexError`; I/O problems raise `OSError`. After a parse error, streaming
+  iterators stop rather than guess at a resynchronisation point.
 - **Partial reads only promise the prefix.** `read_batch` and indexed
   reads inspect the file no further than the last requested frame; damage
   past that point goes unreported. Whole-file validation is

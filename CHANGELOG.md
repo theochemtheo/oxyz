@@ -30,6 +30,11 @@ recorded here.
 - `oxyz.ase.read` gains `threads=` to tune the parallel parse of an eager read
   (as the native and `oxyz.metatomic` readers already had); `None` uses all
   cores, `1` is serial. `oxyz.ase.iread` streams and takes no `threads`.
+- `oxyz.OxyzError`, a common base (itself a `ValueError`) for every error the
+  package raises: `ParseError`, `SchemaError`, and the converters' `ToAseError`,
+  `FromAtomsError`, `ToSystemError`, `ToSimStateError` all subclass it, so
+  `except oxyz.OxyzError` catches oxyz's errors as a group while
+  `except ValueError` keeps working.
 
 ### Changed
 

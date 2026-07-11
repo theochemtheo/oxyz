@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
+from oxyz._rust import OxyzError
 from oxyz._schema import Kind
 from oxyz._schema_spec import (
     KIND_TO_LETTER,
@@ -301,7 +302,7 @@ def validate_frame(
     )
 
 
-class SchemaError(ValueError):
+class SchemaError(OxyzError):
     """A frame failed schema validation. Carries the offending `frame_index` and
     entry `name` as attributes, so callers need not parse the message."""
 

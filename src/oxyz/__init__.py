@@ -22,7 +22,7 @@ from oxyz._frames import (
     read,
 )
 from oxyz._remote import StorageOptions
-from oxyz._rust import ParseError
+from oxyz._rust import OxyzError, ParseError
 from oxyz._scan import FrameIndex, scan
 from oxyz._schema import (
     ColumnSchema,
@@ -59,6 +59,7 @@ __all__ = [
     "MetadataSchema",
     "MetadataValue",
     "MetadataVariant",
+    "OxyzError",
     "ParseError",
     "Schema",
     "SchemaError",

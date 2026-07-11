@@ -1558,13 +1558,22 @@ fn detect_codec(name: &str, head: Option<&[u8]>) -> String {
 
 create_exception!(
     _rust,
-    ParseError,
+    OxyzError,
     PyValueError,
+    "Base class for every error oxyz raises.\n\n\
+     A `ValueError` subclass, so `except ValueError` still catches everything;\n\
+     `except oxyz.OxyzError` narrows to errors this package raised."
+);
+
+create_exception!(
+    _rust,
+    ParseError,
+    OxyzError,
     "Raised when extxyz content cannot be parsed.\n\n\
-     A `ValueError` subclass. Carries the location of the offending input as\n\
-     attributes — `frame_index`, `line_number`, `column` — each `None` when\n\
-     the parser cannot pin that dimension down, so callers can find the bad\n\
-     frame without parsing the message string."
+     An `OxyzError` (and so a `ValueError`) subclass. Carries the location of\n\
+     the offending input as attributes — `frame_index`, `line_number`,\n\
+     `column` — each `None` when the parser cannot pin that dimension down, so\n\
+     callers can find the bad frame without parsing the message string."
 );
 
 fn extxyz_error_to_py(error: ExtxyzError) -> PyErr {
@@ -1645,6 +1654,7 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
     // Class-level `None` defaults so the location attributes always resolve,
     // even on a `ParseError` a user constructs directly.
+    m.add("OxyzError", m.py().get_type::<OxyzError>())?;
     let parse_error = m.py().get_type::<ParseError>();
     parse_error.setattr("frame_index", m.py().None())?;
     parse_error.setattr("line_number", m.py().None())?;

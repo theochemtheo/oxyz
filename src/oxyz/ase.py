@@ -27,6 +27,7 @@ from oxyz._frames import (
     MetadataValue,
     _require_schema_for_mode,
 )
+from oxyz._rust import OxyzError
 from oxyz._select import frames_for_read, nth_frame, parse_index, sliced_frames
 
 if TYPE_CHECKING:
@@ -59,11 +60,11 @@ except ImportError as error:
 __all__ = ["FromAtomsError", "ToAseError", "from_atoms", "iread", "read", "to_atoms"]
 
 
-class ToAseError(ValueError):
+class ToAseError(OxyzError):
     """The frame has no faithful `ase.Atoms` representation (strict: no repair)."""
 
 
-class FromAtomsError(ValueError):
+class FromAtomsError(OxyzError):
     """The `ase.Atoms` carries something a `Frame` cannot represent faithfully."""
 
 

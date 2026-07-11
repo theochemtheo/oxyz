@@ -30,6 +30,7 @@ from oxyz._frames import (
     _read_all,
     _require_schema_for_mode,
 )
+from oxyz._rust import OxyzError
 from oxyz._select import frames_for_read, nth_frame, parse_index, sliced_frames
 
 try:
@@ -63,7 +64,7 @@ _PBC_CELL_MISMATCH = (
 )
 
 
-class ToSystemError(ValueError):
+class ToSystemError(OxyzError):
     """The frame has no faithful `System` representation (strict: no repair)."""
 
 
