@@ -215,6 +215,7 @@ def read(
     index: int | None = ...,
     *,
     format: str | None = ...,
+    threads: int | None = ...,
     schema: SchemaSpec | str | Path | None = ...,
     conformance: Conformance = ...,
     mode: Mode | None = ...,
@@ -230,6 +231,7 @@ def read(
     index: slice,
     *,
     format: str | None = ...,
+    threads: int | None = ...,
     schema: SchemaSpec | str | Path | None = ...,
     conformance: Conformance = ...,
     mode: Mode | None = ...,
@@ -245,6 +247,7 @@ def read(
     index: str,
     *,
     format: str | None = ...,
+    threads: int | None = ...,
     schema: SchemaSpec | str | Path | None = ...,
     conformance: Conformance = ...,
     mode: Mode | None = ...,
@@ -259,6 +262,7 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
     index: int | str | slice | None = None,
     *,
     format: str | None = None,
+    threads: int | None = None,
     schema: SchemaSpec | str | Path | None = None,
     conformance: Conformance = "required",
     mode: Mode | None = None,
@@ -270,7 +274,10 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
 
     Like ASE, the default index is -1: the last frame. Forward selections
     stream; negative or reverse ones resolve via a structural scan and seek,
-    never a full parse. Per-frame projection/validation (`schema`, `mode`,
+    never a full parse. `threads` sets the parallel parse for an eager
+    whole-file/forward read (`None`: all cores, `1`: serial); it has no effect on
+    a single-frame or bounded selection, which streams or seeks. Per-frame
+    projection/validation (`schema`, `mode`,
     `conformance`) is applied to the frames actually read; whole-file inference
     is `oxyz.infer_schema`'s job. A negative or reverse index with a `schema`
     reads the whole file (forgoing the seek shortcut) so the sought frames are
@@ -307,6 +314,7 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
         for frame in frames_for_read(
             path,
             index,
+            threads,
             schema=schema,
             conformance=conformance,
             mode=mode,

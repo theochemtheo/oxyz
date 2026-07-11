@@ -27,6 +27,9 @@ recorded here.
   `SystemSource`/`SimStateSource` gain `storage_options=`, so reading from an
   S3-compatible URL works from every output target, as it already did for
   `oxyz.ase` and the native readers.
+- `oxyz.ase.read` gains `threads=` to tune the parallel parse of an eager read
+  (as the native and `oxyz.metatomic` readers already had); `None` uses all
+  cores, `1` is serial. `oxyz.ase.iread` streams and takes no `threads`.
 
 ### Changed
 

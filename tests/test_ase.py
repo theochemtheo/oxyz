@@ -18,6 +18,16 @@ pytestmark = pytest.mark.skipif(
 
 DATA_DIR = Path(__file__).parent / "data"
 
+
+def test_ase_read_accepts_threads() -> None:
+    import oxyz.ase
+
+    path = DATA_DIR / "varying_atom_counts.xyz"
+    serial = oxyz.ase.read(path, ":", threads=1)
+    parallel = oxyz.ase.read(path, ":", threads=4)
+    assert [len(a) for a in serial] == [len(a) for a in parallel]
+
+
 # Documented divergences from ase.io.read, each asserted explicitly below:
 # Voigt stress (ASE rejects it), new-style string arrays (ASE leaves them as
 # one raw string), and single-quoted values (ASE strips the quotes; oxyz keeps
