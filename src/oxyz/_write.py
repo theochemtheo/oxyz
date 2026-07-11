@@ -21,9 +21,12 @@ if TYPE_CHECKING:
 
     from ase import Atoms
 
-    Writable = Frame | Atoms
+# A public type alias: `write`/`Writer.write` accept a `Frame` or an `ase.Atoms`
+# (or an iterable mixing them). Declared with PEP 695 `type`, so the right-hand
+# side is evaluated lazily — exporting `oxyz.Writable` does not import ase.
+type Writable = Frame | Atoms
 
-__all__ = ["Writer", "write"]
+__all__ = ["Writable", "Writer", "write"]
 
 
 def write(

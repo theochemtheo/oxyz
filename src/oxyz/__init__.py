@@ -39,8 +39,8 @@ from oxyz._schema_match import (
     SchemaWarning,
     Violation,
 )
-from oxyz._schema_spec import ColumnRule, FrameRule, MetadataRule, SchemaSpec
-from oxyz._write import Writer, write
+from oxyz._schema_spec import ColumnRule, FrameRule, MetadataRule, Mode, SchemaSpec
+from oxyz._write import Writable, Writer, write
 
 __all__ = [
     "Batch",
@@ -59,6 +59,7 @@ __all__ = [
     "MetadataSchema",
     "MetadataValue",
     "MetadataVariant",
+    "Mode",
     "OxyzError",
     "ParseError",
     "Schema",
@@ -67,6 +68,7 @@ __all__ = [
     "SchemaWarning",
     "StorageOptions",
     "Violation",
+    "Writable",
     "Writer",
     "infer_schema",
     "iread",

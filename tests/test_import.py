@@ -13,6 +13,15 @@ def test_public_api_imports() -> None:
     assert oxyz.iread is not None
 
 
+def test_mode_and_writable_are_exported() -> None:
+    # Parity with the other public type aliases (Conformance, Compression): the
+    # kwarg/type names users annotate with are importable and in __all__.
+    assert oxyz.Mode is not None
+    assert oxyz.Writable is not None
+    assert "Mode" in oxyz.__all__
+    assert "Writable" in oxyz.__all__
+
+
 # Every reader that takes both `threads` and the schema/IO options shares one
 # canonical keyword tail, so the surface reads the same across the package.
 CANONICAL_TAIL = [

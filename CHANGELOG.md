@@ -35,6 +35,9 @@ recorded here.
   `FromAtomsError`, `ToSystemError`, `ToSimStateError` all subclass it, so
   `except oxyz.OxyzError` catches oxyz's errors as a group while
   `except ValueError` keeps working.
+- Export the `Mode` (`"validate"`/`"project"`) and `Writable`
+  (`Frame | ase.Atoms`, the `write` input) type aliases from `oxyz`, for parity
+  with the already-exported `Conformance`, `Compression`, and `MemoryScaling`.
 
 ### Changed
 
