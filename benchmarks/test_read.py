@@ -374,7 +374,7 @@ def oxyz_scan(path: Path) -> object:
     return oxyz.scan(path)
 
 
-# The structural scan underlies iter_batches planning, IndexedFrames open,
+# The structural scan underlies iread_batch planning, IndexedFrames open,
 # and ASE-style negative/strided indexing; it should sit far above parse
 # throughput to earn its keep.
 @pytest.mark.benchmark(group="scan/many_small_frames")
@@ -395,7 +395,7 @@ def oxyz_sequential_batches_with(threads: int):
     @row("Batch", "serial" if threads == 1 else "parallel", threads=threads)
     def batched(path: Path) -> int:
         total = 0
-        for batch in oxyz.iter_batches(path, frames_per_batch=64, threads=threads):
+        for batch in oxyz.iread_batch(path, frames_per_batch=64, threads=threads):
             total += batch.total_atoms
         return total
 
@@ -405,7 +405,7 @@ def oxyz_sequential_batches_with(threads: int):
 def oxyz_shuffled_atom_batches_with(threads: int):
     @row("Batch", "serial" if threads == 1 else "parallel", threads=threads)
     def batched(path: Path) -> int:
-        batches = oxyz.iter_batches(
+        batches = oxyz.iread_batch(
             path, atoms_per_batch=2048, shuffle=True, seed=0, threads=threads
         )
         return sum(batch.total_atoms for batch in batches)

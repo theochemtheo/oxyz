@@ -112,7 +112,7 @@ def test_unknown_compression_raises() -> None:
 class TestBatching:
     def test_frames_per_batch_streams_on_compressed(self) -> None:
         gz = DATA_DIR / "compressed/two_frame.xyz.gz"
-        batches = list(oxyz.iter_batches(gz, frames_per_batch=1))
+        batches = list(oxyz.iread_batch(gz, frames_per_batch=1))
         assert len(batches) == 2
         assert all(batch.n_frames == 1 for batch in batches)
 
@@ -129,7 +129,7 @@ class TestBatching:
     ) -> None:
         gz = DATA_DIR / "compressed/two_frame.xyz.gz"
         with pytest.raises(ValueError, match="randomly accessed"):
-            list(oxyz.iter_batches(gz, **kwargs))  # ty: ignore[invalid-argument-type]
+            list(oxyz.iread_batch(gz, **kwargs))  # ty: ignore[invalid-argument-type]
 
 
 class TestAse:

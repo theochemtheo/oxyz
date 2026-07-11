@@ -12,6 +12,14 @@ DATA_DIR = Path(__file__).parent / "data"
 VARYING = DATA_DIR / "varying_atom_counts.xyz"
 
 
+def test_iread_batch_is_the_public_streaming_batch_name() -> None:
+    assert "iread_batch" in oxyz.__all__
+    assert "iter_batches" not in oxyz.__all__
+    assert not hasattr(oxyz, "iter_batches")
+    batches = list(oxyz.iread_batch(VARYING, frames_per_batch=2))
+    assert sum(b.n_frames for b in batches) == 3
+
+
 def as_array(value: object) -> np.ndarray:
     """Same ty-limitation shim as test_extxyz.as_array; delete with the canary."""
     assert isinstance(value, np.ndarray)
@@ -19,7 +27,7 @@ def as_array(value: object) -> np.ndarray:
 
 
 def test_sequential_batches_chunk_the_file() -> None:
-    batches = list(oxyz.iter_batches(VARYING, frames_per_batch=2))
+    batches = list(oxyz.iread_batch(VARYING, frames_per_batch=2))
 
     assert len(batches) == 2
     first, last = batches
@@ -32,7 +40,7 @@ def test_sequential_batches_chunk_the_file() -> None:
 
 def test_batch_columns_concatenate_frames() -> None:
     frames = oxyz.read(VARYING)
-    (batch,) = oxyz.iter_batches(VARYING, frames_per_batch=3)
+    (batch,) = oxyz.iread_batch(VARYING, frames_per_batch=3)
 
     stacked = np.vstack([as_array(frame.columns["pos"]) for frame in frames])
     assert_allclose(as_array(batch.columns["pos"]), stacked)
@@ -43,7 +51,7 @@ def test_batch_columns_concatenate_frames() -> None:
 
 
 def test_batch_derived_properties() -> None:
-    (batch,) = oxyz.iter_batches(VARYING, frames_per_batch=3)
+    (batch,) = oxyz.iread_batch(VARYING, frames_per_batch=3)
 
     assert_array_equal(batch.n_atoms, [3, 1, 2])
     assert_array_equal(batch.ptr, batch.offsets)
@@ -51,18 +59,18 @@ def test_batch_derived_properties() -> None:
 
 
 def test_atom_budget_packs_greedily() -> None:
-    batches = list(oxyz.iter_batches(VARYING, atoms_per_batch=4))
+    batches = list(oxyz.iread_batch(VARYING, atoms_per_batch=4))
     assert [list(b.frame_indices) for b in batches] == [[0, 1], [2]]
 
     # A frame above the budget still gets a batch to itself.
-    batches = list(oxyz.iter_batches(VARYING, atoms_per_batch=2))
+    batches = list(oxyz.iread_batch(VARYING, atoms_per_batch=2))
     assert [list(b.frame_indices) for b in batches] == [[0], [1], [2]]
 
 
 def test_atom_budget_empty_file_yields_no_batches(tmp_path: Path) -> None:
     empty = tmp_path / "empty.xyz"
     empty.write_text("")
-    assert list(oxyz.iter_batches(empty, atoms_per_batch=100)) == []
+    assert list(oxyz.iread_batch(empty, atoms_per_batch=100)) == []
 
 
 VARYING_DENSITY = DATA_DIR / "varying_density.extxyz"
@@ -72,7 +80,7 @@ def test_memory_binning_by_n_atoms_balances_best_fit() -> None:
     # VARYING has 3/1/2 atoms. Best-fit-decreasing at budget 3 packs the
     # 3-atom frame alone, then the 2- and 1-atom frames together.
     batches = list(
-        oxyz.iter_batches(VARYING, memory_scales_with="n_atoms", max_scaler=3)
+        oxyz.iread_batch(VARYING, memory_scales_with="n_atoms", max_scaler=3)
     )
     assert [sorted(b.frame_indices) for b in batches] == [[0], [1, 2]]
     # No bin exceeds the budget (each here totals 3 atoms).
@@ -86,13 +94,13 @@ def test_memory_binning_by_density_separates_dense_from_sparse() -> None:
     # weigh 2) the packing differs, proving the density weight is in play.
     by_density = [
         sorted(b.frame_indices)
-        for b in oxyz.iter_batches(
+        for b in oxyz.iread_batch(
             VARYING_DENSITY, memory_scales_with="n_atoms_x_density", max_scaler=4
         )
     ]
     by_atoms = [
         sorted(b.frame_indices)
-        for b in oxyz.iter_batches(
+        for b in oxyz.iread_batch(
             VARYING_DENSITY, memory_scales_with="n_atoms", max_scaler=4
         )
     ]
@@ -115,7 +123,7 @@ def test_density_weight_falls_back_to_atom_count_for_molecules() -> None:
 def test_memory_binning_isolates_a_frame_over_budget() -> None:
     # A frame whose weight exceeds the budget still gets its own bin.
     batches = list(
-        oxyz.iter_batches(VARYING, memory_scales_with="n_atoms", max_scaler=1)
+        oxyz.iread_batch(VARYING, memory_scales_with="n_atoms", max_scaler=1)
     )
     assert sorted(sorted(b.frame_indices) for b in batches) == [[0], [1], [2]]
 
@@ -123,7 +131,7 @@ def test_memory_binning_isolates_a_frame_over_budget() -> None:
 def test_memory_binning_preserves_frame_provenance() -> None:
     # Reordered packing still records which file frame each entry came from.
     batches = list(
-        oxyz.iter_batches(VARYING, memory_scales_with="n_atoms", max_scaler=3)
+        oxyz.iread_batch(VARYING, memory_scales_with="n_atoms", max_scaler=3)
     )
     seen = sorted(i for b in batches for i in b.frame_indices)
     assert seen == [0, 1, 2]
@@ -131,13 +139,13 @@ def test_memory_binning_preserves_frame_provenance() -> None:
 
 def test_memory_binning_requires_max_scaler() -> None:
     with pytest.raises(ValueError, match="max_scaler"):
-        list(oxyz.iter_batches(VARYING, memory_scales_with="n_atoms"))
+        list(oxyz.iread_batch(VARYING, memory_scales_with="n_atoms"))
 
 
 def test_memory_binning_rejects_unknown_metric() -> None:
     with pytest.raises(ValueError, match="memory_scales_with"):
         list(
-            oxyz.iter_batches(
+            oxyz.iread_batch(
                 VARYING,
                 memory_scales_with="n_edges",  # ty: ignore[invalid-argument-type]
                 max_scaler=4,
@@ -149,7 +157,7 @@ def test_shuffled_batches_are_seeded_and_partition_the_file() -> None:
     def plan(seed: int) -> list[list[int]]:
         return [
             list(b.frame_indices)
-            for b in oxyz.iter_batches(
+            for b in oxyz.iread_batch(
                 VARYING, atoms_per_batch=4, shuffle=True, seed=seed
             )
         ]
@@ -216,7 +224,7 @@ def test_read_batch_whole_file_empty_is_no_frames(tmp_path: Path) -> None:
 )
 def test_invalid_batching_arguments(kwargs) -> None:
     with pytest.raises(ValueError):
-        oxyz.iter_batches(VARYING, **kwargs)
+        oxyz.iread_batch(VARYING, **kwargs)
 
 
 def test_zero_threads_is_rejected() -> None:
@@ -249,7 +257,7 @@ def test_threads_never_change_batch_composition() -> None:
 
     def batches(threads: int | None) -> list[oxyz.Batch]:
         return list(
-            oxyz.iter_batches(
+            oxyz.iread_batch(
                 VARYING, atoms_per_batch=4, shuffle=True, seed=7, threads=threads
             )
         )
@@ -298,8 +306,8 @@ def test_read_batch_threads_are_equivalent() -> None:
 
 
 def test_sequential_batches_match_across_thread_counts() -> None:
-    streamed = list(oxyz.iter_batches(VARYING, frames_per_batch=2, threads=1))
-    planned = list(oxyz.iter_batches(VARYING, frames_per_batch=2))
+    streamed = list(oxyz.iread_batch(VARYING, frames_per_batch=2, threads=1))
+    planned = list(oxyz.iread_batch(VARYING, frames_per_batch=2))
     for left, right in zip(planned, streamed, strict=True):
         assert_batches_equal(left, right)
 
@@ -310,7 +318,7 @@ def test_int_real_metadata_promotes_to_float(tmp_path: Path) -> None:
         "1\nProperties=species:S:1:pos:R:3 energy=-1\nH 0 0 0\n"
         "1\nProperties=species:S:1:pos:R:3 energy=-1.5\nH 0 0 0\n"
     )
-    (batch,) = oxyz.iter_batches(path, frames_per_batch=2)
+    (batch,) = oxyz.iread_batch(path, frames_per_batch=2)
 
     energy = as_array(batch.metadata["energy"])
     assert energy.dtype == np.float64
@@ -324,10 +332,10 @@ def test_schema_drift_within_a_batch_is_an_error(tmp_path: Path) -> None:
         "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
     )
     with pytest.raises(ValueError, match="missing metadata"):
-        list(oxyz.iter_batches(path, frames_per_batch=2))
+        list(oxyz.iread_batch(path, frames_per_batch=2))
 
     # Batches that never span the drift are still readable.
-    assert len(list(oxyz.iter_batches(path, frames_per_batch=1))) == 2
+    assert len(list(oxyz.iread_batch(path, frames_per_batch=1))) == 2
 
 
 def test_projected_batch_binding_entries_exist():
@@ -388,7 +396,7 @@ def test_warn_drops_unfillable_frame_from_batch(tmp_path):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SchemaWarning)
         batches = list(
-            oxyz.iter_batches(f, frames_per_batch=2, schema=spec, conformance="warn")
+            oxyz.iread_batch(f, frames_per_batch=2, schema=spec, conformance="warn")
         )
     # both frames dropped -> the single window is skipped, not yielded empty
     assert batches == []
@@ -582,7 +590,7 @@ def test_validate_batch_warn_keeps_uniform_batch(tmp_path):
     assert "charge" not in batch.columns  # validation does not reshape
 
 
-def test_validate_batch_mode_via_iter_batches(tmp_path):
+def test_validate_batch_mode_via_iread_batch(tmp_path):
     from oxyz._schema_match import SchemaError
 
     spec = _batch_schema("validate")
@@ -593,9 +601,9 @@ def test_validate_batch_mode_via_iter_batches(tmp_path):
     )
     with pytest.raises(SchemaError, match="charge"):
         # threads=1 takes the sequential path; default threads the planned path
-        list(oxyz.iter_batches(bad, frames_per_batch=1, schema=spec, threads=1))
+        list(oxyz.iread_batch(bad, frames_per_batch=1, schema=spec, threads=1))
     with pytest.raises(SchemaError, match="charge"):
-        list(oxyz.iter_batches(bad, frames_per_batch=1, schema=spec))
+        list(oxyz.iread_batch(bad, frames_per_batch=1, schema=spec))
 
 
 def test_project_batch_enforces_frame_rule(tmp_path):
@@ -649,7 +657,7 @@ def test_project_batch_frame_rule_lattice_warn(tmp_path):
 
 
 def test_validate_batch_warn_via_sequential_stream(tmp_path):
-    """threads=1 iter_batches takes the sequential windowing path; warn keeps
+    """threads=1 iread_batch takes the sequential windowing path; warn keeps
     every frame, so the window is actually assembled and yielded."""
     from oxyz._schema_match import SchemaWarning
 
@@ -662,7 +670,7 @@ def test_validate_batch_warn_via_sequential_stream(tmp_path):
     )
     with pytest.warns(SchemaWarning, match="charge"):
         batches = list(
-            oxyz.iter_batches(
+            oxyz.iread_batch(
                 bad, frames_per_batch=2, schema=spec, threads=1, conformance="warn"
             )
         )

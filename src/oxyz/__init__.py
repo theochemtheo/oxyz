@@ -1,7 +1,7 @@
 """Fast extxyz reading for atomistic machine learning.
 
 A Rust parser behind a small, typed Python API. `read`/`iread` return frames as
-numpy arrays; `read_batch`/`iter_batches` concatenate frames into batches; `scan`
+numpy arrays; `read_batch`/`iread_batch` concatenate frames into batches; `scan`
 and `infer_schema` report a file's structure. A
 `SchemaSpec` supplied to the read functions validates frames against an
 expected structure. ASE conversion lives in the optional `oxyz.ase`
@@ -12,7 +12,7 @@ Columns and metadata are kept as written — no aliasing, no normalisation.
 
 from __future__ import annotations
 
-from oxyz._batch import Batch, MemoryScaling, iter_batches, read_batch
+from oxyz._batch import Batch, MemoryScaling, iread_batch, read_batch
 from oxyz._frames import (
     ColumnValues,
     Compression,
@@ -69,7 +69,7 @@ __all__ = [
     "Writer",
     "infer_schema",
     "iread",
-    "iter_batches",
+    "iread_batch",
     "read",
     "read_batch",
     "scan",

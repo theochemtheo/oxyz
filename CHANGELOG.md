@@ -21,7 +21,7 @@ recorded here.
   REAL columns fill `NaN` by default; other kinds take an explicit per-field
   `fill`. `SchemaSpec.freeze(path)` expands pattern rules into a project-ready
   schema, exposed on the CLI as `oxyz freeze` and `scan --emit-schema
-  --project`. The batch readers (`read_batch`, `iter_batches`) now also accept
+  --project`. The batch readers (`read_batch`, `iread_batch`) now also accept
   `schema=`/`conformance=`. Validate-mode behaviour is unchanged.
 
 ### Changed
@@ -33,6 +33,9 @@ recorded here.
   `iread`, and the selection that previously needed separate helpers is now a
   parameter. Selecting a single frame with a schema (`read(path, 0, schema=...)`)
   validates the whole file before indexing, consistent with `oxyz.ase.read`.
+- The streaming batch reader `iter_batches` becomes `iread_batch`, so
+  `read`/`iread` and `read_batch`/`iread_batch` share one rule: `read`
+  materialises, `iread` streams.
 
 ### Removed
 

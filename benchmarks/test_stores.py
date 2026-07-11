@@ -100,7 +100,7 @@ def oxyz_sequential_with(threads: int):
     @row("Batch", "serial" if threads == 1 else "parallel", threads=threads)
     def read(path: Path) -> int:
         total = 0
-        for batch in oxyz.iter_batches(path, frames_per_batch=1024, threads=threads):
+        for batch in oxyz.iread_batch(path, frames_per_batch=1024, threads=threads):
             total += batch.total_atoms
         return total
 

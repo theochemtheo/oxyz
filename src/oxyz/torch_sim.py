@@ -9,7 +9,7 @@ per-frame path the `oxyz.ase` / `oxyz.metatomic` targets use:
   `BinningAutoBatcher`, which sizes memory-aware batches by probing the model.
 - `iread` streams the file as a sequence of `SimState` batches, one per step,
   for files too large to materialise at once. It forwards the binning knobs of
-  `oxyz.iter_batches` (`frames_per_batch` / `atoms_per_batch` /
+  `oxyz.iread_batch` (`frames_per_batch` / `atoms_per_batch` /
   `memory_scales_with` + `max_scaler`); pick exactly one.
 - `SimStateSource` parses a file once and serves the state plus array-native
   `per_config` / `per_atom` tensor extraction.
@@ -30,7 +30,7 @@ from collections.abc import Iterator, Mapping
 
 import numpy as np
 
-from oxyz._batch import Batch, MemoryScaling, iter_batches, read_batch
+from oxyz._batch import Batch, MemoryScaling, iread_batch, read_batch
 from oxyz._convert import UnknownSpeciesError, numbers_to_masses
 from oxyz._frames import _require_schema_for_mode
 from oxyz._scan import scan
@@ -135,17 +135,17 @@ def iread(  # noqa: PLR0913  batching options plus the SimState data model
 ) -> Iterator[SimState]:
     """Stream the file as `SimState` batches, one per step.
 
-    Pick exactly one binning strategy, as in `oxyz.iter_batches`: a fixed
+    Pick exactly one binning strategy, as in `oxyz.iread_batch`: a fixed
     `frames_per_batch`, a greedy `atoms_per_batch`, or balanced memory-aware
     bins (`memory_scales_with` + `max_scaler`). For a model-aware split prefer
     `read` plus `torch_sim`'s `BinningAutoBatcher`, which probes the model.
 
     A compressed source supports only `frames_per_batch` without `shuffle`
-    (it cannot be randomly accessed); see `oxyz.iter_batches`. `compression` and
+    (it cannot be randomly accessed); see `oxyz.iread_batch`. `compression` and
     `member` are as in `oxyz.read`.
     """
     _require_schema_for_mode(schema, mode)
-    for batch in iter_batches(
+    for batch in iread_batch(
         path,
         frames_per_batch=frames_per_batch,
         atoms_per_batch=atoms_per_batch,

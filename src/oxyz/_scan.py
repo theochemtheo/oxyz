@@ -69,7 +69,7 @@ def scan(
     `with_volume=True` reads one extra line per frame (the comment line) to
     record each frame's cell volume `|det(Lattice)|` in `volumes`; a frame with
     no `Lattice` gets `NaN`. It backs density-aware batch binning
-    (`iter_batches(memory_scales_with="n_atoms_x_density")`).
+    (`iread_batch(memory_scales_with="n_atoms_x_density")`).
 
     A compressed path is scanned by streaming through the decoder; the recorded
     offsets are into the decompressed stream, so they give no random-access

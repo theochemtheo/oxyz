@@ -173,7 +173,7 @@ batcher.load_states(oxyz.torch_sim.read("train.extxyz"))
 ```
 
 For files too large to materialise, `iread` streams batches itself, with the
-same binning knobs as `oxyz.iter_batches` (`frames_per_batch` /
+same binning knobs as `oxyz.iread_batch` (`frames_per_batch` /
 `atoms_per_batch` / `memory_scales_with` + `max_scaler`):
 
 ```python
@@ -257,14 +257,14 @@ their PyTorch Geometric names, and `torch.from_numpy(batch.columns["pos"])`
 is zero-copy, so the path into a training loop is short.
 
 ```python
-for batch in oxyz.iter_batches("bulk.extxyz", atoms_per_batch=4096,
+for batch in oxyz.iread_batch("bulk.extxyz", atoms_per_batch=4096,
                                shuffle=True, seed=0):
     batch.columns["forces"]        # (total_atoms, 3)
     batch.metadata["energy"]       # (n_frames,)
     batch.frame_indices            # which file frames these are — provenance
 ```
 
-`iter_batches` packs by frame count or by a total-atom budget, in file
+`iread_batch` packs by frame count or by a total-atom budget, in file
 order or seeded-shuffled. Batch composition depends only on the file, the
 knobs, and the seed — never on `threads`.
 
@@ -388,7 +388,7 @@ for those comparisons.
 oxyz.read(path, index=":", *, threads=None)  -> Frame | list[Frame]  # int index: one Frame
 oxyz.iread(path, index=":")                   -> Iterator[Frame]   # constant memory
 oxyz.read_batch(path, indices=None, *, threads=None) -> Batch    # indices=None: whole file
-oxyz.iter_batches(path, *, frames_per_batch=None, atoms_per_batch=None,
+oxyz.iread_batch(path, *, frames_per_batch=None, atoms_per_batch=None,
                   shuffle=False, seed=None, threads=None) -> Iterator[Batch]
 oxyz.scan(path)                              -> FrameIndex
 oxyz.infer_schema(path)                      -> Schema
@@ -439,7 +439,7 @@ The codec is inferred from the extension (then the magic bytes), or set with
 `compression=` (`"none"`/`"gzip"`/`"zstd"`/`"zip"`). An archive holding more
 than one extxyz file needs `member=`; otherwise it errors and lists what it
 holds. A compressed stream cannot be seeked, so the random-access paths —
-`iter_batches` with `shuffle`/`atoms_per_batch`/`memory_scales_with`, and
+`iread_batch` with `shuffle`/`atoms_per_batch`/`memory_scales_with`, and
 reverse or negative ASE indices — either read the whole file into memory (the
 ASE index path, as ASE itself does) or raise pointing at the limitation;
 decompress the file first if you need them.
@@ -566,7 +566,7 @@ own:
   CPython ≥3.12.
 - **`src/oxyz`** — thin typed Python: frozen dataclasses over the
   binding's dicts, batch planning (the pure-Python part of
-  `iter_batches`), and the index grammar (shared by the conversion layers
+  `iread_batch`), and the index grammar (shared by the conversion layers
   via `oxyz._select`). The conversion layers stay last-moment and
   optional: ASE knowledge lives in `oxyz.ase`, torch/metatomic knowledge in
   `oxyz.metatomic`, each importing its extra lazily; the core depends on

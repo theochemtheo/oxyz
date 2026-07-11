@@ -150,12 +150,12 @@ def test_read_batch_projected_remote(s3_store):
     assert "charge" in batch.columns  # mixed file made batchable by projection
 
 
-def test_iter_batches_projected_remote(s3_store):
+def test_iread_batch_projected_remote(s3_store):
     """Streaming projected batches over a reader: BatchIterProjected.from_reader."""
     s3_store.put("mixed.extxyz", MIXED_BODY)
     spec = _project_spec()
     batches = list(
-        oxyz.iter_batches(
+        oxyz.iread_batch(
             s3_store.url("mixed.extxyz"),
             frames_per_batch=1,
             schema=spec,

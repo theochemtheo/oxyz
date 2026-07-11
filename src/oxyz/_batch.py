@@ -87,7 +87,7 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
     frames (in order, repeats allowed). Single pass: the file is read once, and
     for a selection only as far as the last requested frame — structure and
     contents beyond it are never inspected. For repeated gathers from one file
-    prefer `iter_batches`, which scans once and reuses the index. `threads=None`
+    prefer `iread_batch`, which scans once and reuses the index. `threads=None`
     parses on every core, `threads=1` serially; the batch is identical either
     way.
 
@@ -181,7 +181,7 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
     )
 
 
-def iter_batches(  # noqa: C901, PLR0913  the keyword options are the batching contract
+def iread_batch(  # noqa: C901, PLR0913  the keyword options are the batching contract
     path: str | Path,
     *,
     frames_per_batch: int | None = None,
@@ -435,7 +435,7 @@ def _planned_batches(  # noqa: PLR0913  the planning knobs plus projection
     elif atoms_per_batch is not None:
         plans = _greedy_atom_plans(order, n_atoms, atoms_per_batch)
     else:
-        # Type-narrowing only, never control flow: iter_batches already raised
+        # Type-narrowing only, never control flow: iread_batch already raised
         # unless exactly one strategy is set, so this else is the memory case.
         assert memory_scales_with is not None  # noqa: S101
         assert max_scaler is not None  # noqa: S101
@@ -487,7 +487,7 @@ def _greedy_atom_plans(
 def _memory_weights(
     metric: MemoryScaling, n_atoms: np.ndarray, volumes: np.ndarray | None
 ) -> np.ndarray:
-    """Per-frame packing weight; see `iter_batches` for the rationale.
+    """Per-frame packing weight; see `iread_batch` for the rationale.
 
     `n_atoms_x_density` is `n_atoms**2 / volume`, falling back to `n_atoms`
     where the volume is missing (`NaN`, a frame with no `Lattice`) or
