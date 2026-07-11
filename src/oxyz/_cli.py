@@ -202,19 +202,9 @@ def _cmd_freeze(args: argparse.Namespace) -> int:
 
 
 def _write_spec(spec: SchemaSpec, out: Path) -> None:
-    """Write a schema to `out`, dispatching on the extension. TOML output is
-    rejected — there is no TOML serialiser, and silently writing YAML under a
-    `.toml` name produces a file that will not re-read."""
-    suffix = out.suffix.lower()
-    if suffix == ".json":
-        out.write_text(spec.to_json())
-    elif suffix in (".yaml", ".yml"):
-        out.write_text(spec.to_yaml())
-    else:
-        raise ValueError(
-            f"cannot write a schema to a {suffix!r} file; use .json, .yaml, or "
-            ".yml (there is no TOML serialiser)"
-        )
+    """Write a schema to `out`, dispatching on the extension (see
+    `SchemaSpec.to_file`); `.toml` is rejected (no TOML serialiser)."""
+    spec.to_file(out)
 
 
 def _parse_storage_options(items: list[str]) -> dict[str, str] | None:

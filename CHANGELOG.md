@@ -38,6 +38,8 @@ recorded here.
 - Export the `Mode` (`"validate"`/`"project"`) and `Writable`
   (`Frame | ase.Atoms`, the `write` input) type aliases from `oxyz`, for parity
   with the already-exported `Conformance`, `Compression`, and `MemoryScaling`.
+- `SchemaSpec` gains `from_json` and `to_file`, so every serialisation format
+  now has a matching `from_`/`to_` pair (`dict`, `json`, `yaml`, `file`).
 
 ### Changed
 
@@ -59,6 +61,8 @@ recorded here.
   `Violation.line`; both now pair `line` with `column`.
 - `Frame.to_ase()` is renamed to `Frame.to_atoms()`, matching the
   `oxyz.ase.to_atoms` function it delegates to.
+- `SchemaSpec.from_yaml_text` is renamed to `SchemaSpec.from_yaml`, pairing with
+  `to_yaml` (see also the new `from_json`/`to_file` under Added).
 - `read_batch`'s `indices=` parameter becomes `index=`, taking `read`'s full
   selection grammar (`":"`, an int, a slice or slice string, or a sequence);
   the default `":"` reads the whole file, as `indices=None` did.

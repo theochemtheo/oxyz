@@ -125,9 +125,11 @@ def _frame_rule(attrs: Mapping[str, Any]) -> FrameRule:
 class SchemaSpec:
     """A prescriptive schema: expected columns, metadata, and structural facts.
 
-    Build one from a mapping (`from_dict`), a file (`from_file`, dispatching on
-    `.json`/`.yaml`/`.yml`/`.toml`), or directly. Serialise with `to_yaml`
-    (hand-templated for stable order and comment support) or `to_json`.
+    Each format has a `from_`/`to_` pair: `from_dict`/`to_dict`,
+    `from_json`/`to_json`, `from_yaml`/`to_yaml` (`to_yaml` is hand-templated for
+    stable order and comment support), and `from_file`/`to_file` (dispatching on
+    `.json`/`.yaml`/`.yml`, with `from_file` also reading `.toml`). Or build one
+    directly.
     """
 
     columns: tuple[ColumnRule, ...] = ()
@@ -153,7 +155,11 @@ class SchemaSpec:
         return cls(columns=columns, metadata=metadata, frame=frame, mode=mode)
 
     @classmethod
-    def from_yaml_text(cls, text: str) -> SchemaSpec:
+    def from_json(cls, text: str) -> SchemaSpec:
+        return cls.from_dict(json.loads(text))
+
+    @classmethod
+    def from_yaml(cls, text: str) -> SchemaSpec:
         return cls.from_dict(yaml.safe_load(text) or {})
 
     @classmethod
@@ -162,9 +168,9 @@ class SchemaSpec:
         suffix = path.suffix.lower()
         text = path.read_text()
         if suffix == ".json":
-            return cls.from_dict(json.loads(text))
+            return cls.from_json(text)
         if suffix in (".yaml", ".yml"):
-            return cls.from_yaml_text(text)
+            return cls.from_yaml(text)
         if suffix == ".toml":
             return cls.from_dict(tomllib.loads(text))
         raise ValueError(
@@ -192,6 +198,22 @@ class SchemaSpec:
 
     def to_yaml(self) -> str:
         return render_yaml(self)
+
+    def to_file(self, path: str | Path) -> None:
+        """Write to `path`, dispatching on the extension (`.json`/`.yaml`/`.yml`).
+        TOML output is rejected — there is no TOML serialiser, and writing YAML
+        under a `.toml` name produces a file that will not re-read."""
+        path = Path(path)
+        suffix = path.suffix.lower()
+        if suffix == ".json":
+            path.write_text(self.to_json())
+        elif suffix in (".yaml", ".yml"):
+            path.write_text(self.to_yaml())
+        else:
+            raise ValueError(
+                f"cannot write a schema to a {suffix!r} file; use .json, .yaml, "
+                "or .yml (there is no TOML serialiser)"
+            )
 
     def freeze(
         self,

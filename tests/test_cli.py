@@ -85,7 +85,7 @@ def test_scan_text_schema_block_is_valid_schema(capsys):
     out = capsys.readouterr().out
     block = out.split("columns:", 1)
     assert len(block) == 2  # a `columns:` section is present
-    spec = SchemaSpec.from_yaml_text("columns:" + block[1])
+    spec = SchemaSpec.from_yaml("columns:" + block[1])
     names = {rule.name for rule in spec.columns}
     assert {"species", "pos"} <= names
 
