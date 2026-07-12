@@ -362,25 +362,36 @@ the environment, and the fixture definitions are in
 [benchmarks/run.py](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/run.py)
 reproduces them.
 
+Read time as the file scales, over two independent size axes and over
+thread count. The dataset family is a corpus-shaped file of many small
+frames (frame count swept); the system family is a few large frames
+(atoms per frame swept):
+
+![Read time and speedup vs dataset size](benchmarks/figures/scaling_dataset.svg)
+
+![Read time and speedup vs system size](benchmarks/figures/scaling_system.svg)
+
+![Parsing throughput vs thread count](benchmarks/figures/scaling_threads.svg)
+
 Whole-file reads to numpy (`oxyz.read` vs [cextxyz], the libAtoms C
 parser, via its `read_dicts`):
 
 | workload | oxyz | oxyz `threads=1` | cextxyz |
 | --- | ---: | ---: | ---: |
-| 2 000 small frames | **10.2 ms** | 19.6 ms | 213 ms |
-| 4 × 100 000 atoms | **26.6 ms** | 59.5 ms | 96.4 ms |
-| 2 000 frames, heavy metadata | **14.0 ms** | 27.3 ms | 376 ms |
-| MACE-style mixed file | **7.2 ms** | 14.3 ms | 147 ms |
+| 2 000 small frames | **12.0 ms** | 24.9 ms | 237 ms |
+| 4 × 100 000 atoms | **33.5 ms** | 68.2 ms | 91.5 ms |
+| 2 000 frames, heavy metadata | **17.4 ms** | 34.5 ms | 401 ms |
+| MACE-style mixed file | **8.7 ms** | 17.3 ms | 152 ms |
 
 Whole-file reads to `ase.Atoms` (`oxyz.ase.read` vs the [ase-extxyz] plugin
 wrapping the same C parser, vs `ase.io.read`):
 
 | workload | oxyz.ase | ase-extxyz | ase |
 | --- | ---: | ---: | ---: |
-| 2 000 small frames | **66 ms** | 103 ms | 216 ms |
-| 4 × 100 000 atoms | **70 ms** | 97 ms | 446 ms |
-| 2 000 frames, heavy metadata | **81 ms** | 252 ms | 332 ms |
-| MACE-style mixed file | **38 ms** | 83 ms | 166 ms |
+| 2 000 small frames | **61 ms** | 116 ms | 206 ms |
+| 4 × 100 000 atoms | **77 ms** | 91 ms | 446 ms |
+| 2 000 frames, heavy metadata | **85 ms** | 304 ms | 336 ms |
+| MACE-style mixed file | **41 ms** | 95 ms | 154 ms |
 
 Beyond whole-file reads: on selective reads (every 20th frame of the
 small-frames file) `oxyz.read_batch` takes 1.8 ms against 21 ms for ASE;

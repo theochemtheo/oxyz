@@ -75,11 +75,33 @@ Deterministic fixtures from `benchmarks/conftest.py`:
 | metadata_heavy | 2 000 frames × 16–64 atoms, ~16-key comment lines |
 | mace_mixed | 5 isolated-atom frames + 995 bulk frames (32–96 atoms) |
 | store_100k | 100 000 frames × 64 atoms (store comparison) |
+| sweep_dataset_N | N frames, corpus-shaped (mean ~7 atoms, long tail to 240) |
+| sweep_system_N | 3 frames × N atoms |
 
-`selective/...` groups read every 20th frame. cextxyz and ase-extxyz
-publish no CPython 3.14 wheels, so `benchmarks/run.py` pins CPython 3.13;
-oxyz ships the same abi3 wheel for 3.13 and 3.14.
+`selective/...` groups read every 20th frame. The `scaling_*` groups sweep
+the sweep fixtures over a size range; see the Scaling sweeps section.
+cextxyz and ase-extxyz publish no CPython 3.14 wheels, so
+`benchmarks/run.py` pins CPython 3.13; oxyz ships the same abi3 wheel for
+3.13 and 3.14.
 """
+
+
+SCALING_INTRO = """\
+## Scaling sweeps
+
+The `scaling_dataset/...` and `scaling_system/...` groups sweep one size axis
+with the readers overlaid, and `scaling_threads/...` sweeps thread count for
+oxyz alone. The dataset family sweeps frame count over a corpus-shaped file of
+many small frames; the system family sweeps atoms per frame over a few large
+frames. These groups back the scaling curves in `benchmarks/figures/`; the
+per-size tables here are the provenance record.
+"""
+
+
+def natural_key(group: str) -> tuple:
+    """Sort scaling_dataset/1000 before /10000 numerically, not lexically."""
+    scenario, _, size = group.partition("/")
+    return (scenario, int(size) if size.isdigit() else 0, size)
 
 
 def newest_save() -> Path:
@@ -210,8 +232,13 @@ def main() -> None:
     for bench in data["benchmarks"]:
         groups.setdefault(bench["group"] or "ungrouped", []).append(bench)
 
-    readers = {g: rows for g, rows in groups.items() if not g.startswith("stores")}
     stores = {g: rows for g, rows in groups.items() if g.startswith("stores")}
+    scaling = {g: rows for g, rows in groups.items() if g.startswith("scaling")}
+    readers = {
+        g: rows
+        for g, rows in groups.items()
+        if not g.startswith("stores") and not g.startswith("scaling")
+    }
 
     parts = [
         INTRO.format(save=save.name),
@@ -224,6 +251,12 @@ def main() -> None:
         parts += [
             STORES_INTRO,
             *(group_table(group, rows) for group, rows in sorted(stores.items())),
+        ]
+    if scaling:
+        ordered = sorted(scaling.items(), key=lambda kv: natural_key(kv[0]))
+        parts += [
+            SCALING_INTRO,
+            *(group_table(g, rows) for g, rows in ordered),
         ]
     parts += [
         "## Where oxyz is not fastest\n",

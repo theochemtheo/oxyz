@@ -34,6 +34,10 @@ to pytest:
     uv run benchmarks/run.py --benchmark-autosave    # record a run
     uv run benchmarks/run.py --benchmark-disable     # smoke test
     uv run benchmarks/report.py                      # render RESULTS.md
+    uv run benchmarks/plot.py                        # render figures (bars + curves)
+
+test_scaling.py adds size and thread sweeps recorded into the same save; the
+scaling_* groups back the curve figures.
 """
 
 import sys
