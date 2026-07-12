@@ -379,7 +379,7 @@ fn scan_inner<R: BufRead>(mut reader: R, with_volume: bool) -> Result<FrameIndex
             line.clear();
             let n_comment = reader.read_until(b'\n', &mut line)?;
             if n_comment == 0 {
-                return Err(missing_line(entries.len(), "comment"));
+                return Err(missing_line(entries.len(), line_number, "comment"));
             }
             offset += n_comment as u64;
             line_number += 1;
@@ -393,7 +393,7 @@ fn scan_inner<R: BufRead>(mut reader: R, with_volume: bool) -> Result<FrameIndex
             offset += n_bytes;
             line_number += skipped;
             if skipped < n_atoms {
-                return Err(missing_line(entries.len(), "atom"));
+                return Err(missing_line(entries.len(), line_number, "atom"));
             }
         } else {
             // Saturating: an untrusted count of usize::MAX must not overflow the
@@ -404,7 +404,7 @@ fn scan_inner<R: BufRead>(mut reader: R, with_volume: bool) -> Result<FrameIndex
             line_number += skipped;
             if skipped <= n_atoms {
                 let label = if skipped == 0 { "comment" } else { "atom" };
-                return Err(missing_line(entries.len(), label));
+                return Err(missing_line(entries.len(), line_number, label));
             }
         }
 
@@ -416,10 +416,10 @@ fn scan_inner<R: BufRead>(mut reader: R, with_volume: bool) -> Result<FrameIndex
     }
 }
 
-fn missing_line(frame_index: usize, label: &'static str) -> ExtxyzError {
+fn missing_line(frame_index: usize, line: usize, label: &'static str) -> ExtxyzError {
     ExtxyzError::InFrame {
         frame_index,
-        source: Box::new(ExtxyzError::MissingLine(label)),
+        source: Box::new(at(line, None, ExtxyzError::MissingLine(label))),
     }
 }
 
@@ -632,9 +632,13 @@ impl<R: BufRead> Iterator for RawFrames<R> {
                 .ok()
                 .and_then(|text| text.trim().parse::<usize>().ok())
             else {
-                return self.fuse(ExtxyzError::InvalidAtomCount {
-                    line: String::from_utf8_lossy(&self.scratch).trim().to_owned(),
-                });
+                return self.fuse(at(
+                    line,
+                    None,
+                    ExtxyzError::InvalidAtomCount {
+                        line: String::from_utf8_lossy(&self.scratch).trim().to_owned(),
+                    },
+                ));
             };
 
             if !self.selected(frame_index) {
@@ -648,7 +652,7 @@ impl<R: BufRead> Iterator for RawFrames<R> {
                 self.line_number += skipped;
                 if skipped <= n_atoms {
                     let label = if skipped == 0 { "comment" } else { "atom" };
-                    return self.fuse(ExtxyzError::MissingLine(label));
+                    return self.fuse(at(self.line_number, None, ExtxyzError::MissingLine(label)));
                 }
                 self.frame_index += 1;
                 continue;
@@ -663,7 +667,7 @@ impl<R: BufRead> Iterator for RawFrames<R> {
                 };
                 if n_read == 0 {
                     let label = if skipped == 0 { "comment" } else { "atom" };
-                    return self.fuse(ExtxyzError::MissingLine(label));
+                    return self.fuse(at(self.line_number, None, ExtxyzError::MissingLine(label)));
                 }
                 self.line_number += 1;
             }

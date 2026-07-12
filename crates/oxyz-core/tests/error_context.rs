@@ -123,3 +123,23 @@ fn parallel_bad_atom_value_matches_serial_location() {
     assert_eq!(error.line(), Some(10002));
     assert_eq!(error.column(), Some(3));
 }
+
+use oxyz_core::scan_frames;
+
+/// A bad count line surfaced by the structural scan reports its line.
+#[test]
+fn scan_bad_count_locates_line() {
+    // Frame 0 is fine (1 atom); frame 1's count line (line 4) is malformed.
+    let input = "1\ncomment\nH 0.0 0.0 0.0\nnotacount\ncomment\n";
+    let error = scan_frames(Cursor::new(input.as_bytes())).expect_err("bad count");
+    assert_eq!(error.frame_index(), Some(1));
+    assert_eq!(error.line(), Some(4));
+}
+
+/// A truncated frame surfaced by the scan reports the missing line's number.
+#[test]
+fn scan_truncated_frame_locates_line() {
+    let input = "3\ncomment\nH 0.0 0.0 0.0\n"; // declares 3 atoms, supplies 1
+    let error = scan_frames(Cursor::new(input.as_bytes())).expect_err("truncated");
+    assert_eq!(error.line(), Some(4));
+}
