@@ -1633,8 +1633,8 @@ fn extxyz_error_to_py(error: ExtxyzError) -> PyErr {
     }
 
     let frame_index = error.frame_index();
-    let line = error.line_number();
-    let column = error.column().map(str::to_owned);
+    let line = error.line();
+    let column = error.column();
     let err = ParseError::new_err(error.to_string());
     Python::attach(|py| {
         // Set every field so access is uniform; instance values shadow the

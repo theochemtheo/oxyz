@@ -74,6 +74,16 @@ pub enum ExtxyzError {
         source: Box<ExtxyzError>,
     },
 
+    /// A parse error pinned to its source location: the file-absolute 1-based
+    /// line, and where a token is pinpointable the 1-based character column of
+    /// it within that line. The single carrier of location; `InFrame` wraps this.
+    #[error("line {line}{}: {source}", .column.map(|c| format!(", column {c}")).unwrap_or_default())]
+    Located {
+        line: usize,
+        column: Option<usize>,
+        source: Box<ExtxyzError>,
+    },
+
     #[error("frame index {frame_index} out of range: file has {n_frames} frames")]
     FrameOutOfRange { frame_index: usize, n_frames: usize },
 
@@ -125,29 +135,56 @@ impl ExtxyzError {
         }
     }
 
-    /// 1-based file line number the error pins down, if any.
-    pub fn line_number(&self) -> Option<usize> {
-        match self.innermost() {
-            ExtxyzError::WrongAtomColumnCount { line_number, .. } => Some(*line_number),
+    /// File-absolute 1-based line the error pins down, if any.
+    pub fn line(&self) -> Option<usize> {
+        match self.located() {
+            Some(ExtxyzError::Located { line, .. }) => Some(*line),
             _ => None,
         }
     }
 
-    /// Name of the column whose value failed to parse, if applicable.
-    pub fn column(&self) -> Option<&str> {
-        match self.innermost() {
-            ExtxyzError::InvalidAtomValue { column, .. } => Some(column),
+    /// 1-based character column of the offending token within its line, if known.
+    pub fn column(&self) -> Option<usize> {
+        match self.located() {
+            Some(ExtxyzError::Located { column, .. }) => *column,
             _ => None,
         }
     }
 
-    /// The underlying error, peeling off any [`InFrame`](Self::InFrame) framing.
+    /// The `Located` layer, if present, peeling any `InFrame` framing.
+    fn located(&self) -> Option<&ExtxyzError> {
+        let mut cursor = self;
+        loop {
+            match cursor {
+                ExtxyzError::InFrame { source, .. } => cursor = source,
+                located @ ExtxyzError::Located { .. } => return Some(located),
+                _ => return None,
+            }
+        }
+    }
+
+    /// The underlying error, peeling `InFrame` and `Located` framing.
+    #[allow(dead_code)] // no caller yet unwraps through `Located`/`InFrame` to the source
     fn innermost(&self) -> &ExtxyzError {
         let mut inner = self;
-        while let ExtxyzError::InFrame { source, .. } = inner {
-            inner = source;
+        loop {
+            match inner {
+                ExtxyzError::InFrame { source, .. } | ExtxyzError::Located { source, .. } => {
+                    inner = source;
+                }
+                _ => return inner,
+            }
         }
-        inner
+    }
+}
+
+/// Wrap `source` with its source location.
+#[allow(dead_code)] // no construction site wraps an error in `Located` yet
+fn at(line: usize, column: Option<usize>, source: ExtxyzError) -> ExtxyzError {
+    ExtxyzError::Located {
+        line,
+        column,
+        source: Box::new(source),
     }
 }
 
