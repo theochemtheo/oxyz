@@ -100,3 +100,26 @@ fn bad_atom_count_locates_line() {
     let error = first_error("notanumber\ncomment\n");
     assert_eq!(error.line(), Some(1));
 }
+
+/// The parallel intra-frame atom path locates a bad value identically to the
+/// serial loop, even when the bad row falls inside a worker's split range.
+#[cfg(feature = "parallel")]
+#[test]
+fn parallel_bad_atom_value_matches_serial_location() {
+    use oxyz_core::read_frames_parallel_from;
+    // A frame large enough to take the intra-frame parallel path (>256 KB),
+    // with one bad value on a known line.
+    let mut input = String::from("20000\nProperties=species:S:1:pos:R:3\n");
+    for _ in 0..9999 {
+        input.push_str("H 0.0 0.0 0.0\n");
+    }
+    input.push_str("H bad 0.0 0.0\n"); // line 10002 (1 count + 1 comment + 10000th row)
+    for _ in 0..10000 {
+        input.push_str("H 0.0 0.0 0.0\n");
+    }
+    let error = read_frames_parallel_from(Cursor::new(input.into_bytes()), Some(4))
+        .expect_err("expected a parse error");
+    assert_eq!(error.frame_index(), Some(0));
+    assert_eq!(error.line(), Some(10002));
+    assert_eq!(error.column(), Some(3));
+}
