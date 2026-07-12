@@ -151,6 +151,87 @@ def _write_mace_mixed(out, rng: random.Random) -> None:
         _write_atom_lines(out, rng, n_atoms, a)
 
 
+# --- Scaling sweep fixtures -------------------------------------------------
+#
+# The dataset-size family mirrors a real MACE-style training corpus
+# (Combined_MatPES-R2SCAN-2025-1_MP-ALOE, measured 2026-07-12): 1.3M frames,
+# mean 6.9 atoms/frame, a long tail (p50 6, p90 12, p99 30, max 240), with
+# REF_* metadata and a string entry_id. We reproduce the *statistics*, not the
+# file, so the fixture is deterministic and lives in-repo. The system-size
+# family is the orthogonal axis: a few frames whose atom count is swept large,
+# for the "vs system size" curve.
+
+SWEEP_GENERATOR_VERSION = 1
+
+# Lognormal shaped to the corpus: exp(mu)=median=6, sigma set so p90/p50~=2,
+# clamped to the observed [1, 240] range.
+_DATASET_LOGNORM_MU = 1.79
+_DATASET_LOGNORM_SIGMA = 0.55
+_DATASET_ATOMS_MIN = 1
+_DATASET_ATOMS_MAX = 240
+
+
+def dataset_frame_atoms(n_frames: int, *, seed: int = 0x5EEDB) -> list[int]:
+    """Deterministic per-frame atom counts for a dataset fixture of n_frames.
+
+    Kept separate from writing so a caller can total the atoms without
+    re-scanning the file. The same seed reproduces the same sequence, and a
+    prefix of a longer run equals a shorter run (draws are sequential), so the
+    cached largest file's counts cover every smaller point.
+    """
+    rng = random.Random(seed)
+    counts = []
+    for _ in range(n_frames):
+        n = round(rng.lognormvariate(_DATASET_LOGNORM_MU, _DATASET_LOGNORM_SIGMA))
+        counts.append(max(_DATASET_ATOMS_MIN, min(_DATASET_ATOMS_MAX, n)))
+    return counts
+
+
+def _write_realistic_frame(out, rng: random.Random, n_atoms: int) -> None:
+    """A frame shaped like the reference corpus: species/pos/REF_forces
+    columns, REF_* scalar/array metadata, a string entry_id, pbc."""
+    a = 3.0 + 8.0 * rng.random()
+    out.write(f"{n_atoms}\n")
+    out.write(
+        f'Lattice="{a:.6f} 0.0 0.0 0.0 {a:.6f} 0.0 0.0 0.0 {a:.6f}" '
+        f"Properties=species:S:1:pos:R:3:REF_forces:R:3 "
+        f"REF_energy={-20.0 * rng.random():.8f} "
+        f"REF_bandgap={2.0 * rng.random():.6f} "
+        f'REF_stress="{_floats(rng, 6)}" '
+        f"entry_id=fixture-{rng.randrange(10**9)}_{rng.randrange(100)} "
+        f'pbc="T T T"\n'
+    )
+    _write_atom_lines(out, rng, n_atoms, a)
+
+
+# Sweep points. Dataset frames reach the corpus scale (~10^6). System atoms
+# reach a large single-frame size. Endpoints are validated for runtime in
+# Task 3's calibration step; adjust here if a full recorded run exceeds budget.
+DATASET_SIZE_FRAMES = [1_000, 10_000, 100_000, 1_000_000]
+SYSTEM_SIZE_ATOMS = [100, 1_000, 10_000, 100_000, 1_000_000]
+SYSTEM_SIZE_FRAMES = 3
+
+
+def sweep_dataset_size_file(n_frames: int) -> Path:
+    def write(out, rng: random.Random) -> None:
+        for n_atoms in dataset_frame_atoms(n_frames):
+            _write_realistic_frame(out, rng, n_atoms)
+
+    return _cached_file(
+        f"sweep_dataset_{n_frames}-sv{SWEEP_GENERATOR_VERSION}", 0x5EEDC, write
+    )
+
+
+def sweep_system_size_file(n_atoms: int) -> Path:
+    def write(out, rng: random.Random) -> None:
+        for _ in range(SYSTEM_SIZE_FRAMES):
+            _write_frame(out, rng, n_atoms)
+
+    return _cached_file(
+        f"sweep_system_{n_atoms}-sv{SWEEP_GENERATOR_VERSION}", 0x5EEDD, write
+    )
+
+
 def _cached_file(name: str, seed: int, write) -> Path:
     path = CACHE_DIR / f"{name}-v{GENERATOR_VERSION}.extxyz"
     if path.exists():
