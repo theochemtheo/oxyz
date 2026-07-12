@@ -49,10 +49,14 @@ def test_size_curve_figure_writes_svg(tmp_path, monkeypatch):
     rows = [
         _size_row("scaling_dataset/1000", "oxyz", 0.01, 7000),
         _size_row("scaling_dataset/10000", "oxyz", 0.1, 70000),
+        _size_row("scaling_dataset/1000", "oxyz-to-ase", 0.05, 7000),
+        _size_row("scaling_dataset/10000", "oxyz-to-ase", 0.5, 70000),
         _size_row("scaling_dataset/1000", "ase", 0.2, 7000),
         _size_row("scaling_dataset/10000", "ase", 2.0, 70000),
     ]
-    out = plot.size_curve_figure(rows, "scaling_dataset", "scaling_dataset", "frames")
+    out = plot.size_curve_figure(
+        rows, "scaling_dataset", "scaling_dataset", "frames", ncores=12
+    )
     assert out is not None and out.exists() and out.suffix == ".svg"
 
 

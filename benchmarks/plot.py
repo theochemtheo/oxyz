@@ -38,6 +38,8 @@ import seaborn as sns
 from _style import (
     fmt_value,
     reader_color,
+    reader_label,
+    reader_marker,
     reader_order,
 )
 from matplotlib.ticker import LogLocator, NullFormatter
@@ -278,10 +280,16 @@ def sweep_size_rows(
 
 
 def size_curve_figure(
-    rows: list[dict[str, Any]], prefix: str, name: str, xlabel: str
+    rows: list[dict[str, Any]],
+    prefix: str,
+    name: str,
+    xlabel: str,
+    ncores: int | None = None,
 ) -> Path | None:
     """Two panels: read time vs size (loglog) and speedup vs ase (semilogx),
-    overlaying every reader — the extxyz plot_bench shape."""
+    overlaying every reader — the extxyz plot_bench shape. Legends name the
+    call each line measures; the all-core oxyz.read line gets a distinct
+    marker so it is tellable from the serial one."""
     by_reader = sweep_size_rows(rows, prefix)
     if not by_reader:
         return None
@@ -293,15 +301,21 @@ def size_curve_figure(
         pts = by_reader[reader]
         sizes = [s for s, _, _ in pts]
         times = [m for _, m, _ in pts]
-        ax_t.loglog(sizes, times, marker="o", label=reader, color=reader_color(reader))
+        ax_t.loglog(
+            sizes,
+            times,
+            marker=reader_marker(reader),
+            label=reader_label(reader, ncores),
+            color=reader_color(reader),
+        )
         if baseline and reader != "ase":
             shared = [(s, baseline[s] / m) for s, m, _ in pts if s in baseline]
             if shared:
                 ax_s.semilogx(
                     [s for s, _ in shared],
                     [sp for _, sp in shared],
-                    marker="o",
-                    label=reader,
+                    marker=reader_marker(reader),
+                    label=reader_label(reader, ncores),
                     color=reader_color(reader),
                 )
 
@@ -346,7 +360,13 @@ def thread_curve_figure(rows: list[dict[str, Any]]) -> Path | None:
         )
         threads = [t for t, _ in pts]
         thru = [v for _, v in pts]
-        ax.plot(threads, thru, marker="o", color=reader_color("oxyz"))
+        ax.plot(
+            threads,
+            thru,
+            marker=reader_marker("oxyz"),
+            color=reader_color("oxyz"),
+            label="oxyz.read",
+        )
         # Linear-scaling reference from the 1-thread point.
         if thru:
             ideal = [thru[0] * t / threads[0] for t in threads]
@@ -373,7 +393,9 @@ def thread_curve_figure(rows: list[dict[str, Any]]) -> Path | None:
 
 def main() -> None:
     save = Path(sys.argv[1]) if len(sys.argv) > 1 else newest_save()
-    rows = flatten(json.loads(save.read_text()))
+    data = json.loads(save.read_text())
+    rows = flatten(data)
+    ncores = data["machine_info"].get("cpu", {}).get("count")
 
     # "ticks" rather than "whitegrid" so tick marks (and the log subticks)
     # actually draw; the grid comes back via rc, paler than either default.
@@ -421,10 +443,12 @@ def main() -> None:
         outputs.append(scan_figure(scan_rows))
 
     outputs.append(
-        size_curve_figure(rows, "scaling_dataset", "scaling_dataset", "frames")
+        size_curve_figure(rows, "scaling_dataset", "scaling_dataset", "frames", ncores)
     )
     outputs.append(
-        size_curve_figure(rows, "scaling_system", "scaling_system", "atoms per frame")
+        size_curve_figure(
+            rows, "scaling_system", "scaling_system", "atoms per frame", ncores
+        )
     )
     outputs.append(thread_curve_figure(rows))
     outputs = [o for o in outputs if o is not None]

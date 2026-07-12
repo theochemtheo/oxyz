@@ -64,3 +64,31 @@ def fmt_value(value: float) -> str:
         if value >= cut:
             return f"{value / cut:.3g}{suffix}"
     return f"{value:.3g}"
+
+
+# Scaling-curve legends name the call each line measures rather than the
+# internal reader id — clearer for a reader comparing libraries. `oxyz` is the
+# all-core numpy read, so its label carries the recording machine's core count.
+READER_LABELS = {
+    "oxyz-serial": "oxyz.read(threads=1)",
+    "oxyz-to-ase": "oxyz.ase.read",
+    "ase": "ase.io.read",
+    "cextxyz": "extxyz.read_dicts",
+    "cextxyz-to-ase": 'ase.io.read(format="cextxyz")',
+}
+
+
+def reader_label(reader: str, ncores: int | None = None) -> str:
+    """The function-call label for a reader in a scaling legend."""
+    if reader == "oxyz":
+        return f"oxyz.read(threads={ncores})" if ncores else "oxyz.read()"
+    return READER_LABELS.get(reader, reader)
+
+
+# The all-core oxyz.read line shares the orange hue with the serial line, so a
+# distinct marker keeps the two apart at a glance; everyone else uses a circle.
+MARKERS = {"oxyz": "s"}
+
+
+def reader_marker(reader: str) -> str:
+    return MARKERS.get(reader, "o")

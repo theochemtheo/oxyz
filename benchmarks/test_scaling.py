@@ -62,6 +62,14 @@ def cextxyz_read(path: Path) -> list:
 
 
 @row("ase.Atoms", "serial")
+def oxyz_to_ase(path: Path) -> list:
+    from oxyz.ase import read
+
+    # slice(None) rather than ":" picks the precisely-typed overload.
+    return read(path, index=slice(None))
+
+
+@row("ase.Atoms", "serial")
 def cextxyz_to_ase(path: Path) -> list:
     from ase.io import read
 
@@ -86,7 +94,11 @@ def _size_readers(size: int, cap: int):
         pytest.param(oxyz_serial, id="oxyz-serial"),
     ]
     if size <= cap:
+        # Capped with the competitors: building an Atoms per frame is far
+        # dearer than the numpy read, so this stays below the top oxyz-only
+        # points that carry the curve to 10^6.
         readers += [
+            pytest.param(oxyz_to_ase, id="oxyz-to-ase", marks=needs_ase),
             pytest.param(cextxyz_read, id="cextxyz", marks=needs_cextxyz),
             pytest.param(cextxyz_to_ase, id="cextxyz-to-ase", marks=needs_ase_extxyz),
             pytest.param(ase_read, id="ase", marks=needs_ase),
