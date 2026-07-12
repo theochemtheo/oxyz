@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-import _style
+import pytest
+
+# _style pulls in seaborn, which the benchmark-runner env (run.py) omits; skip
+# there so a full run.py collection does not abort on the plot-only modules.
+_style = pytest.importorskip("_style")
 
 
 def test_reader_color_is_stable_per_reader():
