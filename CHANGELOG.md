@@ -77,8 +77,13 @@ recorded here.
   `MetadataSchema.key` and the metadata `key=` used elsewhere; `ColumnRule`
   keeps `name`. The YAML/JSON schema format is unchanged (the identifier is the
   mapping key either way).
-- `ParseError.line_number` is renamed to `ParseError.line`, matching
-  `Violation.line`; both now pair `line` with `column`.
+- `ParseError` now locates every parse error structurally. `line_number` is
+  renamed to `line` (matching `Violation.line`), and `column` is the 1-based
+  character column of the offending token within its line — previously it held
+  the offending data column's *name*. `frame_index`, `line`, and `column` are
+  populated wherever the parser can pin each down, so a malformed file can be
+  located without parsing the message string; the messages themselves now name
+  the expected input, not only the fault.
 - `Frame.to_ase()` is renamed to `Frame.to_atoms()`, matching the
   `oxyz.ase.to_atoms` function it delegates to.
 - `SchemaSpec.from_yaml_text` is renamed to `SchemaSpec.from_yaml`, pairing with
