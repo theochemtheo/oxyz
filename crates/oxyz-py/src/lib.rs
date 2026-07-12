@@ -1043,15 +1043,18 @@ fn frame_to_pydict(py: Python<'_>, frame: Frame) -> PyResult<Bound<'_, PyDict>> 
 
     let metadata = PyDict::new(py);
     for (key, value) in frame.metadata {
+        let key = key.as_str();
         match value {
             Value::Real(x) => metadata.set_item(key, x)?,
             Value::Int(x) => metadata.set_item(key, x)?,
             Value::Bool(x) => metadata.set_item(key, x)?,
-            Value::Str(x) => metadata.set_item(key, x)?,
+            Value::Str(x) => metadata.set_item(key, x.as_str())?,
             Value::RealArray(values) => metadata.set_item(key, values.into_pyarray(py))?,
             Value::IntArray(values) => metadata.set_item(key, values.into_pyarray(py))?,
             Value::BoolArray(values) => metadata.set_item(key, values.into_pyarray(py))?,
-            Value::StrArray(values) => metadata.set_item(key, values)?,
+            Value::StrArray(values) => {
+                metadata.set_item(key, values.iter().map(|s| s.as_str()).collect::<Vec<_>>())?
+            }
         }
     }
     data.set_item("metadata", metadata)?;
@@ -1078,6 +1081,7 @@ fn columns_to_pydict(py: Python<'_>, columns: Vec<Column>) -> PyResult<Bound<'_,
     let dict = PyDict::new(py);
     for column in columns {
         let Column { name, width, data } = column;
+        let name = name.as_str();
 
         match data {
             ColumnData::Real(values) => {
@@ -1091,10 +1095,12 @@ fn columns_to_pydict(py: Python<'_>, columns: Vec<Column>) -> PyResult<Bound<'_,
             }
             ColumnData::Str(values) => {
                 if width == 1 {
-                    dict.set_item(name, values)?;
+                    dict.set_item(name, values.iter().map(|s| s.as_str()).collect::<Vec<_>>())?;
                 } else {
-                    let rows: Vec<Vec<String>> =
-                        values.chunks(width).map(<[String]>::to_vec).collect();
+                    let rows: Vec<Vec<&str>> = values
+                        .chunks(width)
+                        .map(|c| c.iter().map(|s| s.as_str()).collect())
+                        .collect();
                     dict.set_item(name, rows)?;
                 }
             }
@@ -1235,7 +1241,7 @@ fn pydict_to_frame(data: &Bound<'_, PyDict>) -> PyResult<Frame> {
 
     let mut core_metadata = Vec::new();
     for (key, value) in metadata.cast::<PyDict>()?.iter() {
-        core_metadata.push((key.extract()?, py_to_value(&value)?));
+        core_metadata.push((key.extract::<String>()?.into(), py_to_value(&value)?));
     }
 
     Ok(Frame {
@@ -1255,14 +1261,22 @@ fn item<'py>(data: &Bound<'py, PyDict>, key: &str) -> PyResult<Bound<'py, PyAny>
 fn py_to_column(name: String, value: &Bound<'_, PyAny>) -> PyResult<Column> {
     if value.is_instance_of::<PyList>() {
         let (data, width) = str_column(value.cast::<PyList>()?)?;
-        return Ok(Column { name, width, data });
+        return Ok(Column {
+            name: name.into(),
+            width,
+            data,
+        });
     }
     let (data, width) = numeric_array(value).ok_or_else(|| {
         PyTypeError::new_err(format!(
             "column {name:?} must be a numpy float/int/bool array or a list of strings"
         ))
     })?;
-    Ok(Column { name, width, data })
+    Ok(Column {
+        name: name.into(),
+        width,
+        data,
+    })
 }
 
 /// A string column from `list[str]` (width 1) or `list[list[str]]` (width n),
@@ -1275,7 +1289,10 @@ fn str_column(list: &Bound<'_, PyList>) -> PyResult<(ColumnData, usize)> {
 
     if !nested {
         let flat: Vec<String> = list.extract()?;
-        return Ok((ColumnData::Str(flat), 1));
+        return Ok((
+            ColumnData::Str(flat.into_iter().map(Into::into).collect()),
+            1,
+        ));
     }
 
     let rows: Vec<Vec<String>> = list.extract()?;
@@ -1285,7 +1302,10 @@ fn str_column(list: &Bound<'_, PyList>) -> PyResult<(ColumnData, usize)> {
             "string column rows have differing widths",
         ));
     }
-    Ok((ColumnData::Str(rows.into_iter().flatten().collect()), width))
+    Ok((
+        ColumnData::Str(rows.into_iter().flatten().map(Into::into).collect()),
+        width,
+    ))
 }
 
 /// A numeric column's flat buffer and width, or `None` if `value` is not a 1-D
@@ -1317,7 +1337,7 @@ fn flat_array<T: Element + Clone>(value: &Bound<'_, PyAny>) -> Option<(Vec<T>, u
 /// (a Python bool is an int subclass).
 fn py_to_value(value: &Bound<'_, PyAny>) -> PyResult<Value> {
     if value.is_instance_of::<PyString>() {
-        return Ok(Value::Str(value.extract()?));
+        return Ok(Value::Str(value.extract::<String>()?.into()));
     }
     if let Some((data, _)) = numeric_array(value) {
         return Ok(match data {
@@ -1328,7 +1348,13 @@ fn py_to_value(value: &Bound<'_, PyAny>) -> PyResult<Value> {
         });
     }
     if value.is_instance_of::<PyList>() {
-        return Ok(Value::StrArray(value.extract()?));
+        return Ok(Value::StrArray(
+            value
+                .extract::<Vec<String>>()?
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+        ));
     }
     if let Ok(b) = value.cast::<pyo3::types::PyBool>() {
         return Ok(Value::Bool(b.is_true()));

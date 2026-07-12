@@ -9,6 +9,7 @@
 //! fill to hold the fixed shape.
 
 use crate::model::{Column, ColumnData, ColumnKind, Frame, Value};
+use compact_str::CompactString;
 
 /// A single-cell fill value; its kind matches the field it fills.
 #[derive(Debug, Clone, PartialEq)]
@@ -92,14 +93,16 @@ fn materialise_column(kind: ColumnKind, width: usize, n_atoms: usize, fill: &Fil
         (ColumnKind::Real, Fill::Real(x)) => ColumnData::Real(vec![*x; count]),
         (ColumnKind::Int, Fill::Int(x)) => ColumnData::Int(vec![*x; count]),
         (ColumnKind::Bool, Fill::Bool(x)) => ColumnData::Bool(vec![*x; count]),
-        (ColumnKind::Str, Fill::Str(x)) => ColumnData::Str(vec![x.clone(); count]),
+        (ColumnKind::Str, Fill::Str(x)) => {
+            ColumnData::Str(vec![CompactString::from(x.as_str()); count])
+        }
         // The compiler in Python pairs kind with a like-kinded fill; a mismatch
         // here is a plan-construction bug, so fall back to the declared kind's
         // zero rather than panicking on hostile input.
         (ColumnKind::Real, _) => ColumnData::Real(vec![f64::NAN; count]),
         (ColumnKind::Int, _) => ColumnData::Int(vec![0; count]),
         (ColumnKind::Bool, _) => ColumnData::Bool(vec![false; count]),
-        (ColumnKind::Str, _) => ColumnData::Str(vec![String::new(); count]),
+        (ColumnKind::Str, _) => ColumnData::Str(vec![CompactString::default(); count]),
     }
 }
 
@@ -130,21 +133,23 @@ fn materialise_value(kind: ColumnKind, shape: Option<usize>, fill: &Fill) -> Val
         (None, ColumnKind::Real, Fill::Real(x)) => Value::Real(*x),
         (None, ColumnKind::Int, Fill::Int(x)) => Value::Int(*x),
         (None, ColumnKind::Bool, Fill::Bool(x)) => Value::Bool(*x),
-        (None, ColumnKind::Str, Fill::Str(x)) => Value::Str(x.clone()),
+        (None, ColumnKind::Str, Fill::Str(x)) => Value::Str(CompactString::from(x.as_str())),
         (Some(n), ColumnKind::Real, Fill::Real(x)) => Value::RealArray(vec![*x; n]),
         (Some(n), ColumnKind::Int, Fill::Int(x)) => Value::IntArray(vec![*x; n]),
         (Some(n), ColumnKind::Bool, Fill::Bool(x)) => Value::BoolArray(vec![*x; n]),
-        (Some(n), ColumnKind::Str, Fill::Str(x)) => Value::StrArray(vec![x.clone(); n]),
+        (Some(n), ColumnKind::Str, Fill::Str(x)) => {
+            Value::StrArray(vec![CompactString::from(x.as_str()); n])
+        }
         // Kind/fill mismatch is a plan-construction bug; produce a like-kinded
         // zero rather than panic (see materialise_column).
         (None, ColumnKind::Real, _) => Value::Real(f64::NAN),
         (None, ColumnKind::Int, _) => Value::Int(0),
         (None, ColumnKind::Bool, _) => Value::Bool(false),
-        (None, ColumnKind::Str, _) => Value::Str(String::new()),
+        (None, ColumnKind::Str, _) => Value::Str(CompactString::default()),
         (Some(n), ColumnKind::Real, _) => Value::RealArray(vec![f64::NAN; n]),
         (Some(n), ColumnKind::Int, _) => Value::IntArray(vec![0; n]),
         (Some(n), ColumnKind::Bool, _) => Value::BoolArray(vec![false; n]),
-        (Some(n), ColumnKind::Str, _) => Value::StrArray(vec![String::new(); n]),
+        (Some(n), ColumnKind::Str, _) => Value::StrArray(vec![CompactString::default(); n]),
     }
 }
 
@@ -153,13 +158,13 @@ fn project_metadata(
     plan: &ProjectionPlan,
     deviations: &mut Vec<Deviation>,
     dropped: &mut bool,
-) -> Vec<(String, Value)> {
+) -> Vec<(CompactString, Value)> {
     let mut metadata = Vec::with_capacity(plan.metadata.len());
     for pm in &plan.metadata {
         let expected = metadata_sig(pm.kind, pm.shape);
         match lookup_metadata(frame, pm) {
             Lookup::Conforming(value) => {
-                metadata.push((pm.name.clone(), value.clone()));
+                metadata.push((CompactString::from(pm.name.as_str()), value.clone()));
             }
             found => {
                 match found {
@@ -183,9 +188,10 @@ fn project_metadata(
                     _ => {}
                 }
                 match &pm.fill {
-                    Some(fill) => {
-                        metadata.push((pm.name.clone(), materialise_value(pm.kind, pm.shape, fill)))
-                    }
+                    Some(fill) => metadata.push((
+                        CompactString::from(pm.name.as_str()),
+                        materialise_value(pm.kind, pm.shape, fill),
+                    )),
                     None => *dropped = true,
                 }
             }
@@ -271,7 +277,7 @@ pub fn project_frame(frame: &Frame, plan: &ProjectionPlan) -> Projected {
                 }
                 match &pc.fill {
                     Some(fill) => columns.push(Column {
-                        name: pc.name.clone(),
+                        name: CompactString::from(pc.name.as_str()),
                         width: pc.width,
                         data: materialise_column(pc.kind, pc.width, n_atoms, fill),
                     }),

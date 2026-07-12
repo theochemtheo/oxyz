@@ -24,6 +24,7 @@ use flate2::{Compression as GzLevel, write::GzEncoder};
 use crate::decode::{Codec, Compression, detect_for_write, is_extxyz};
 use crate::extxyz::{ExtxyzError, Result};
 use crate::model::{ColumnData, Frame, Value};
+use compact_str::CompactString;
 
 /// Write every frame to `path`, encoding per `compression`.
 ///
@@ -244,7 +245,7 @@ fn write_bool_array<W: Write>(out: &mut W, xs: &[bool], quoted: bool) -> io::Res
 }
 
 /// String arrays always bracket-quote each element: `["slab","relaxed"]`.
-fn write_str_array<W: Write>(out: &mut W, xs: &[String]) -> io::Result<()> {
+fn write_str_array<W: Write>(out: &mut W, xs: &[CompactString]) -> io::Result<()> {
     out.write_all(b"[")?;
     for (i, s) in xs.iter().enumerate() {
         if i > 0 {
@@ -571,7 +572,7 @@ mod tests {
 
     fn col(name: &str, width: usize, data: ColumnData) -> Column {
         Column {
-            name: name.to_owned(),
+            name: name.into(),
             width,
             data,
         }
@@ -581,11 +582,7 @@ mod tests {
         Frame {
             n_atoms: 2,
             columns: vec![
-                col(
-                    "species",
-                    1,
-                    ColumnData::Str(vec!["O".to_owned(), "H".to_owned()]),
-                ),
+                col("species", 1, ColumnData::Str(vec!["O".into(), "H".into()])),
                 col(
                     "pos",
                     3,
@@ -593,7 +590,7 @@ mod tests {
                 ),
             ],
             metadata: vec![(
-                "Lattice".to_owned(),
+                "Lattice".into(),
                 Value::RealArray(vec![5.0, 0.0, 0.0, 0.0, 5.0, 0.0, 0.0, 0.0, 5.0]),
             )],
         }
@@ -615,12 +612,12 @@ mod tests {
     fn lattice_pbc_then_properties_then_rest() {
         let mut frame = water();
         frame.metadata = vec![
-            ("config_type".to_owned(), Value::Str("bulk".to_owned())),
+            ("config_type".into(), Value::Str("bulk".into())),
             (
-                "Lattice".to_owned(),
+                "Lattice".into(),
                 Value::RealArray(vec![5.0, 0.0, 0.0, 0.0, 5.0, 0.0, 0.0, 0.0, 5.0]),
             ),
-            ("pbc".to_owned(), Value::BoolArray(vec![true, true, false])),
+            ("pbc".into(), Value::BoolArray(vec![true, true, false])),
         ];
         let text = serialise(&frame);
         let comment = text.lines().nth(1).unwrap();
@@ -637,7 +634,7 @@ mod tests {
             columns: vec![
                 col("forces", 3, ColumnData::Real(vec![1.0, 2.0, 3.0])),
                 col("pos", 3, ColumnData::Real(vec![0.0, 0.0, 0.0])),
-                col("species", 1, ColumnData::Str(vec!["Fe".to_owned()])),
+                col("species", 1, ColumnData::Str(vec!["Fe".into()])),
             ],
             metadata: vec![],
         };
@@ -654,7 +651,7 @@ mod tests {
     fn missing_species_or_pos_is_rejected() {
         let no_pos = Frame {
             n_atoms: 1,
-            columns: vec![col("species", 1, ColumnData::Str(vec!["H".to_owned()]))],
+            columns: vec![col("species", 1, ColumnData::Str(vec!["H".into()]))],
             metadata: vec![],
         };
         assert!(matches!(
@@ -678,11 +675,7 @@ mod tests {
         let frame = Frame {
             n_atoms: 2,
             columns: vec![
-                col(
-                    "species",
-                    1,
-                    ColumnData::Str(vec!["Si".to_owned(), "O".to_owned()]),
-                ),
+                col("species", 1, ColumnData::Str(vec!["Si".into(), "O".into()])),
                 col(
                     "pos",
                     3,
@@ -692,16 +685,13 @@ mod tests {
                 col("fixed", 1, ColumnData::Bool(vec![true, false])),
             ],
             metadata: vec![
-                ("energy".to_owned(), Value::Real(-1.2345e3)),
-                ("count".to_owned(), Value::Int(42)),
-                ("flag".to_owned(), Value::Bool(true)),
-                ("name".to_owned(), Value::Str("water monomer".to_owned())),
-                ("scale".to_owned(), Value::RealArray(vec![0.5])),
-                ("dims".to_owned(), Value::IntArray(vec![2, 2, 1])),
-                (
-                    "tags".to_owned(),
-                    Value::StrArray(vec!["a".to_owned(), "b".to_owned()]),
-                ),
+                ("energy".into(), Value::Real(-1.2345e3)),
+                ("count".into(), Value::Int(42)),
+                ("flag".into(), Value::Bool(true)),
+                ("name".into(), Value::Str("water monomer".into())),
+                ("scale".into(), Value::RealArray(vec![0.5])),
+                ("dims".into(), Value::IntArray(vec![2, 2, 1])),
+                ("tags".into(), Value::StrArray(vec!["a".into(), "b".into()])),
             ],
         };
         let reparsed = reparse(&serialise(&frame));

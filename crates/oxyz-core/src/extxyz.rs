@@ -13,6 +13,7 @@ use std::{
     path::Path,
 };
 
+use compact_str::CompactString;
 use thiserror::Error;
 
 use crate::batch::{Batch, BatchBuilder, BatchError};
@@ -375,8 +376,8 @@ fn lattice_volume(comment: &str) -> Option<f64> {
     let raw = pairs
         .iter()
         .rev()
-        .find(|(key, _)| key == "Lattice")
-        .map(|(_, value)| value.as_str())?;
+        .find(|(key, _)| *key == "Lattice")
+        .map(|(_, value)| *value)?;
     let mut cell = [0.0f64; 9];
     let mut count = 0usize;
     for token in raw.split_whitespace() {
@@ -460,6 +461,10 @@ struct RawFrames<R: BufRead> {
     /// Count-line buffer, reused across frames; selected frames take it
     /// over as the start of their byte buffer.
     scratch: Vec<u8>,
+    /// Byte length of the last frame emitted: frames in a file run to similar
+    /// sizes, so reserving this up front spares a selected frame's buffer the
+    /// handful of line-by-line `read_until` reallocations.
+    bytes_hint: usize,
     fused: bool,
 }
 
@@ -474,6 +479,7 @@ impl<R: BufRead> RawFrames<R> {
             selection: None,
             stop_after: None,
             scratch: Vec::new(),
+            bytes_hint: 0,
             fused: false,
         }
     }
@@ -490,6 +496,7 @@ impl<R: BufRead> RawFrames<R> {
             selection: Some(selection),
             stop_after,
             scratch: Vec::new(),
+            bytes_hint: 0,
             fused: false,
         }
     }
@@ -592,6 +599,7 @@ impl<R: BufRead> Iterator for RawFrames<R> {
             }
 
             let mut bytes = std::mem::take(&mut self.scratch);
+            bytes.reserve(self.bytes_hint.saturating_sub(bytes.len()));
             for skipped in 0..=n_atoms {
                 let n_read = match self.reader.read_until(b'\n', &mut bytes) {
                     Ok(n_read) => n_read,
@@ -604,6 +612,7 @@ impl<R: BufRead> Iterator for RawFrames<R> {
                 self.line_number += 1;
             }
 
+            self.bytes_hint = bytes.len();
             self.frame_index += 1;
             return Some(Ok(RawFrame {
                 frame_index,
@@ -1446,7 +1455,7 @@ fn relabel_frame(item: Option<Result<Frame>>, frame_index: usize) -> Result<Fram
 
 /// A parsed comment line: the `Properties` column specs and the remaining
 /// metadata pairs, in file order.
-type CommentHeader = (Vec<PropertySpec>, Vec<(String, Value)>);
+type CommentHeader = (Vec<PropertySpec>, Vec<(CompactString, Value)>);
 
 /// Parse a comment line into its `Properties` column specs and the remaining
 /// metadata. `Properties` is consumed into typed columns; every other pair is
@@ -1459,9 +1468,9 @@ fn parse_comment_line(comment: &str) -> Result<CommentHeader> {
     let mut specs: Option<Vec<PropertySpec>> = None;
     for (key, raw) in pairs {
         if key == "Properties" && specs.is_none() {
-            specs = Some(parse_properties(&raw)?);
+            specs = Some(parse_properties(raw)?);
         } else {
-            metadata.push((key, type_metadata_value(&raw)));
+            metadata.push((key.into(), type_metadata_value(raw)));
         }
     }
 
@@ -1574,7 +1583,7 @@ fn parse_atom_lines(
     row_width: usize,
     first_line: usize,
 ) -> Result<()> {
-    let mut cells: Vec<(usize, usize)> = Vec::new();
+    let mut cells: Vec<(usize, usize)> = Vec::with_capacity(row_width);
     let mut line_number = first_line;
     let mut start = 0;
 
@@ -1951,7 +1960,7 @@ impl<R: BufRead> Iterator for FrameIter<R> {
 /// One `name:kind:width` triplet from the Properties descriptor — the
 /// header's promise, as distinct from the materialised [`Column`].
 struct PropertySpec {
-    name: String,
+    name: CompactString,
     kind: ColumnKind,
     width: usize,
 }
@@ -2046,7 +2055,7 @@ fn parse_properties(descriptor: &str) -> Result<Vec<PropertySpec>> {
             };
 
             Ok(PropertySpec {
-                name: name.to_owned(),
+                name: name.into(),
                 kind,
                 width: parsed_width,
             })
@@ -2094,7 +2103,7 @@ fn push_cells<'a>(column: &mut Column, cells: impl Iterator<Item = &'a [u8]>) ->
         }
         ColumnData::Str(buffer) => {
             for cell in cells {
-                buffer.push(line_str(cell)?.to_owned());
+                buffer.push(line_str(cell)?.into());
             }
         }
     }
@@ -2129,7 +2138,11 @@ fn bool_cell(cell: &[u8]) -> Option<bool> {
 
 /// Tokenize the comment line into ordered `(key, raw value)` pairs; file
 /// order and duplicate keys are preserved.
-fn parse_comment_metadata(comment: &str) -> Result<Vec<(String, String)>> {
+/// Borrows key and value slices out of `comment`: the pairs are consumed in
+/// the same scope (typed into `Value`s, or scanned for `Lattice`), so only the
+/// kept metadata key is owned later — never the raw value. Owning both here
+/// cost two allocations per key, the parse's largest allocation source.
+fn parse_comment_metadata(comment: &str) -> Result<Vec<(&str, &str)>> {
     let bytes = comment.as_bytes();
     let mut pairs = Vec::new();
     let mut i = 0;
@@ -2191,7 +2204,7 @@ fn parse_comment_metadata(comment: &str) -> Result<Vec<(String, String)>> {
             slice_comment(comment, value_start, i)?
         };
 
-        pairs.push((key.to_owned(), value.to_owned()));
+        pairs.push((key, value));
     }
 
     Ok(pairs)
@@ -2211,13 +2224,17 @@ fn type_metadata_value(raw: &str) -> Value {
         return array;
     }
 
-    let tokens: Vec<&str> = raw.split_whitespace().collect();
-
-    match tokens.as_slice() {
+    // The scalar and empty cases (energies, ids, flags — the bulk of comment
+    // keys) need no allocation; only a whitespace array collects.
+    let mut tokens = raw.split_whitespace();
+    match (tokens.next(), tokens.next()) {
         // Empty (e.g. a quoted "") or all-whitespace value.
-        [] => Value::Str(raw.to_owned()),
-        [token] => scalar_value(token, raw),
-        _ => whitespace_array_value(&tokens, raw),
+        (None, _) => Value::Str(raw.into()),
+        (Some(token), None) => scalar_value(token, raw),
+        (Some(_), Some(_)) => {
+            let tokens: Vec<&str> = raw.split_whitespace().collect();
+            whitespace_array_value(&tokens, raw)
+        }
     }
 }
 
@@ -2233,7 +2250,7 @@ fn scalar_value(token: &str, raw: &str) -> Value {
 
     match bool_token(token) {
         Some(boolean) => Value::Bool(boolean),
-        None => Value::Str(raw.to_owned()),
+        None => Value::Str(raw.into()),
     }
 }
 
@@ -2253,7 +2270,7 @@ fn whitespace_array_value(tokens: &[&str], raw: &str) -> Value {
     }
 
     // Mixed tokens are a sentence, not an array.
-    Value::Str(raw.to_owned())
+    Value::Str(raw.into())
 }
 
 /// Parse every token as `T`, or `None` on the first failure.
@@ -2305,7 +2322,7 @@ fn parse_bracket_array(raw: &str) -> Option<Value> {
     Some(Value::StrArray(
         elements
             .iter()
-            .map(|element| strip_quotes(element).to_owned())
+            .map(|element| strip_quotes(element).into())
             .collect(),
     ))
 }
@@ -2327,7 +2344,7 @@ mod tests {
         assert_eq!(type_metadata_value("298.15"), Value::Real(298.15));
         assert_eq!(type_metadata_value("T"), Value::Bool(true));
         assert_eq!(type_metadata_value("False"), Value::Bool(false));
-        assert_eq!(type_metadata_value("train"), Value::Str("train".to_owned()));
+        assert_eq!(type_metadata_value("train"), Value::Str("train".into()));
 
         // "1" is an integer, not a boolean, on the comment line.
         assert_eq!(type_metadata_value("1"), Value::Int(1));
@@ -2352,7 +2369,7 @@ mod tests {
         // Mixed tokens are a sentence, kept whole.
         assert_eq!(
             type_metadata_value("water monomer"),
-            Value::Str("water monomer".to_owned())
+            Value::Str("water monomer".into())
         );
     }
 
@@ -2368,12 +2385,12 @@ mod tests {
         );
         assert_eq!(
             type_metadata_value(r#"["slab","relaxed"]"#),
-            Value::StrArray(vec!["slab".to_owned(), "relaxed".to_owned()])
+            Value::StrArray(vec!["slab".into(), "relaxed".into()])
         );
         // 2-D arrays fall back to the raw string for now.
         assert_eq!(
             type_metadata_value("[[1,0],[0,1]]"),
-            Value::Str("[[1,0],[0,1]]".to_owned())
+            Value::Str("[[1,0],[0,1]]".into())
         );
     }
 

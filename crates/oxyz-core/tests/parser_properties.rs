@@ -150,7 +150,7 @@ proptest! {
                     2 => ColumnData::Bool(vec![true; count]),
                     _ => ColumnData::Str(vec!["x".into(); count]),
                 };
-                Column { name: format!("c{name_i}"), width: w, data }
+                Column { name: format!("c{name_i}").into(), width: w, data }
             })
             .collect();
         let frame = Frame { n_atoms, columns, metadata: Vec::new() };

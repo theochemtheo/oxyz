@@ -16,6 +16,7 @@
 use std::fmt;
 
 use crate::model::{ColumnKind, Frame, Value};
+use compact_str::CompactString;
 
 /// The type and shape of a metadata value, without its data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,7 +170,7 @@ impl Schema {
                 Some(index) => index,
                 None => {
                     self.columns.push(ColumnSchema {
-                        name: column.name.clone(),
+                        name: column.name.to_string(),
                         variants: Vec::new(),
                         frames_present: 0,
                     });
@@ -199,7 +200,7 @@ impl Schema {
         // dict semantics of `Frame`'s Python view, so a repeated key counts
         // once rather than pushing frames_present past n_frames (which would
         // wrongly read as inconsistent).
-        let mut deduped: Vec<(&String, &Value)> = Vec::with_capacity(frame.metadata.len());
+        let mut deduped: Vec<(&CompactString, &Value)> = Vec::with_capacity(frame.metadata.len());
         for (key, value) in &frame.metadata {
             match deduped.iter_mut().find(|(existing, _)| *existing == key) {
                 Some(slot) => slot.1 = value,
@@ -208,11 +209,15 @@ impl Schema {
         }
 
         for (key, value) in deduped {
-            let index = match self.metadata.iter().position(|entry| &entry.key == key) {
+            let index = match self
+                .metadata
+                .iter()
+                .position(|entry| entry.key.as_str() == key.as_str())
+            {
                 Some(index) => index,
                 None => {
                     self.metadata.push(MetadataSchema {
-                        key: key.clone(),
+                        key: key.to_string(),
                         variants: Vec::new(),
                         frames_present: 0,
                     });

@@ -28,7 +28,7 @@ fn reads_simple_extxyz_fixture() {
 
     let species = frame.column("species").unwrap();
     assert_eq!(species.width, 1);
-    assert_eq!(species.data, ColumnData::Str(vec!["H".to_owned()]));
+    assert_eq!(species.data, ColumnData::Str(vec!["H".into()]));
 
     let pos = frame.column("pos").unwrap();
     assert_eq!(pos.width, 3);
@@ -104,7 +104,7 @@ fn reads_integer_columns_with_species_mid_row() {
     let species = frame.column("species").unwrap();
     assert_eq!(
         species.data,
-        ColumnData::Str(vec!["Si".to_owned(), "Si".to_owned(), "O".to_owned()])
+        ColumnData::Str(vec!["Si".into(), "Si".into(), "O".into()])
     );
 
     let selection = frame.column("selection").unwrap();
@@ -135,12 +135,7 @@ fn reads_per_atom_string_column_and_any_element() {
     let species = frame.column("species").unwrap();
     assert_eq!(
         species.data,
-        ColumnData::Str(vec![
-            "O".to_owned(),
-            "H".to_owned(),
-            "H".to_owned(),
-            "Ar".to_owned()
-        ])
+        ColumnData::Str(vec!["O".into(), "H".into(), "H".into(), "Ar".into()])
     );
 
     let labels = frame.column("molecule_type").unwrap();
@@ -148,10 +143,10 @@ fn reads_per_atom_string_column_and_any_element() {
     assert_eq!(
         labels.data,
         ColumnData::Str(vec![
-            "water".to_owned(),
-            "water".to_owned(),
-            "water".to_owned(),
-            "noble_gas".to_owned()
+            "water".into(),
+            "water".into(),
+            "water".into(),
+            "noble_gas".into()
         ])
     );
 }
@@ -176,7 +171,7 @@ fn reads_mace_training_schema_with_raw_names() {
     );
     assert_eq!(
         frame.metadata_value("config_type"),
-        Some(&Value::Str("Default".to_owned()))
+        Some(&Value::Str("Default".into()))
     );
 }
 
@@ -219,11 +214,11 @@ fn keeps_metadata_attached_to_the_right_frame() {
 
     assert_eq!(
         frames[0].metadata_value("head"),
-        Some(&Value::Str("DFT".to_owned()))
+        Some(&Value::Str("DFT".into()))
     );
     assert_eq!(
         frames[1].metadata_value("head"),
-        Some(&Value::Str("MP2".to_owned()))
+        Some(&Value::Str("MP2".into()))
     );
 }
 
@@ -284,11 +279,11 @@ fn types_quoted_strings_booleans_and_scalars_from_file() {
 
     assert_eq!(
         frame.metadata_value("source"),
-        Some(&Value::Str("generated for parser study".to_owned()))
+        Some(&Value::Str("generated for parser study".into()))
     );
     assert_eq!(
         frame.metadata_value("split"),
-        Some(&Value::Str("train".to_owned()))
+        Some(&Value::Str("train".into()))
     );
     assert_eq!(frame.metadata_value("converged"), Some(&Value::Bool(true)));
     assert_eq!(frame.metadata_value("frozen"), Some(&Value::Bool(false)));
