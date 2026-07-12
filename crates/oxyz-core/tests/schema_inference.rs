@@ -181,3 +181,40 @@ fn report_summarises_a_stable_file() {
     assert!(report.contains("forces: R:3 (2/2 frames)"));
     assert!(report.contains("energy: Real (2/2 frames)"));
 }
+
+#[test]
+fn types_arrays_scalars_and_flags_a_column_width_conflict() {
+    // Exercises every metadata value shape (Str, Bool, Int/Real-array
+    // promotion, BoolArray, StrArray) and a per-atom column whose width
+    // changes between frames — an unresolvable conflict.
+    let text = "\
+1
+Properties=species:S:1:pos:R:3:q:R:1 label=hello done=T counts=[1,2] tags=[a,b] flags=\"T F\"
+H 0 0 0 0.5
+1
+Properties=species:S:1:pos:R:3:q:R:2 label=world done=F counts=[3.5,4.5] tags=[c,d] flags=\"F T\"
+H 0 0 0 0.5 0.6
+";
+    let mut schema = Schema::default();
+    for frame in FrameIter::new(Cursor::new(text)) {
+        schema.observe(&frame.unwrap());
+    }
+
+    let entry = |key: &str| schema.metadata.iter().find(|m| m.key == key).unwrap();
+    assert_eq!(entry("label").unified(), Some(ValueType::Str));
+    assert_eq!(entry("done").unified(), Some(ValueType::Bool));
+    // Int array then Real array of equal length promotes to a Real array.
+    assert_eq!(entry("counts").unified(), Some(ValueType::RealArray(2)));
+    assert_eq!(entry("tags").unified(), Some(ValueType::StrArray(2)));
+    assert_eq!(entry("flags").unified(), Some(ValueType::BoolArray(2)));
+
+    // q is R:1 in the first frame and R:2 in the second: no unification.
+    let column = |name: &str| schema.columns.iter().find(|c| c.name == name).unwrap();
+    assert_eq!(column("q").unified(), None);
+    assert!(!schema.is_consistent());
+
+    // The report renders the array signatures (Display over the ValueTypes).
+    let report = schema.to_string();
+    assert!(report.contains("StrArray[2]"), "{report}");
+    assert!(report.contains("RealArray[2]"), "{report}");
+}
