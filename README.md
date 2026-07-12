@@ -378,23 +378,23 @@ parser, via its `read_dicts`):
 
 | workload | oxyz | oxyz `threads=1` | cextxyz |
 | --- | ---: | ---: | ---: |
-| 2 000 small frames | **12.0 ms** | 24.9 ms | 237 ms |
-| 4 × 100 000 atoms | **33.5 ms** | 68.2 ms | 91.5 ms |
-| 2 000 frames, heavy metadata | **17.4 ms** | 34.5 ms | 401 ms |
-| MACE-style mixed file | **8.7 ms** | 17.3 ms | 152 ms |
+| 2 000 small frames | **8.8 ms** | 18.1 ms | 240 ms |
+| 4 × 100 000 atoms | **23.9 ms** | 52.6 ms | 94.0 ms |
+| 2 000 frames, heavy metadata | **13.0 ms** | 25.6 ms | 408 ms |
+| MACE-style mixed file | **6.4 ms** | 12.8 ms | 152 ms |
 
 Whole-file reads to `ase.Atoms` (`oxyz.ase.read` vs the [ase-extxyz] plugin
 wrapping the same C parser, vs `ase.io.read`):
 
 | workload | oxyz.ase | ase-extxyz | ase |
 | --- | ---: | ---: | ---: |
-| 2 000 small frames | **61 ms** | 116 ms | 206 ms |
-| 4 × 100 000 atoms | **77 ms** | 91 ms | 446 ms |
-| 2 000 frames, heavy metadata | **85 ms** | 304 ms | 336 ms |
-| MACE-style mixed file | **41 ms** | 95 ms | 154 ms |
+| 2 000 small frames | **67 ms** | 121 ms | 213 ms |
+| 4 × 100 000 atoms | **69 ms** | 92 ms | 437 ms |
+| 2 000 frames, heavy metadata | **81 ms** | 311 ms | 338 ms |
+| MACE-style mixed file | **39 ms** | 92 ms | 156 ms |
 
 Beyond whole-file reads: on selective reads (every 20th frame of the
-small-frames file) `oxyz.read_batch` takes 1.8 ms against 21 ms for ASE;
+small-frames file) `oxyz.read_batch` takes 1.6 ms against 25 ms for ASE;
 on peak memory, streaming `iread` through the small-frames file
 grows RSS by 12 MiB where `ase.io.iread` grows it by 56 MiB
 ([benchmarks/MEMORY.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/MEMORY.md)).
