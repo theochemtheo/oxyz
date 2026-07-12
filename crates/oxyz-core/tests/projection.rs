@@ -2,7 +2,11 @@ use oxyz_core::model::{Column, ColumnData, ColumnKind, Frame, Value};
 use oxyz_core::project::{
     Axis, DeviationKind, Fill, PlanColumn, PlanMetadata, Projected, ProjectionPlan,
 };
-use oxyz_core::{read_all_batch_projected_from, read_batch_projected_from};
+use oxyz_core::{
+    ExtxyzError, iter_batches_projected_from, read_all_batch_projected_from,
+    read_all_batch_projected_parallel_from, read_batch_projected_from,
+    read_batch_projected_parallel_from,
+};
 
 fn real_col_plan(name: &str, width: usize, required: bool) -> PlanColumn {
     PlanColumn {
@@ -521,4 +525,88 @@ fn kind_mismatched_fill_falls_back_instead_of_panicking() {
     assert_eq!(p.frame.metadata[5].1, Value::IntArray(vec![0]));
     assert_eq!(p.frame.metadata[6].1, Value::BoolArray(vec![false]));
     assert_eq!(p.frame.metadata[7].1, Value::StrArray(vec![String::new()]));
+}
+
+// --- parallel and streamed projected reads match the serial read ---------
+
+// A four-frame file that drifts: charge present, absent, present (2 atoms),
+// absent. Enough to exercise fill, request order, and multi-frame batches.
+const DRIFT: &str = "1\nProperties=species:S:1:pos:R:3:charge:R:1\nH 0 0 0 0.5\n\
+                     1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n\
+                     2\nProperties=species:S:1:pos:R:3:charge:R:1\nH 0 0 0 1.0\nO 1 1 1 -1.0\n\
+                     1\nProperties=species:S:1:pos:R:3\nO 0 0 0\n";
+
+fn drift_plan() -> ProjectionPlan {
+    // A concrete (non-NaN) fill so a filled column compares equal across the
+    // serial and parallel reads — derived `PartialEq` on `f64` treats NaN as
+    // unequal to itself, which would otherwise mask a true parity check.
+    ProjectionPlan {
+        columns: vec![
+            real_col_plan("pos", 3, true),
+            real_plan("charge", 1, false, Some(-1.5)),
+        ],
+        metadata: Vec::new(),
+    }
+}
+
+fn assert_same_projection(a: &oxyz_core::ProjectedBatch, b: &oxyz_core::ProjectedBatch) {
+    assert_eq!(a.survivors, b.survivors);
+    assert_eq!(a.batch, b.batch);
+    assert_eq!(a.reports, b.reports);
+}
+
+#[test]
+fn projected_whole_file_parallel_matches_serial() {
+    let plan = drift_plan();
+    let serial = read_all_batch_projected_from(DRIFT.as_bytes(), &plan).unwrap();
+    for threads in [None, Some(1), Some(3)] {
+        let par = read_all_batch_projected_parallel_from(DRIFT.as_bytes(), threads, &plan).unwrap();
+        assert_same_projection(&par, &serial);
+    }
+}
+
+#[test]
+fn projected_selection_parallel_matches_serial() {
+    let plan = drift_plan();
+    let serial = read_batch_projected_from(DRIFT.as_bytes(), &[3, 0, 2], &plan).unwrap();
+    let par =
+        read_batch_projected_parallel_from(DRIFT.as_bytes(), &[3, 0, 2], Some(2), &plan).unwrap();
+    assert_same_projection(&par, &serial);
+}
+
+#[test]
+fn projected_streamed_batches_cover_every_surviving_frame() {
+    let whole = read_all_batch_projected_from(DRIFT.as_bytes(), &drift_plan()).unwrap();
+    let mut survivors = Vec::new();
+    let mut n_frames = 0;
+    for item in iter_batches_projected_from(DRIFT.as_bytes(), 2, drift_plan()).unwrap() {
+        let pb = item.unwrap();
+        survivors.extend(pb.survivors);
+        n_frames += pb.batch.n_frames();
+    }
+    assert_eq!(survivors, whole.survivors);
+    assert_eq!(n_frames, whole.batch.n_frames());
+}
+
+#[test]
+fn projected_reads_reject_an_empty_selection() {
+    let plan = drift_plan();
+    assert!(matches!(
+        read_batch_projected_from(DRIFT.as_bytes(), &[], &plan),
+        Err(ExtxyzError::Batch(oxyz_core::BatchError::Empty))
+    ));
+    assert!(matches!(
+        read_batch_projected_parallel_from(DRIFT.as_bytes(), &[], None, &plan),
+        Err(ExtxyzError::Batch(oxyz_core::BatchError::Empty))
+    ));
+}
+
+#[test]
+fn iter_batches_projected_rejects_zero_frames_per_batch() {
+    assert!(matches!(
+        iter_batches_projected_from(DRIFT.as_bytes(), 0, drift_plan()),
+        Err(ExtxyzError::Batch(
+            oxyz_core::BatchError::ZeroFramesPerBatch
+        ))
+    ));
 }

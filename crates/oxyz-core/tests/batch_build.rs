@@ -207,3 +207,48 @@ fn get_batch_gathers_in_requested_order() {
     };
     assert_eq!(&values[..6], &frame2_pos[..]);
 }
+
+#[test]
+fn batch_reports_missing_column_unexpected_metadata_and_column_mismatch() {
+    // A column present in the first frame but absent later.
+    let missing_column = "\
+1
+Properties=species:S:1:pos:R:3:forces:R:3
+H 0 0 0 0 0 0
+1
+Properties=species:S:1:pos:R:3
+H 0 0 0
+";
+    assert_eq!(
+        batch_from(missing_column).unwrap_err().to_string(),
+        "frame 1 is missing column \"forces\""
+    );
+
+    // A metadata key that only a later frame carries.
+    let extra_metadata = "\
+1
+Properties=species:S:1:pos:R:3
+H 0 0 0
+1
+Properties=species:S:1:pos:R:3 extra=5
+H 0 0 0
+";
+    assert_eq!(
+        batch_from(extra_metadata).unwrap_err().to_string(),
+        "frame 1 has unexpected metadata \"extra\""
+    );
+
+    // A per-atom column whose width changes between frames (R:1 then R:2).
+    let column_mismatch = "\
+1
+Properties=species:S:1:pos:R:3:q:R:1
+H 0 0 0 0.5
+2
+Properties=species:S:1:pos:R:3:q:R:2
+H 0 0 0 0.1 0.2
+O 0 0 0 0.3 0.4
+";
+    let error = batch_from(column_mismatch).unwrap_err().to_string();
+    assert!(error.contains("column \"q\""), "{error}");
+    assert!(error.contains("expected R:1, found R:2"), "{error}");
+}
