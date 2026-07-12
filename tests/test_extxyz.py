@@ -87,8 +87,9 @@ def test_parse_error_locates_the_offending_column(tmp_path: Path) -> None:
     assert "pos" in str(error)
 
 
-def test_parse_error_location_defaults_to_none(tmp_path: Path) -> None:
-    # A count-line error pins the frame but neither line nor column.
+def test_parse_error_location_attributes(tmp_path: Path) -> None:
+    # A count-line error pins the frame and the line, but has no single token
+    # to point a column at.
     path = tmp_path / "badcount.xyz"
     path.write_text("not-a-count\ncomment\n")
 
@@ -96,10 +97,10 @@ def test_parse_error_location_defaults_to_none(tmp_path: Path) -> None:
         oxyz.read(path)
     error = excinfo.value
     assert error.frame_index == 0
-    assert error.line is None
+    assert error.line == 1
     assert error.column is None
 
-    # And a directly constructed instance carries None on every axis.
+    # A directly constructed instance carries None on every axis.
     bare = oxyz.ParseError("boom")
     assert bare.frame_index is None
     assert bare.line is None
