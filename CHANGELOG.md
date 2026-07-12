@@ -15,14 +15,64 @@ recorded here.
 - Schema **projection**: set `mode="project"` on a `SchemaSpec` (or per call)
   to reshape every frame to a declared fixed schema — undeclared fields dropped,
   absent optionals filled — making a mixed-schema file batchable. Available on
-  the frame readers (`read_frames`, `read_first`, `read_frames_sliced`,
-  `iter_frames`), the batch readers, and the `oxyz.ase`/`oxyz.metatomic`/
-  `oxyz.torch_sim` output targets, all via `schema=`/`mode=`/`conformance=`.
+  the frame readers (`read`, `iread`), the batch readers, and the
+  `oxyz.ase`/`oxyz.metatomic`/`oxyz.torch_sim` output targets, all via
+  `schema=`/`mode=`/`conformance=`.
   REAL columns fill `NaN` by default; other kinds take an explicit per-field
   `fill`. `SchemaSpec.freeze(path)` expands pattern rules into a project-ready
   schema, exposed on the CLI as `oxyz freeze` and `scan --emit-schema
-  --project`. The batch readers (`read_batch`, `iter_batches`) now also accept
+  --project`. The batch readers (`read_batch`, `iread_batch`) now also accept
   `schema=`/`conformance=`. Validate-mode behaviour is unchanged.
+- `oxyz.metatomic` and `oxyz.torch_sim` `read`/`iread` and their
+  `SystemSource`/`SimStateSource` gain `storage_options=`, so reading from an
+  S3-compatible URL works from every output target, as it already did for
+  `oxyz.ase` and the native readers.
+- `oxyz.ase.read` gains `threads=` to tune the parallel parse of an eager read
+  (as the native and `oxyz.metatomic` readers already had); `None` uses all
+  cores, `1` is serial. `oxyz.ase.iread` streams and takes no `threads`.
+- `oxyz.OxyzError`, a common base (itself a `ValueError`) for every error the
+  package raises: `ParseError`, `SchemaError`, and the converters' `ToAseError`,
+  `FromAtomsError`, `ToSystemError`, `ToSimStateError` all subclass it, so
+  `except oxyz.OxyzError` catches oxyz's errors as a group while
+  `except ValueError` keeps working.
+- Export the `Mode` (`"validate"`/`"project"`) and `Writable`
+  (`Frame | ase.Atoms`, the `write` input) type aliases from `oxyz`, for parity
+  with the already-exported `Conformance`, `Compression`, and `MemoryScaling`.
+- `SchemaSpec` gains `from_json` and `to_file`, so every serialisation format
+  now has a matching `from_`/`to_` pair (`dict`, `json`, `yaml`, `file`).
+- `oxyz check --conformance` accepts `warn`, matching the Python API's
+  conformance levels; like `strict` it reports extra columns/keys.
+
+### Changed
+
+- The native frame readers are unified under `read` and `iread`. Both take an
+  `index` selection — an int (one `Frame`), a slice or slice-string like
+  `"1:10:2"`, or a sequence of non-negative ints (a list, in order); the default
+  `":"` reads every frame. `read_frames` becomes `read`, `iter_frames` becomes
+  `iread`, and the selection that previously needed separate helpers is now a
+  parameter. Selecting a single frame with a schema (`read(path, 0, schema=...)`)
+  validates the whole file before indexing, consistent with `oxyz.ase.read`.
+- The streaming batch reader `iter_batches` becomes `iread_batch`, so
+  `read`/`iread` and `read_batch`/`iread_batch` share one rule: `read`
+  materialises, `iread` streams.
+- `MetadataRule`'s identifier field is renamed from `name` to `key`, matching
+  `MetadataSchema.key` and the metadata `key=` used elsewhere; `ColumnRule`
+  keeps `name`. The YAML/JSON schema format is unchanged (the identifier is the
+  mapping key either way).
+- `ParseError.line_number` is renamed to `ParseError.line`, matching
+  `Violation.line`; both now pair `line` with `column`.
+- `Frame.to_ase()` is renamed to `Frame.to_atoms()`, matching the
+  `oxyz.ase.to_atoms` function it delegates to.
+- `SchemaSpec.from_yaml_text` is renamed to `SchemaSpec.from_yaml`, pairing with
+  `to_yaml` (see also the new `from_json`/`to_file` under Added).
+- `read_batch`'s `indices=` parameter becomes `index=`, taking `read`'s full
+  selection grammar (`":"`, an int, a slice or slice string, or a sequence);
+  the default `":"` reads the whole file, as `indices=None` did.
+
+### Removed
+
+- `read_first` — use `read(path, 0)`. The never-public `read_frames_sliced`
+  helper is absorbed into `read`'s slice handling.
 
 ### Internal
 

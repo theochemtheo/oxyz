@@ -90,7 +90,7 @@ def run(benchmark, read, path: Path, shape: tuple[int, int] | str | None = "file
 def oxyz_read_all_with(threads: int | None):
     @row("numpy frames", "serial" if threads == 1 else "parallel", threads=threads)
     def read(path: Path) -> list:
-        return oxyz.read_frames(path, threads=threads)
+        return oxyz.read(path, threads=threads)
 
     return read
 
@@ -98,7 +98,7 @@ def oxyz_read_all_with(threads: int | None):
 def oxyz_read_all_schema_with(conformance: oxyz.Conformance):
     @row("numpy frames", f"schema-{conformance}")
     def read(path: Path) -> list:
-        return oxyz.read_frames(path, schema=read.spec, conformance=conformance)
+        return oxyz.read(path, schema=read.spec, conformance=conformance)
 
     read.spec = None  # set per file by the test below, before timing starts
     return read
@@ -108,12 +108,12 @@ def oxyz_read_all_schema_with(conformance: oxyz.Conformance):
 def oxyz_iter_read_all(path: Path) -> list:
     # The constant-memory streaming path; collected so every read_all row
     # does the same total work.
-    return list(oxyz.iter_frames(path))
+    return list(oxyz.iread(path))
 
 
 @row("numpy frames", "serial")
 def oxyz_read_first(path: Path) -> object:
-    return oxyz.read_first(path)
+    return oxyz.read(path, 0)
 
 
 @row("ase.Atoms", "serial")
@@ -374,7 +374,7 @@ def oxyz_scan(path: Path) -> object:
     return oxyz.scan(path)
 
 
-# The structural scan underlies iter_batches planning, IndexedFrames open,
+# The structural scan underlies iread_batch planning, IndexedFrames open,
 # and ASE-style negative/strided indexing; it should sit far above parse
 # throughput to earn its keep.
 @pytest.mark.benchmark(group="scan/many_small_frames")
@@ -395,7 +395,7 @@ def oxyz_sequential_batches_with(threads: int):
     @row("Batch", "serial" if threads == 1 else "parallel", threads=threads)
     def batched(path: Path) -> int:
         total = 0
-        for batch in oxyz.iter_batches(path, frames_per_batch=64, threads=threads):
+        for batch in oxyz.iread_batch(path, frames_per_batch=64, threads=threads):
             total += batch.total_atoms
         return total
 
@@ -405,7 +405,7 @@ def oxyz_sequential_batches_with(threads: int):
 def oxyz_shuffled_atom_batches_with(threads: int):
     @row("Batch", "serial" if threads == 1 else "parallel", threads=threads)
     def batched(path: Path) -> int:
-        batches = oxyz.iter_batches(
+        batches = oxyz.iread_batch(
             path, atoms_per_batch=2048, shuffle=True, seed=0, threads=threads
         )
         return sum(batch.total_atoms for batch in batches)

@@ -50,8 +50,8 @@ def test_read_frames_routes_remote(monkeypatch):
     monkeypatch.setattr(oxyz._remote, "is_remote", lambda p: True)
     monkeypatch.setattr(oxyz._remote, "open_source", fake_open_source)
 
-    remote = oxyz.read_frames("s3://bucket/minimal_periodic.extxyz")
-    local = oxyz.read_frames(str(path))
+    remote = oxyz.read("s3://bucket/minimal_periodic.extxyz")
+    local = oxyz.read(str(path))
     assert len(remote) == len(local)
     assert remote[0].n_atoms == local[0].n_atoms
 
@@ -96,12 +96,12 @@ def test_read_batch_routes_remote(monkeypatch):
     assert remote_batch.n_frames == local_batch.n_frames
 
 
-def test_iter_batches_streams_remote(monkeypatch):
+def test_iread_batch_streams_remote(monkeypatch):
     path = Path("tests/data/minimal_periodic.extxyz")
     blob = path.read_bytes()
 
     local_frames = sum(
-        b.n_frames for b in oxyz.iter_batches(str(path), frames_per_batch=1)
+        b.n_frames for b in oxyz.iread_batch(str(path), frames_per_batch=1)
     )
 
     def fake_open_source(p, *, compression, member, storage_options):
@@ -113,15 +113,15 @@ def test_iter_batches_streams_remote(monkeypatch):
     monkeypatch.setattr(oxyz._remote, "open_source", fake_open_source)
 
     batches = list(
-        oxyz.iter_batches("s3://bucket/minimal_periodic.extxyz", frames_per_batch=1)
+        oxyz.iread_batch("s3://bucket/minimal_periodic.extxyz", frames_per_batch=1)
     )
     assert sum(b.n_frames for b in batches) == local_frames
 
 
-def test_iter_batches_remote_rejects_random_access(monkeypatch):
+def test_iread_batch_remote_rejects_random_access(monkeypatch):
     monkeypatch.setattr(oxyz._remote, "is_remote", lambda p: True)
     with pytest.raises(ValueError, match="randomly accessed"):
-        list(oxyz.iter_batches("s3://bucket/x.xyz", frames_per_batch=2, shuffle=True))
+        list(oxyz.iread_batch("s3://bucket/x.xyz", frames_per_batch=2, shuffle=True))
 
 
 def test_ase_read_routes_remote(monkeypatch):

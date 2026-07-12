@@ -13,7 +13,7 @@ tells you whether a training file is what you think it is.
 ```python
 import oxyz
 
-frames = oxyz.read_frames("train.extxyz")        # all cores, one pass
+frames = oxyz.read("train.extxyz")        # all cores, one pass
 frames[0].columns["pos"]                         # float64 ndarray, shape (n_atoms, 3)
 frames[0].metadata["energy"]                     # float
 
@@ -30,7 +30,19 @@ The same single pass can also tell you the dataset's schema — which columns
 and metadata keys appear, with what types and shapes, and how consistently
 — which is the part of dataset ingestion that usually goes unchecked.
 
-Pre-1.0: minor versions may change the API.
+## Stability
+
+The public API is the names exported from `oxyz` and its documented submodules
+(`oxyz.ase`, `oxyz.metatomic`, `oxyz.torch_sim`), together with the `oxyz`
+command-line verbs and their options. From 1.0 onward oxyz follows
+[Semantic Versioning](https://semver.org): within a major version no release
+removes or incompatibly changes a public name, though new ones may be added.
+
+Explicitly outside that promise, and free to change in any release: any
+underscore-prefixed name, the `oxyz._rust` extension module, and any behaviour
+the documentation does not state. The surface is settled for 1.0; the remaining
+pre-1.0 releases finish the benchmarks, correctness hardening, and docs against
+it rather than moving it.
 
 ## Install
 
@@ -87,7 +99,8 @@ to return the last frame.
 `oxyz.ase.read` matches `ase.io.read` field for field on the test corpus
 except for the cases below — two deliberate, two that follow from
 honouring the extxyz grammar and oxyz's typed model where ASE's parser
-does not.
+does not. These four are settled design choices under the 1.0 contract, not
+gaps awaiting a fix: each is the behaviour oxyz intends to keep.
 
 **Deliberate** — an error or an acceptance, never a silently different
 value:
@@ -173,7 +186,7 @@ batcher.load_states(oxyz.torch_sim.read("train.extxyz"))
 ```
 
 For files too large to materialise, `iread` streams batches itself, with the
-same binning knobs as `oxyz.iter_batches` (`frames_per_batch` /
+same binning knobs as `oxyz.iread_batch` (`frames_per_batch` /
 `atoms_per_batch` / `memory_scales_with` + `max_scaler`):
 
 ```python
@@ -196,7 +209,7 @@ Assert what a file should contain and have it checked as you read:
 ```python
 import oxyz
 
-frames = oxyz.read_frames("train.extxyz", schema="schema.yaml")   # conformance="required"
+frames = oxyz.read("train.extxyz", schema="schema.yaml")   # conformance="required"
 ```
 
 A schema names expected columns, metadata, and structural facts, using the
@@ -226,7 +239,7 @@ That makes a mixed-schema file, where an optional property is present only in
 some frames, readable as one batch:
 
 ```python
-frames = oxyz.read_frames("mixed.extxyz", schema=spec)        # spec.mode == "project"
+frames = oxyz.read("mixed.extxyz", schema=spec)        # spec.mode == "project"
 batch = oxyz.read_batch("mixed.extxyz", schema=spec)          # now batchable
 ```
 
@@ -257,14 +270,14 @@ their PyTorch Geometric names, and `torch.from_numpy(batch.columns["pos"])`
 is zero-copy, so the path into a training loop is short.
 
 ```python
-for batch in oxyz.iter_batches("bulk.extxyz", atoms_per_batch=4096,
+for batch in oxyz.iread_batch("bulk.extxyz", atoms_per_batch=4096,
                                shuffle=True, seed=0):
     batch.columns["forces"]        # (total_atoms, 3)
     batch.metadata["energy"]       # (n_frames,)
     batch.frame_indices            # which file frames these are — provenance
 ```
 
-`iter_batches` packs by frame count or by a total-atom budget, in file
+`iread_batch` packs by frame count or by a total-atom budget, in file
 order or seeded-shuffled. Batch composition depends only on the file, the
 knobs, and the seed — never on `threads`.
 
@@ -329,7 +342,7 @@ frames:      3
 atoms total: 6
 atoms/frame: min 1  max 3  mean 2.00  median 2.00  std 0.82
 
-# schema — paste into a .yaml and read with read_frames(..., schema=...)
+# schema — paste into a .yaml and read with read(..., schema=...)
 columns:
   species: {kind: S}
   pos: {kind: R, width: 3}
@@ -349,7 +362,7 @@ the environment, and the fixture definitions are in
 [benchmarks/run.py](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/run.py)
 reproduces them.
 
-Whole-file reads to numpy (`oxyz.read_frames` vs [cextxyz], the libAtoms C
+Whole-file reads to numpy (`oxyz.read` vs [cextxyz], the libAtoms C
 parser, via its `read_dicts`):
 
 | workload | oxyz | oxyz `threads=1` | cextxyz |
@@ -371,7 +384,7 @@ wrapping the same C parser, vs `ase.io.read`):
 
 Beyond whole-file reads: on selective reads (every 20th frame of the
 small-frames file) `oxyz.read_batch` takes 1.8 ms against 21 ms for ASE;
-on peak memory, streaming `iter_frames` through the small-frames file
+on peak memory, streaming `iread` through the small-frames file
 grows RSS by 12 MiB where `ase.io.iread` grows it by 56 MiB
 ([benchmarks/MEMORY.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/MEMORY.md)).
 The one place a text parser is predictably slower is against binary
@@ -385,15 +398,18 @@ for those comparisons.
 ## API
 
 ```python
-oxyz.read_frames(path, *, threads=None)      -> list[Frame]
-oxyz.iter_frames(path)                       -> Iterator[Frame]   # constant memory
-oxyz.read_first(path)                        -> Frame
-oxyz.read_batch(path, indices=None, *, threads=None) -> Batch    # indices=None: whole file
-oxyz.iter_batches(path, *, frames_per_batch=None, atoms_per_batch=None,
+oxyz.read(path, index=":", *, threads=None)  -> Frame | list[Frame]  # int index: one Frame
+oxyz.iread(path, index=":")                   -> Iterator[Frame]   # constant memory
+oxyz.read_batch(path, index=":", *, threads=None) -> Batch    # ":" (default): whole file
+oxyz.iread_batch(path, *, frames_per_batch=None, atoms_per_batch=None,
                   shuffle=False, seed=None, threads=None) -> Iterator[Batch]
 oxyz.scan(path)                              -> FrameIndex
 oxyz.infer_schema(path)                      -> Schema
 
+# read/iread select with index: an int (one Frame), a slice or slice string like
+# "1:10:2", or a sequence of non-negative ints (a list, in order). The default
+# ":" reads every frame.
+#
 # Every reader above also takes compression="infer" and member=None; the frame
 # and batch readers additionally take schema=None, conformance="required", and
 # mode=None (None/"validate"/"project", overriding the schema's own mode).
@@ -405,16 +421,20 @@ oxyz.Writer(path, *, append=False, compression="infer", level=None, batch=None) 
 The output-target converters — `oxyz.ase`, `oxyz.metatomic`, `oxyz.torch_sim`
 — share the reader index grammar; their signatures are in the sections above.
 
-`Frame`, `Batch`, `FrameIndex`, `Schema` and its parts (`ColumnSchema`,
-`MetadataSchema`, the variant records, the `Kind` enum) are frozen
-dataclasses; everything ships with type stubs.
+`Frame`, `Batch`, `FrameIndex`, `Violation`, `Schema` and its parts
+(`ColumnSchema`, `MetadataSchema`, the variant records, the `Kind` enum), and
+the `SchemaSpec` rule types (`ColumnRule`, `MetadataRule`, `FrameRule`) are
+frozen dataclasses. Every error oxyz raises subclasses `oxyz.OxyzError` (a
+`ValueError`): `ParseError`, `SchemaError`, and the converters' errors. The
+keyword/value types `Compression`, `Conformance`, `Mode`, `MemoryScaling`, and
+`Writable` are exported aliases. Everything ships with type stubs.
 
 The command line mirrors a subset:
 
 ```text
 oxyz scan   <path> [--no-schema] [--emit-schema PATH [--project]] [--json]
                    [--compression C] [--member M] [--storage-option K=V]
-oxyz check  <path> --schema S [--conformance strict|required] [--json]
+oxyz check  <path> --schema S [--conformance strict|required|warn] [--json]
                    [--compression C] [--member M] [--storage-option K=V]
 oxyz freeze <path> --schema IN --out OUT
                    [--compression C] [--member M] [--storage-option K=V]
@@ -423,39 +443,40 @@ oxyz freeze <path> --schema IN --out OUT
 ### Compressed files
 
 Any reader takes a compressed path and decodes it while streaming, so
-`read_frames("run.xyz.gz")` just works and stays parallel without
+`read("run.xyz.gz")` just works and stays parallel without
 decompressing to a temporary file:
 
 ```python
-oxyz.read_frames("run.xyz.gz")               # .gz, .tar.gz, .zip, .zst, .tar
-oxyz.read_frames("runs.zip", member="run2.xyz")   # pick one archive entry
-oxyz.read_frames("run.bin", compression="gzip")   # force a codec by hand
+oxyz.read("run.xyz.gz")               # .gz, .tar.gz, .zip, .zst, .tar
+oxyz.read("runs.zip", member="run2.xyz")   # pick one archive entry
+oxyz.read("run.bin", compression="gzip")   # force a codec by hand
 ```
 
 The codec is inferred from the extension (then the magic bytes), or set with
 `compression=` (`"none"`/`"gzip"`/`"zstd"`/`"zip"`). An archive holding more
 than one extxyz file needs `member=`; otherwise it errors and lists what it
 holds. A compressed stream cannot be seeked, so the random-access paths —
-`iter_batches` with `shuffle`/`atoms_per_batch`/`memory_scales_with`, and
+`iread_batch` with `shuffle`/`atoms_per_batch`/`memory_scales_with`, and
 reverse or negative ASE indices — either read the whole file into memory (the
 ASE index path, as ASE itself does) or raise pointing at the limitation;
 decompress the file first if you need them.
 
 ### Reading from object storage
 
-`read_frames`, `iter_frames`, `scan`, `infer_schema`, the batch readers, and
-`oxyz.ase.read`/`iread` accept S3-compatible URLs when the `s3` extra is
-installed (see [Install](#install)):
+`read`, `iread`, `scan`, `infer_schema`, the batch readers, and the output
+targets (`oxyz.ase`, `oxyz.metatomic`, `oxyz.torch_sim` readers and their
+`SystemSource`/`SimStateSource`) accept S3-compatible URLs when the `s3` extra
+is installed (see [Install](#install)):
 
 ```python
-frames = oxyz.read_frames("s3://bucket/train.extxyz.gz")
+frames = oxyz.read("s3://bucket/train.extxyz.gz")
 ```
 
 Credentials and endpoint come from `AWS_*` environment variables by default;
 pass `storage_options=` to point at a non-AWS store (MinIO, R2, Ceph):
 
 ```python
-oxyz.read_frames(
+oxyz.read(
     "s3://bucket/train.extxyz",
     storage_options={"endpoint": "https://minio.example", "region": "us-east-1"},
 )
@@ -506,8 +527,8 @@ for the archive codecs and for stdout. Writing `.zst` is not yet supported.
 
 Contracts worth knowing before relying on them:
 
-- **Mixed-schema files read per-frame, but do not batch.** `read_frames` and
-  `iter_frames` handle files whose frames disagree (the MACE
+- **Mixed-schema files read per-frame, but do not batch.** `read` and
+  `iread` handle files whose frames disagree (the MACE
   isolated-atom-plus-bulk pattern) without complaint — each `Frame` stands
   alone. `Batch` assembly currently requires every gathered frame to share
   a schema; `infer_schema` tells you in advance whether a file qualifies.
@@ -517,13 +538,15 @@ Contracts worth knowing before relying on them:
 - **`Batch.batch` is computed per access** (`np.repeat` over the atom
   counts); hoist it out of a hot loop.
 - **Errors carry frame context.** Malformed input raises
-  `oxyz.ParseError` (a `ValueError` subclass) with the frame index and the
-  offending line or value in the message, and the same location on the
-  exception as attributes — `frame_index`, `line_number`, `column`, each
-  `None` where the parser cannot pin it down — so you can find the bad
-  frame without parsing the message. Out-of-range frame requests raise
-  `IndexError`; I/O problems raise `OSError`. After a parse error,
-  streaming iterators stop rather than guess at a resynchronisation point.
+  `oxyz.ParseError` with the frame index and the offending line or value in
+  the message, and the same location on the exception as attributes —
+  `frame_index`, `line`, `column`, each `None` where the parser cannot
+  pin it down — so you can find the bad frame without parsing the message.
+  Every error oxyz raises subclasses `oxyz.OxyzError` (itself a `ValueError`),
+  so `except oxyz.OxyzError` catches the package's errors while
+  `except ValueError` still works. Out-of-range frame requests raise
+  `IndexError`; I/O problems raise `OSError`. After a parse error, streaming
+  iterators stop rather than guess at a resynchronisation point.
 - **Partial reads only promise the prefix.** `read_batch` and indexed
   reads inspect the file no further than the last requested frame; damage
   past that point goes unreported. Whole-file validation is
@@ -563,7 +586,7 @@ own:
   CPython ≥3.12.
 - **`src/oxyz`** — thin typed Python: frozen dataclasses over the
   binding's dicts, batch planning (the pure-Python part of
-  `iter_batches`), and the index grammar (shared by the conversion layers
+  `iread_batch`), and the index grammar (shared by the conversion layers
   via `oxyz._select`). The conversion layers stay last-moment and
   optional: ASE knowledge lives in `oxyz.ase`, torch/metatomic knowledge in
   `oxyz.metatomic`, each importing its extra lazily; the core depends on

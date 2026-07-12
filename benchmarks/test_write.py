@@ -48,17 +48,17 @@ def run(benchmark, write, frames: list[Frame], out: Path) -> None:
 
 @pytest.fixture(scope="session")
 def small_corpus(many_small_frames: Path) -> list[Frame]:
-    return oxyz.read_frames(many_small_frames)
+    return oxyz.read(many_small_frames)
 
 
 @pytest.fixture(scope="session")
 def metadata_corpus(metadata_heavy: Path) -> list[Frame]:
-    return oxyz.read_frames(metadata_heavy)
+    return oxyz.read(metadata_heavy)
 
 
 @pytest.fixture(scope="session")
 def large_corpus(large_frames: Path) -> list[Frame]:
-    return oxyz.read_frames(large_frames)
+    return oxyz.read(large_frames)
 
 
 def oxyz_write_with(threads: int, suffix: str):

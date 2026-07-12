@@ -127,9 +127,12 @@ def _add_check_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     check_parser.add_argument(
         "--conformance",
-        choices=("strict", "required"),
+        choices=("strict", "required", "warn"),
         default="required",
-        help="strict rejects extra columns/keys; required (default) allows them",
+        help=(
+            "strict and warn report extra columns/keys; required (default) "
+            "allows them (all levels report missing/mismatch/count)"
+        ),
     )
     check_parser.add_argument(
         "--json", action="store_true", help="emit a JSON object instead of text"
@@ -202,19 +205,9 @@ def _cmd_freeze(args: argparse.Namespace) -> int:
 
 
 def _write_spec(spec: SchemaSpec, out: Path) -> None:
-    """Write a schema to `out`, dispatching on the extension. TOML output is
-    rejected — there is no TOML serialiser, and silently writing YAML under a
-    `.toml` name produces a file that will not re-read."""
-    suffix = out.suffix.lower()
-    if suffix == ".json":
-        out.write_text(spec.to_json())
-    elif suffix in (".yaml", ".yml"):
-        out.write_text(spec.to_yaml())
-    else:
-        raise ValueError(
-            f"cannot write a schema to a {suffix!r} file; use .json, .yaml, or "
-            ".yml (there is no TOML serialiser)"
-        )
+    """Write a schema to `out`, dispatching on the extension (see
+    `SchemaSpec.to_file`); `.toml` is rejected (no TOML serialiser)."""
+    spec.to_file(out)
 
 
 def _parse_storage_options(items: list[str]) -> dict[str, str] | None:
@@ -278,7 +271,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
 
 
 def _cmd_check(args: argparse.Namespace) -> int:
-    from oxyz import iter_frames
+    from oxyz import iread
     from oxyz._schema_match import body, resolve, validate_frame
 
     compiled = resolve(args.schema)
@@ -288,7 +281,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
     line = 1
     n_frames = 0
     for index, frame in enumerate(
-        iter_frames(
+        iread(
             args.path,
             compression=args.compression,
             member=args.member,
@@ -398,7 +391,5 @@ def _print_scan_summary(stats: StatsSource, schema: Schema | None) -> None:
         )
     if schema is not None:
         print()
-        print(
-            "# schema — paste into a .yaml and read with read_frames(..., schema=...)"
-        )
+        print("# schema — paste into a .yaml and read with read(..., schema=...)")
         print(_schema_block(schema).rstrip("\n"))

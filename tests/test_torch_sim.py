@@ -305,7 +305,7 @@ def test_iread_streams_batches_covering_every_frame() -> None:
     assert sum(s.n_systems for s in states) == 3
 
 
-def test_iread_density_binning_matches_iter_batches() -> None:
+def test_iread_density_binning_matches_iread_batch() -> None:
     import oxyz.torch_sim
 
     states = list(

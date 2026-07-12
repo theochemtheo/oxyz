@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
+from oxyz._rust import OxyzError
 from oxyz._schema import Kind
 from oxyz._schema_spec import (
     KIND_TO_LETTER,
@@ -18,7 +19,7 @@ from oxyz._schema_spec import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
     from pathlib import Path
 
     from oxyz._frames import Frame
@@ -66,21 +67,25 @@ def _matcher(name: str) -> re.Pattern[str]:
 
 
 def _partition[Rule: (ColumnRule, MetadataRule)](
-    rules: Iterable[Rule],
+    rules: Iterable[Rule], identifier: Callable[[Rule], str]
 ) -> tuple[dict[str, Rule], tuple[tuple[Rule, re.Pattern[str]], ...]]:
+    """Split rules into literals (keyed by identifier) and (rule, matcher)
+    patterns. `identifier` reads a rule's name/key, differing between the two
+    rule types (`ColumnRule.name`, `MetadataRule.key`)."""
     literal: dict[str, Rule] = {}
     patterns: list[tuple[Rule, re.Pattern[str]]] = []
     for rule in rules:
-        if _is_pattern(rule.name):
-            patterns.append((rule, _matcher(rule.name)))
+        name = identifier(rule)
+        if _is_pattern(name):
+            patterns.append((rule, _matcher(name)))
         else:
-            literal[rule.name] = rule
+            literal[name] = rule
     return literal, tuple(patterns)
 
 
 def compile_spec(spec: SchemaSpec) -> CompiledSpec:
-    columns_literal, columns_pattern = _partition(spec.columns)
-    metadata_literal, metadata_pattern = _partition(spec.metadata)
+    columns_literal, columns_pattern = _partition(spec.columns, lambda r: r.name)
+    metadata_literal, metadata_pattern = _partition(spec.metadata, lambda r: r.key)
     return CompiledSpec(
         columns_literal=columns_literal,
         columns_pattern=columns_pattern,
@@ -251,7 +256,7 @@ def _validate_metadata(
             out.append(
                 Violation(
                     "metadata",
-                    rule.name,
+                    rule.key,
                     "count",
                     str(rule.count or lo),
                     str(len(matches)),
@@ -301,7 +306,7 @@ def validate_frame(
     )
 
 
-class SchemaError(ValueError):
+class SchemaError(OxyzError):
     """A frame failed schema validation. Carries the offending `frame_index` and
     entry `name` as attributes, so callers need not parse the message."""
 

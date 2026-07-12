@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, overload
 
 import numpy as np
 
@@ -9,7 +9,7 @@ import oxyz._rust as _rust
 from oxyz import _remote
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Iterable, Iterator, Sequence
     from pathlib import Path
 
     from ase import Atoms
@@ -41,15 +41,149 @@ class Frame:
     columns: dict[str, ColumnValues]
     metadata: dict[str, MetadataValue]
 
-    def to_ase(self) -> Atoms:
+    def to_atoms(self) -> Atoms:
         """Convert to `ase.Atoms` (requires the optional `ase` extra)."""
         from oxyz.ase import to_atoms
 
         return to_atoms(self)
 
 
-def read_first(
+@overload
+def read(
     path: str | Path,
+    index: int,
+    *,
+    threads: int | None = ...,
+    schema: SchemaSpec | str | Path | None = ...,
+    conformance: Conformance = ...,
+    mode: Mode | None = ...,
+    compression: Compression = ...,
+    member: str | None = ...,
+    storage_options: _remote.StorageOptions | None = ...,
+) -> Frame: ...
+
+
+@overload
+def read(
+    path: str | Path,
+    index: str,
+    *,
+    threads: int | None = ...,
+    schema: SchemaSpec | str | Path | None = ...,
+    conformance: Conformance = ...,
+    mode: Mode | None = ...,
+    compression: Compression = ...,
+    member: str | None = ...,
+    storage_options: _remote.StorageOptions | None = ...,
+) -> Frame | list[Frame]: ...
+
+
+@overload
+def read(
+    path: str | Path,
+    index: slice | Sequence[int] = ...,
+    *,
+    threads: int | None = ...,
+    schema: SchemaSpec | str | Path | None = ...,
+    conformance: Conformance = ...,
+    mode: Mode | None = ...,
+    compression: Compression = ...,
+    member: str | None = ...,
+    storage_options: _remote.StorageOptions | None = ...,
+) -> list[Frame]: ...
+
+
+def read(  # noqa: PLR0913  the index/schema/projection/source options are the contract
+    path: str | Path,
+    index: int | str | slice | Sequence[int] = ":",
+    *,
+    threads: int | None = None,
+    schema: SchemaSpec | str | Path | None = None,
+    conformance: Conformance = "required",
+    mode: Mode | None = None,
+    compression: Compression = "infer",
+    member: str | None = None,
+    storage_options: _remote.StorageOptions | None = None,
+) -> Frame | list[Frame]:
+    """Read frames from an extxyz file, selecting with `index`.
+
+    `index` is oxyz's selection grammar: an int (one `Frame`), a slice or an
+    ASE-style slice string like `"1:10:2"` (a `list[Frame]`), or an explicit
+    sequence of non-negative ints (a `list[Frame]` in that order, repeats
+    allowed). The default `":"` reads every frame. An int returns a single
+    `Frame`; every other form returns a list.
+
+    Reads run on all cores by default; `threads=1` streams serially, and a
+    bounded or single-frame selection stops as soon as the last requested frame
+    is read. Results and errors are identical regardless of `threads`. For
+    constant memory over a large file, stream with `iread`.
+
+    A compressed path (`.gz`, `.zst`, `.zip`, `.tar.gz`, `.tar`) is decoded on
+    the fly, so reads stay parallel without decompressing to a temporary file.
+    `compression` forces a codec (one of `"infer"`, `"none"`, `"gzip"`,
+    `"zstd"`, `"zip"`) instead of inferring it from the name; `member` selects
+    one entry from a `.zip`/`.tar`/`.tar.gz` holding more than one.
+
+    A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through the
+    same parser (needs the ``oxyz[s3]`` extra); ``storage_options`` passes
+    endpoint/credentials to the store, falling back to ``AWS_*`` env vars. A
+    remote or compressed source cannot seek, so a negative or reverse selection
+    there reads the whole file and indexes in memory (as ASE does).
+
+    `schema` (a `SchemaSpec` or a path to a `.json`/`.yaml`/`.toml` file)
+    validates each frame read; `conformance` is `"strict"`, `"required"`
+    (default), or `"warn"`. `mode` (`None`/`"validate"`/`"project"`) overrides
+    the schema's own `mode`; under `project` each frame is reshaped to the
+    schema (extras dropped, optionals filled) and an unfillable frame is dropped
+    under `warn`. See `oxyz.SchemaSpec`.
+    """
+    from oxyz._select import frames_for_read, gathered_frames, nth_frame, parse_index
+
+    _check_threads(threads)
+    _require_schema_for_mode(schema, mode)
+    if isinstance(index, str):
+        index = parse_index(index)
+    if isinstance(index, int):
+        return nth_frame(
+            path,
+            index,
+            schema=schema,
+            conformance=conformance,
+            mode=mode,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
+    if isinstance(index, slice):
+        return list(
+            frames_for_read(
+                path,
+                index,
+                threads,
+                schema=schema,
+                conformance=conformance,
+                mode=mode,
+                compression=compression,
+                member=member,
+                storage_options=storage_options,
+            )
+        )
+    return gathered_frames(
+        path,
+        index,
+        threads,
+        schema=schema,
+        conformance=conformance,
+        mode=mode,
+        compression=compression,
+        member=member,
+        storage_options=storage_options,
+    )
+
+
+def iread(
+    path: str | Path,
+    index: int | str | slice | Sequence[int] = ":",
     *,
     schema: SchemaSpec | str | Path | None = None,
     conformance: Conformance = "required",
@@ -57,72 +191,65 @@ def read_first(
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
-) -> Frame:
-    """Read only the first frame, stopping there.
+) -> Iterator[Frame]:
+    """Stream frames one at a time, in constant memory, selecting with `index`.
 
-    Cheaper than `read_frames(path)[0]`, which parses the whole file.
+    The selection grammar is `read`'s, but frames are yielded lazily rather than
+    materialised into a list; an int index yields exactly one frame. The file
+    stays open while iterating and closes when the iterator is dropped. After a
+    parse error the stream position is untrustworthy, so iteration ends: the
+    error is raised once, then StopIteration. To materialise every frame at once
+    (and in parallel), use `read`.
 
-    A compressed path (`.gz`, `.zst`, `.zip`, `.tar.gz`, `.tar`) is decoded on
-    the fly; `compression` overrides the codec and `member` names one entry in a
-    multi-member archive. See `read_frames` for details.
-
-    A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through
-    the same parser (needs the ``oxyz[s3]`` extra); ``storage_options`` passes
-    endpoint/credentials to the store, falling back to ``AWS_*`` env vars.
-
-    `schema` (a `SchemaSpec` or a path to a `.json`/`.yaml`/`.toml` file)
-    validates the frame; `conformance` is `"strict"`, `"required"` (default),
-    or `"warn"`. `mode` (`None`/`"validate"`/`"project"`) overrides the schema's
-    own `mode`; under `project` the frame is reshaped to the schema (extras
-    dropped, optionals filled). Since there is only one frame, if `project`
-    drops it (an unfillable required field), `read_first` raises even under
-    `warn` — there is no surviving frame to return. See `oxyz.SchemaSpec`.
+    A compressed path is decoded while streaming; see `read` for the
+    `compression`, `member`, `schema`, and remote-source options. Selecting an
+    explicit sequence of frames reads eagerly — an arbitrary set cannot stream —
+    while a slice or the default `":"` stays lazy.
     """
+    from oxyz._select import gathered_frames, nth_frame, parse_index, sliced_frames
+
     _require_schema_for_mode(schema, mode)
-    plan = spec = None
-    if schema is not None:
-        plan, spec = _projection(schema, mode)
-    if _remote.is_remote(path):
-        src = _remote.open_source(
+    if isinstance(index, str):
+        index = parse_index(index)
+    if isinstance(index, int):
+        return iter(
+            (
+                nth_frame(
+                    path,
+                    index,
+                    schema=schema,
+                    conformance=conformance,
+                    mode=mode,
+                    compression=compression,
+                    member=member,
+                    storage_options=storage_options,
+                ),
+            )
+        )
+    if isinstance(index, slice):
+        return sliced_frames(
             path,
+            index,
+            schema=schema,
+            conformance=conformance,
+            mode=mode,
             compression=compression,
             member=member,
             storage_options=storage_options,
         )
-        if plan is not None:
-            raw = _rust.read_first_frame_projected_reader(
-                src.obj, src.codec, src.member, plan=plan
-            )
-        else:
-            data = _rust.read_first_frame_reader(src.obj, src.codec, src.member)
-    elif plan is not None:
-        raw = _rust.read_first_frame_projected(
-            str(path), compression, member, plan=plan
+    return iter(
+        gathered_frames(
+            path,
+            index,
+            None,
+            schema=schema,
+            conformance=conformance,
+            mode=mode,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
         )
-    else:
-        data = _rust.read_first_frame(str(path), compression, member)
-
-    if plan is not None:
-        assert spec is not None  # noqa: S101 — set alongside plan above
-        kept = _keep_projected([raw], conformance, spec, [0])
-        if not kept:
-            from oxyz._schema_match import SchemaError
-
-            raise SchemaError(
-                "the first frame was dropped by projection (an unfillable "
-                "required field); no frame to return",
-                frame_index=0,
-            )
-        return kept[0]
-
-    frame = _frame_from_data(data)
-    if schema is not None:
-        from oxyz import _schema_match
-
-        _schema_match.enforce_frame(
-            frame, _schema_match.resolve(schema), conformance, 0
-        )
-    return frame
+    )
 
 
 def _check_threads(threads: int | None) -> None:
@@ -183,7 +310,7 @@ def _keep_projected(
     return out
 
 
-def read_frames(
+def _read_all(
     path: str | Path,
     *,
     threads: int | None = None,
@@ -194,29 +321,8 @@ def read_frames(
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
 ) -> list[Frame]:
-    """Read every frame. Parses on all cores by default; `threads=1` streams
-    serially. Results and errors are identical regardless of `threads`.
-
-    For constant memory on a large file, stream with `iter_frames`.
-
-    A compressed path is decoded while streaming, so reads stay parallel without
-    decompressing to a temporary file. `compression` forces a codec (one of
-    `"infer"`, `"none"`, `"gzip"`, `"zstd"`, `"zip"`) rather than inferring it
-    from the name. `member` selects one entry from a `.zip`/`.tar`/`.tar.gz`
-    holding more than one; with it omitted, an archive must contain exactly one
-    extxyz file.
-
-    A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through
-    the same parser (needs the ``oxyz[s3]`` extra); ``storage_options`` passes
-    endpoint/credentials to the store, falling back to ``AWS_*`` env vars.
-
-    `schema` (a `SchemaSpec` or a path to a `.json`/`.yaml`/`.toml` file)
-    validates each frame; `conformance` is `"strict"`, `"required"` (default),
-    or `"warn"`. `mode` (`None`/`"validate"`/`"project"`) overrides the schema's
-    own `mode`; under `project` each frame is reshaped to the schema (extras
-    dropped, optionals filled) and an unfillable frame is dropped under `warn`.
-    See `oxyz.SchemaSpec`.
-    """
+    """Read and materialise every frame (the whole-file primitive behind
+    `read`/`iread`); parses on all cores unless `threads=1`."""
     _check_threads(threads)
     _require_schema_for_mode(schema, mode)
     plan = spec = None
@@ -261,7 +367,7 @@ def read_frames(
     return frames
 
 
-def read_frames_sliced(  # noqa: PLR0913  the read/schema/projection options are the contract
+def _read_all_sliced(  # noqa: PLR0913  the read/schema/projection options are the contract
     path: str | Path,
     frames: slice,
     threads: int | None = None,
@@ -273,24 +379,10 @@ def read_frames_sliced(  # noqa: PLR0913  the read/schema/projection options are
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
 ) -> list[Frame]:
-    """`read_frames`, but apply `frames` before wrapping: parse every frame
+    """`_read_all`, but apply `frames` before wrapping: parse every frame
     (`threads=None`: all cores), then build `Frame` objects only for those the
-    slice keeps.
-
-    The parallel parse still touches the whole file, but a slice that drops a
-    prefix or steps (`read(path, "1000:")`, `"::2"`) no longer pays to wrap the
-    frames it immediately discards.
-
-    A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through
-    the same parser (needs the ``oxyz[s3]`` extra); ``storage_options`` passes
-    endpoint/credentials to the store, falling back to ``AWS_*`` env vars.
-
-    `schema` (a `SchemaSpec` or a path to a `.json`/`.yaml`/`.toml` file)
-    validates each kept frame against its original index; `conformance` is
-    `"strict"`, `"required"` (default), or `"warn"`. `mode`
-    (`None`/`"validate"`/`"project"`) overrides the schema's own `mode`; under
-    `project` each kept frame is reshaped to the schema. See `oxyz.SchemaSpec`.
-    """
+    slice keeps — so an unbounded forward slice that drops a prefix or steps
+    (`"1000:"`, `"::2"`) does not pay to wrap the frames it discards."""
     _require_schema_for_mode(schema, mode)
     plan = spec = None
     if schema is not None:
@@ -353,7 +445,7 @@ class IndexedFrames:
         return _frame_from_data(self._inner.get(frame_index))
 
 
-def iter_frames(
+def _iter_all(
     path: str | Path,
     *,
     schema: SchemaSpec | str | Path | None = None,
@@ -363,27 +455,8 @@ def iter_frames(
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
 ) -> Iterator[Frame]:
-    """Stream frames one at a time, in constant memory.
-
-    The file stays open while iterating and closes when the iterator is
-    dropped. After a parse error the stream position is untrustworthy, so
-    iteration ends: the error is raised once, then StopIteration. To
-    materialise every frame at once (and in parallel), use `read_frames`.
-
-    A compressed path is decoded while streaming; see `read_frames` for the
-    `compression` and `member` options.
-
-    A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through
-    the same parser (needs the ``oxyz[s3]`` extra); ``storage_options`` passes
-    endpoint/credentials to the store, falling back to ``AWS_*`` env vars.
-
-    `schema` (a `SchemaSpec` or a path to a `.json`/`.yaml`/`.toml` file)
-    validates each frame before it is yielded; `conformance` is `"strict"`,
-    `"required"` (default), or `"warn"`. `mode` (`None`/`"validate"`/`"project"`)
-    overrides the schema's own `mode`; under `project` each frame is reshaped to
-    the schema and an unfillable frame is dropped under `warn`. See
-    `oxyz.SchemaSpec`.
-    """
+    """Stream every frame in constant memory (the whole-file primitive behind
+    `read`/`iread`); the file closes when the iterator is dropped."""
     _require_schema_for_mode(schema, mode)
     plan = spec = None
     if schema is not None:

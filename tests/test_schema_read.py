@@ -7,11 +7,9 @@ import pytest
 
 from oxyz import (
     Kind,
-    iter_frames,
-    read_first,
-    read_frames,
+    iread,
+    read,
 )
-from oxyz._frames import read_frames_sliced
 from oxyz._schema_match import SchemaError, SchemaWarning
 from oxyz._schema_spec import ColumnRule, MetadataRule, SchemaSpec
 
@@ -30,25 +28,23 @@ SPEC = SchemaSpec(
 
 
 def test_conformant_file_reads_all_frames():
-    frames = read_frames(DATA / "schema_conformant.extxyz", schema=SPEC)
+    frames = read(DATA / "schema_conformant.extxyz", schema=SPEC)
     assert len(frames) == 2
 
 
 def test_no_schema_is_unchanged():
-    assert len(read_frames(DATA / "schema_extra_column.extxyz")) == 2
+    assert len(read(DATA / "schema_extra_column.extxyz")) == 2
 
 
 def test_extra_column_strict_raises_with_frame_index():
     with pytest.raises(SchemaError) as excinfo:
-        read_frames(
-            DATA / "schema_extra_column.extxyz", schema=SPEC, conformance="strict"
-        )
+        read(DATA / "schema_extra_column.extxyz", schema=SPEC, conformance="strict")
     assert excinfo.value.frame_index == 1
     assert excinfo.value.name == "charge"
 
 
 def test_extra_column_required_allowed():
-    frames = read_frames(
+    frames = read(
         DATA / "schema_extra_column.extxyz", schema=SPEC, conformance="required"
     )
     assert "charge" in frames[1].columns
@@ -56,9 +52,7 @@ def test_extra_column_required_allowed():
 
 def test_drift_type_required_raises_at_frame_1():
     with pytest.raises(SchemaError) as excinfo:
-        read_frames(
-            DATA / "schema_drift_type.extxyz", schema=SPEC, conformance="required"
-        )
+        read(DATA / "schema_drift_type.extxyz", schema=SPEC, conformance="required")
     assert excinfo.value.frame_index == 1
     assert excinfo.value.name == "magmom"
 
@@ -66,7 +60,7 @@ def test_drift_type_required_raises_at_frame_1():
 def test_warn_conformance_warns_not_raises():
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        frames = read_frames(
+        frames = read(
             DATA / "schema_drift_type.extxyz", schema=SPEC, conformance="warn"
         )
     assert len(frames) == 2
@@ -78,28 +72,30 @@ def test_schema_from_yaml_path(tmp_path: Path):
         "columns:\n  species: {kind: S}\n  pos: {kind: R, width: 3}\n"
         "metadata:\n  energy: {kind: R}\n"
     )
-    frames = read_frames(DATA / "schema_conformant.extxyz", schema=tmp_path / "s.yaml")
+    frames = read(DATA / "schema_conformant.extxyz", schema=tmp_path / "s.yaml")
     assert len(frames) == 2
 
 
-def test_read_first_validates_only_frame_zero():
-    # frame 0 conforms even though frame 1 drifts, so read_first succeeds
-    assert read_first(DATA / "schema_drift_type.extxyz", schema=SPEC) is not None
+def test_read_index_zero_with_schema_validates_whole_file():
+    # read(path, 0, schema) inherits nth_frame's whole-file validation: a drift
+    # at frame 1 is raised even when selecting frame 0, so an indexed read
+    # validates consistently with ase.read whatever the index.
+    with pytest.raises(SchemaError) as excinfo:
+        read(DATA / "schema_drift_type.extxyz", 0, schema=SPEC, conformance="required")
+    assert excinfo.value.frame_index == 1
 
 
-def test_iter_frames_raises_mid_stream_at_drift():
-    it = iter_frames(
-        DATA / "schema_drift_type.extxyz", schema=SPEC, conformance="required"
-    )
+def test_iread_raises_mid_stream_at_drift():
+    it = iread(DATA / "schema_drift_type.extxyz", schema=SPEC, conformance="required")
     assert next(it) is not None
     with pytest.raises(SchemaError) as excinfo:
         next(it)
     assert excinfo.value.frame_index == 1
 
 
-def test_read_frames_sliced_reports_original_index():
+def test_read_slice_reports_original_index():
     with pytest.raises(SchemaError) as excinfo:
-        read_frames_sliced(
+        read(
             DATA / "schema_drift_type.extxyz",
             slice(1, None),
             schema=SPEC,
@@ -148,7 +144,7 @@ def test_project_drops_extra_and_fills_absent(tmp_path):
         ),
         mode="project",
     )
-    frames = oxyz.read_frames(f, schema=spec)
+    frames = oxyz.read(f, schema=spec)
     assert [set(fr.columns) for fr in frames] == [
         {"species", "pos", "charge"},
         {"species", "pos", "charge"},
@@ -165,7 +161,7 @@ def test_mode_override_beats_spec(tmp_path):
     f = _mixed_file(tmp_path)
     spec = SchemaSpec(columns=(ColumnRule("pos", Kind.REAL, width=3),), mode="project")
     # override back to validate: the extra 'charge' is allowed, nothing reshaped
-    frames = oxyz.read_frames(f, schema=spec, mode="validate", conformance="required")
+    frames = oxyz.read(f, schema=spec, mode="validate", conformance="required")
     assert "charge" in frames[0].columns
 
 
@@ -174,10 +170,10 @@ def test_mode_without_schema_errors(tmp_path):
 
     f = _mixed_file(tmp_path)
     with pytest.raises(ValueError, match="mode"):
-        oxyz.read_frames(f, mode="project")
+        oxyz.read(f, mode="project")
 
 
-def test_read_first_projects(tmp_path):
+def test_read_index_zero_projects(tmp_path):
     import oxyz
     from oxyz._schema import Kind
     from oxyz._schema_spec import ColumnRule, SchemaSpec
@@ -190,11 +186,11 @@ def test_read_first_projects(tmp_path):
         ),
         mode="project",
     )
-    fr = oxyz.read_first(f, schema=spec)
+    fr = oxyz.read(f, 0, schema=spec)
     assert set(fr.columns) == {"species", "pos"}  # charge dropped
 
 
-def test_iter_frames_projects_and_drops(tmp_path):
+def test_iread_projects_and_drops(tmp_path):
     import oxyz
     from oxyz._schema import Kind
     from oxyz._schema_spec import ColumnRule, SchemaSpec
@@ -207,7 +203,7 @@ def test_iter_frames_projects_and_drops(tmp_path):
     )
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        frames = list(oxyz.iter_frames(f, schema=spec, conformance="warn"))
+        frames = list(oxyz.iread(f, schema=spec, conformance="warn"))
     assert frames == []
 
 
@@ -222,8 +218,8 @@ def test_strict_and_required_collapse_under_project(tmp_path):
         ),
         mode="project",
     )
-    strict = oxyz.read_frames(f, schema=spec, conformance="strict")
-    required = oxyz.read_frames(f, schema=spec, conformance="required")
+    strict = oxyz.read(f, schema=spec, conformance="strict")
+    required = oxyz.read(f, schema=spec, conformance="required")
     # Under project, an undeclared field is dropped, never a violation — so
     # strict and required behave identically (neither raises on 'charge').
     assert [set(fr.columns) for fr in strict] == [set(fr.columns) for fr in required]
@@ -253,7 +249,7 @@ def test_metadata_projection_through_reader(tmp_path):
         ),
         mode="project",
     )
-    frames = oxyz.read_frames(f, schema=spec)
+    frames = oxyz.read(f, schema=spec)
     assert frames[0].metadata["energy"] == -1.0
     assert np.asarray(frames[0].metadata["stress"]).tolist() == [1, 2, 3, 4, 5, 6]
     # frame 1 lacks both -> filled (scalar NaN, and a 6-length NaN array)
@@ -279,7 +275,7 @@ def test_wrong_kind_under_warn_fills_nan_and_warns(tmp_path):
         mode="project",
     )
     with pytest.warns(SchemaWarning, match="val"):
-        frames = oxyz.read_frames(f, schema=spec, conformance="warn")
+        frames = oxyz.read(f, schema=spec, conformance="warn")
     # the real int 7 is discarded and replaced with a NaN fill (data loss)
     assert np.isnan(np.asarray(frames[0].columns["val"])[0])
 
@@ -300,7 +296,7 @@ def test_falsy_fills_survive_projection(tmp_path):
         ),
         mode="project",
     )
-    fr = oxyz.read_frames(f, schema=spec)[0]
+    fr = oxyz.read(f, schema=spec)[0]
     assert np.asarray(fr.columns["id"]).tolist() == [0]  # 0 is a real fill, not absence
     assert list(fr.columns["tag"]) == [""]
 
@@ -314,7 +310,7 @@ def test_warn_drop_emits_warning_naming_field(tmp_path):
         mode="project",
     )
     with pytest.warns(SchemaWarning, match="id"):
-        frames = list(oxyz.iter_frames(f, schema=spec, conformance="warn"))
+        frames = list(oxyz.iread(f, schema=spec, conformance="warn"))
     assert frames == []  # every frame dropped (unfillable required id)
 
 
@@ -337,7 +333,7 @@ def test_read_frames_sliced_projects_kept_frames(tmp_path):
     f = _mixed_file(tmp_path)
     # Slice off the first frame: the projected branch reshapes only what the
     # slice keeps, indexed by original position.
-    frames = read_frames_sliced(f, slice(1, None), schema=_proj_spec())
+    frames = read(f, slice(1, None), schema=_proj_spec())
     assert len(frames) == 1
     assert set(frames[0].columns) == {"species", "pos", "charge"}
     assert math.isnan(np.asarray(frames[0].columns["charge"])[0])  # filled

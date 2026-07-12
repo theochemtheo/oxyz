@@ -17,6 +17,34 @@ from oxyz._schema_spec import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+
+def test_serialization_from_to_pairs_are_symmetric(tmp_path: Path) -> None:
+    spec = SchemaSpec.from_dict(SPEC_DICT)
+    # Every format has a from_/to_ pair: dict, json, yaml, file.
+    assert SchemaSpec.from_dict(spec.to_dict()) == spec
+    assert SchemaSpec.from_json(spec.to_json()) == spec
+    assert SchemaSpec.from_yaml(spec.to_yaml()) == spec
+    for ext in ("json", "yaml", "yml"):
+        path = tmp_path / f"s.{ext}"
+        spec.to_file(path)
+        assert SchemaSpec.from_file(path) == spec
+    # The old name is gone.
+    assert not hasattr(SchemaSpec, "from_yaml_text")
+
+
+def test_to_file_rejects_toml(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="TOML"):
+        SchemaSpec().to_file(tmp_path / "s.toml")
+
+
+def test_metadata_rule_identifier_is_key() -> None:
+    # The metadata identifier is `key` (columns use `name`), matching
+    # MetadataSchema.key so the concept is spelled the same across the model.
+    rule = MetadataRule("energy", Kind.REAL)
+    assert rule.key == "energy"
+    assert not hasattr(rule, "name")
+
+
 SPEC_DICT = {
     "columns": {
         "species": {"kind": "S"},
@@ -41,9 +69,9 @@ def test_from_dict_builds_typed_rules():
         name="forces", kind=Kind.REAL, width=3, required=False
     )
     assert spec.columns[3] == ColumnRule(name="descriptor_*", kind=Kind.REAL, count=5)
-    assert spec.metadata[0] == MetadataRule(name="energy", kind=Kind.REAL)
+    assert spec.metadata[0] == MetadataRule(key="energy", kind=Kind.REAL)
     assert spec.metadata[1] == MetadataRule(
-        name="stress", kind=Kind.REAL, shape=(9,), required=False
+        key="stress", kind=Kind.REAL, shape=(9,), required=False
     )
     assert spec.frame == FrameRule(
         n_atoms_min=1, n_atoms_max=512, lattice_required=True
@@ -103,11 +131,11 @@ def test_render_yaml_omits_defaults_and_quotes_patterns():
     assert "required: false" in text  # forces
     assert '"descriptor_*": {kind: R, count: 5}' in text
     # rendered text is itself valid and reloads equal
-    assert SchemaSpec.from_yaml_text(text) == spec
+    assert SchemaSpec.from_yaml(text) == spec
 
 
 def test_render_yaml_notes_render_as_trailing_comments():
-    spec = SchemaSpec(metadata=(MetadataRule(name="charge", kind=Kind.REAL),))
+    spec = SchemaSpec(metadata=(MetadataRule(key="charge", kind=Kind.REAL),))
     text = render_yaml(
         spec, notes={"charge": "drift: R:1 in 3/5, I:1 in 2/5 — using R"}
     )
@@ -165,7 +193,7 @@ def test_project_mode_roundtrips_through_dict_and_yaml():
     assert spec.mode == "project"
     assert spec.to_dict()["mode"] == "project"
     assert "mode: project" in spec.to_yaml()
-    assert SchemaSpec.from_yaml_text(spec.to_yaml()).mode == "project"
+    assert SchemaSpec.from_yaml(spec.to_yaml()).mode == "project"
 
 
 def test_unknown_mode_rejected():
@@ -182,7 +210,7 @@ def test_fill_roundtrips_on_column_and_metadata():
     )
     assert spec.columns[0].fill == -1
     assert spec.metadata[0].fill == "none"
-    reloaded = SchemaSpec.from_yaml_text(spec.to_yaml())
+    reloaded = SchemaSpec.from_yaml(spec.to_yaml())
     assert reloaded.columns[0].fill == -1
     assert reloaded.metadata[0].fill == "none"
     assert spec.to_dict()["columns"]["id"]["fill"] == -1
@@ -214,13 +242,13 @@ def test_freeze_expands_metadata_patterns(tmp_path):
         "1\ne_a=3.0 Properties=species:S:1:pos:R:3\nH 0 0 0\n"
     )
     spec = SchemaSpec(
-        metadata=(MetadataRule(name="e_*", kind=Kind.REAL),), mode="project"
+        metadata=(MetadataRule(key="e_*", kind=Kind.REAL),), mode="project"
     )
     frozen = spec.freeze(f)
-    names = {m.name: m for m in frozen.metadata}
-    assert names.keys() == {"e_a", "e_b"}
-    assert names["e_a"].required is True
-    assert names["e_b"].required is False  # only in some frames, fills NaN
+    keys = {m.key: m for m in frozen.metadata}
+    assert keys.keys() == {"e_a", "e_b"}
+    assert keys["e_a"].required is True
+    assert keys["e_b"].required is False  # only in some frames, fills NaN
 
 
 def test_freeze_raises_on_kind_conflict(tmp_path):
@@ -240,7 +268,7 @@ def test_string_fill_with_quotes_roundtrips_through_yaml():
     spec = SchemaSpec.from_dict(
         {"columns": {"tag": {"kind": "S", "required": False, "fill": 'a"b\\c'}}}
     )
-    reloaded = SchemaSpec.from_yaml_text(spec.to_yaml())
+    reloaded = SchemaSpec.from_yaml(spec.to_yaml())
     assert reloaded.columns[0].fill == 'a"b\\c'
 
 

@@ -131,30 +131,30 @@ def _freeze_metadata(
 ) -> list[MetadataRule]:
     rules = tuple(rules)
     entries = {entry.key: entry for entry in inferred}
-    claimed = {rule.name for rule in rules if not _is_pattern(rule.name)}
-    out = [rule for rule in rules if not _is_pattern(rule.name)]
+    claimed = {rule.key for rule in rules if not _is_pattern(rule.key)}
+    out = [rule for rule in rules if not _is_pattern(rule.key)]
     for rule in rules:
-        if not _is_pattern(rule.name):
+        if not _is_pattern(rule.key):
             continue
-        matcher = _matcher(rule.name)
+        matcher = _matcher(rule.key)
         for key, entry in entries.items():
             if key in claimed or not matcher.match(key):
                 continue
             claimed.add(key)
             if entry.unified is None:
                 raise SchemaError(
-                    f"metadata {key!r} matched by pattern {rule.name!r} has "
+                    f"metadata {key!r} matched by pattern {rule.key!r} has "
                     f"conflicting kinds or shapes across frames and cannot be "
                     f"frozen; resolve it by hand"
                 )
             kind, shape = entry.unified
             required = entry.frames_present == n_frames
             _check_freezable_optional(
-                key, rule.name, kind, required, rule.fill, "metadata"
+                key, rule.key, kind, required, rule.fill, "metadata"
             )
             out.append(
                 MetadataRule(
-                    name=key, kind=kind, shape=shape, required=required, fill=rule.fill
+                    key=key, kind=kind, shape=shape, required=required, fill=rule.fill
                 )
             )
     return out
@@ -188,10 +188,11 @@ def _fill_matches_kind(fill: object, kind: Kind) -> bool:
 def _plan_entry(rule: ColumnRule | MetadataRule, *, is_metadata: bool) -> tuple:
     letter = KIND_TO_LETTER[rule.kind]
     axis = "metadata" if is_metadata else "column"
+    name = rule.key if isinstance(rule, MetadataRule) else rule.name
     fill = _fill_for(rule)
     if fill is None and not rule.required and rule.kind in _NO_NATURAL_NULL:
         raise SchemaError(
-            f"{axis} {rule.name!r} is an optional {letter} field with no natural "
+            f"{axis} {name!r} is an optional {letter} field with no natural "
             f"null; give it a 'fill' value so projection can materialise it"
         )
     if rule.fill is not None and not _fill_matches_kind(rule.fill, rule.kind):
@@ -199,13 +200,13 @@ def _plan_entry(rule: ColumnRule | MetadataRule, *, is_metadata: bool) -> tuple:
         # one pattern's fill copied by freeze onto a differing-kind column) with
         # a clear message rather than a TypeError from the binding at read time.
         raise SchemaError(
-            f"{axis} {rule.name!r}: fill {rule.fill!r} is not a valid {letter} value"
+            f"{axis} {name!r}: fill {rule.fill!r} is not a valid {letter} value"
         )
     if is_metadata:
         assert isinstance(rule, MetadataRule)  # noqa: S101 — type-narrowing only
-        return (rule.name, letter, tuple(rule.shape), rule.required, fill)
+        return (name, letter, tuple(rule.shape), rule.required, fill)
     assert isinstance(rule, ColumnRule)  # noqa: S101 — type-narrowing only
-    return (rule.name, letter, rule.width, rule.required, fill)
+    return (name, letter, rule.width, rule.required, fill)
 
 
 def compile_projection(spec: SchemaSpec, mode: Mode) -> ProjectionPlan | None:
@@ -218,12 +219,13 @@ def compile_projection(spec: SchemaSpec, mode: Mode) -> ProjectionPlan | None:
     """
     if mode == "validate":
         return None
-    for rule in (*spec.columns, *spec.metadata):
-        if _is_pattern(rule.name):
-            raise SchemaError(
-                f"schema rule {rule.name!r} is a pattern; project mode needs a "
-                f"fixed shape. Run SchemaSpec.freeze(sample) to expand it first"
-            )
+    patterned = [r.name for r in spec.columns if _is_pattern(r.name)]
+    patterned += [r.key for r in spec.metadata if _is_pattern(r.key)]
+    if patterned:
+        raise SchemaError(
+            f"schema rule {patterned[0]!r} is a pattern; project mode needs a "
+            f"fixed shape. Run SchemaSpec.freeze(sample) to expand it first"
+        )
     columns = [_plan_entry(rule, is_metadata=False) for rule in spec.columns]
     metadata = [_plan_entry(rule, is_metadata=True) for rule in spec.metadata]
     return (columns, metadata)

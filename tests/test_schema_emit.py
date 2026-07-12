@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from oxyz import Kind, infer_schema, read_frames
+from oxyz import Kind, infer_schema, read
 
 DATA = Path(__file__).parent / "data"
 
@@ -12,11 +12,7 @@ def test_to_spec_of_consistent_file_revalidates_under_strict():
     spec = schema.to_spec()
     # round-trip: emitted spec validates its own source under strict
     assert (
-        len(
-            read_frames(
-                DATA / "schema_conformant.extxyz", schema=spec, conformance="strict"
-            )
-        )
+        len(read(DATA / "schema_conformant.extxyz", schema=spec, conformance="strict"))
         == 2
     )
 
@@ -73,7 +69,7 @@ def test_partial_member_of_glob_family_not_dropped_or_duplicated(tmp_path):
     assert len(literal) == 1  # not dropped
     assert literal[0].required is False
     # round-trip: the emitted spec validates its own source under required
-    assert len(read_frames(path, schema=spec, conformance="required")) == 2
+    assert len(read(path, schema=spec, conformance="required")) == 2
 
 
 def test_same_stem_families_with_different_width_not_globbed(tmp_path):
@@ -88,7 +84,7 @@ def test_same_stem_families_with_different_width_not_globbed(tmp_path):
     spec = infer_schema(path).to_spec()
     assert not any(r.name == "d_*" for r in spec.columns)  # not globbed
     assert sum(r.name.startswith("d_") for r in spec.columns) == 6  # all literal
-    assert len(read_frames(path, schema=spec, conformance="strict")) == 2  # round-trips
+    assert len(read(path, schema=spec, conformance="strict")) == 2  # round-trips
 
 
 def test_to_spec_emits_drift_note_for_conflicting_column():

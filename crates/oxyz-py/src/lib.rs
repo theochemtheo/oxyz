@@ -1558,13 +1558,22 @@ fn detect_codec(name: &str, head: Option<&[u8]>) -> String {
 
 create_exception!(
     _rust,
-    ParseError,
+    OxyzError,
     PyValueError,
+    "Base class for every error oxyz raises.\n\n\
+     A `ValueError` subclass, so `except ValueError` still catches everything;\n\
+     `except oxyz.OxyzError` narrows to errors this package raised."
+);
+
+create_exception!(
+    _rust,
+    ParseError,
+    OxyzError,
     "Raised when extxyz content cannot be parsed.\n\n\
-     A `ValueError` subclass. Carries the location of the offending input as\n\
-     attributes — `frame_index`, `line_number`, `column` — each `None` when\n\
-     the parser cannot pin that dimension down, so callers can find the bad\n\
-     frame without parsing the message string."
+     An `OxyzError` (and so a `ValueError`) subclass. Carries the location of\n\
+     the offending input as attributes — `frame_index`, `line`, `column` —\n\
+     each `None` when the parser cannot pin that dimension down, so callers can\n\
+     find the bad frame without parsing the message string."
 );
 
 fn extxyz_error_to_py(error: ExtxyzError) -> PyErr {
@@ -1598,7 +1607,7 @@ fn extxyz_error_to_py(error: ExtxyzError) -> PyErr {
     }
 
     let frame_index = error.frame_index();
-    let line_number = error.line_number();
+    let line = error.line_number();
     let column = error.column().map(str::to_owned);
     let err = ParseError::new_err(error.to_string());
     Python::attach(|py| {
@@ -1606,7 +1615,7 @@ fn extxyz_error_to_py(error: ExtxyzError) -> PyErr {
         // `None` class-level defaults registered in the module init.
         let value = err.value(py);
         let _ = value.setattr("frame_index", frame_index);
-        let _ = value.setattr("line_number", line_number);
+        let _ = value.setattr("line", line);
         let _ = value.setattr("column", column);
     });
     err
@@ -1645,9 +1654,10 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
     // Class-level `None` defaults so the location attributes always resolve,
     // even on a `ParseError` a user constructs directly.
+    m.add("OxyzError", m.py().get_type::<OxyzError>())?;
     let parse_error = m.py().get_type::<ParseError>();
     parse_error.setattr("frame_index", m.py().None())?;
-    parse_error.setattr("line_number", m.py().None())?;
+    parse_error.setattr("line", m.py().None())?;
     parse_error.setattr("column", m.py().None())?;
     m.add("ParseError", parse_error)?;
 

@@ -45,19 +45,19 @@ def peak_rss_bytes() -> int:
 def oxyz_read_all(path: Path) -> int:
     import oxyz
 
-    return len(oxyz.read_frames(path))
+    return len(oxyz.read(path))
 
 
 def oxyz_read_all_serial(path: Path) -> int:
     import oxyz
 
-    return len(oxyz.read_frames(path, threads=1))
+    return len(oxyz.read(path, threads=1))
 
 
 def oxyz_iter(path: Path) -> int:
     import oxyz
 
-    return sum(1 for _ in oxyz.iter_frames(path))
+    return sum(1 for _ in oxyz.iread(path))
 
 
 def ase_read_all(path: Path) -> int:

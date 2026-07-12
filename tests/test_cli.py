@@ -85,7 +85,7 @@ def test_scan_text_schema_block_is_valid_schema(capsys):
     out = capsys.readouterr().out
     block = out.split("columns:", 1)
     assert len(block) == 2  # a `columns:` section is present
-    spec = SchemaSpec.from_yaml_text("columns:" + block[1])
+    spec = SchemaSpec.from_yaml("columns:" + block[1])
     names = {rule.name for rule in spec.columns}
     assert {"species", "pos"} <= names
 
@@ -187,6 +187,14 @@ def test_check_extra_only_errors_under_strict(tmp_path):
     args = ["check", str(DATA / "schema_extra_column.extxyz"), "--schema", str(spec)]
     assert main(args) == 0  # required: extra column allowed
     assert main([*args, "--conformance", "strict"]) == 1
+
+
+def test_check_accepts_warn_conformance(tmp_path):
+    # `warn` is a valid --conformance level (parity with the Python API); like
+    # strict it reports extra columns/keys.
+    spec = _write_spec(tmp_path)
+    args = ["check", str(DATA / "schema_extra_column.extxyz"), "--schema", str(spec)]
+    assert main([*args, "--conformance", "warn"]) == 1
 
 
 def test_freeze_writes_project_ready_schema(tmp_path: Path) -> None:

@@ -18,6 +18,16 @@ pytestmark = pytest.mark.skipif(
 
 DATA_DIR = Path(__file__).parent / "data"
 
+
+def test_ase_read_accepts_threads() -> None:
+    import oxyz.ase
+
+    path = DATA_DIR / "varying_atom_counts.xyz"
+    serial = oxyz.ase.read(path, ":", threads=1)
+    parallel = oxyz.ase.read(path, ":", threads=4)
+    assert [len(a) for a in serial] == [len(a) for a in parallel]
+
+
 # Documented divergences from ase.io.read, each asserted explicitly below:
 # Voigt stress (ASE rejects it), new-style string arrays (ASE leaves them as
 # one raw string), and single-quoted values (ASE strips the quotes; oxyz keeps
@@ -262,13 +272,15 @@ def test_non_scalar_species_is_strict_error(tmp_path: Path) -> None:
         oxyz.ase.read(path, index=0)
 
 
-def test_frame_to_ase_method() -> None:
+def test_frame_to_atoms_method() -> None:
     import ase.io
 
     import oxyz
 
     path = DATA_DIR / "minimal_periodic.extxyz"
-    atoms = oxyz.read_first(path).to_ase()
+    frame = oxyz.read(path, 0)
+    atoms = frame.to_atoms()
+    assert not hasattr(frame, "to_ase")  # renamed to match oxyz.ase.to_atoms
     assert_atoms_match(atoms, ase.io.read(path, index=0, format="extxyz"))
 
 
