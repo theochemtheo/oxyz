@@ -162,20 +162,6 @@ impl ExtxyzError {
             }
         }
     }
-
-    /// The underlying error, peeling `InFrame` and `Located` framing.
-    #[allow(dead_code)] // no caller yet unwraps through `Located`/`InFrame` to the source
-    fn innermost(&self) -> &ExtxyzError {
-        let mut inner = self;
-        loop {
-            match inner {
-                ExtxyzError::InFrame { source, .. } | ExtxyzError::Located { source, .. } => {
-                    inner = source;
-                }
-                _ => return inner,
-            }
-        }
-    }
 }
 
 /// Wrap `source` with its source location.
@@ -1729,22 +1715,35 @@ fn parse_raw_parallel(raw: &RawFrame) -> Result<Frame> {
 
     // Peel the count and comment lines; the remainder is the atom region.
     let (count_bytes, rest) = split_first_line(&raw.bytes);
-    let count_line = line_str(count_bytes).map_err(|e| in_frame(frame_index, e))?;
-    let n_atoms = count_line.trim().parse::<usize>().map_err(|_| {
+    let count_line_text = line_str(count_bytes).map_err(|e| in_frame(frame_index, e))?;
+    let n_atoms = count_line_text.trim().parse::<usize>().map_err(|_| {
         in_frame(
             frame_index,
-            ExtxyzError::InvalidAtomCount {
-                line: count_line.trim().to_owned(),
-            },
+            at(
+                raw.line,
+                None,
+                ExtxyzError::InvalidAtomCount {
+                    line: count_line_text.trim().to_owned(),
+                },
+            ),
         )
     })?;
 
     if rest.is_empty() {
-        return Err(in_frame(frame_index, ExtxyzError::MissingLine("comment")));
+        return Err(in_frame(
+            frame_index,
+            at(raw.line + 1, None, ExtxyzError::MissingLine("comment")),
+        ));
     }
     let (comment_bytes, atom_region) = split_first_line(rest);
     let comment = line_str(comment_bytes).map_err(|e| in_frame(frame_index, e))?;
-    let (specs, metadata) = parse_comment_line(comment).map_err(|e| in_frame(frame_index, e))?;
+    let comment_line = raw.line + 1;
+    let (specs, metadata) = parse_comment_line(comment).map_err(|e| {
+        in_frame(
+            frame_index,
+            at(comment_line, comment_column(comment, &e), e),
+        )
+    })?;
     let row_width: usize = specs.iter().map(|spec| spec.width).sum();
 
     // The first atom row sits two lines past the count line.

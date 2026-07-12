@@ -124,6 +124,57 @@ fn parallel_bad_atom_value_matches_serial_location() {
     assert_eq!(error.column(), Some(3));
 }
 
+/// The parallel intra-frame path locates a bad *comment* line identically to
+/// the serial reader — not just a bad atom value. This is the cross-layer
+/// parity invariant: `parse_raw_parallel` must wrap the count-line,
+/// missing-comment, and comment-line parse errors with `Located` exactly as
+/// `FrameIter::parse_frame` does, not just with `InFrame`.
+#[cfg(feature = "parallel")]
+#[test]
+fn parallel_bad_comment_line_matches_serial_location() {
+    use oxyz_core::read_frames_parallel_from;
+    // A frame large enough to take the intra-frame parallel path (>256 KB),
+    // whose comment line (an unknown Properties kind) is malformed.
+    let mut input = String::from("20000\nProperties=species:Q:1:pos:R:3\n");
+    for _ in 0..20000 {
+        input.push_str("H 0.0 0.0 0.0\n");
+    }
+    let bytes = input.into_bytes();
+
+    let parallel_error = read_frames_parallel_from(Cursor::new(bytes.clone()), Some(4))
+        .expect_err("expected a parse error");
+    let serial_error = iter_frames_from(Cursor::new(bytes))
+        .unwrap()
+        .find_map(Result::err)
+        .expect("expected a parse error");
+
+    assert_eq!(parallel_error.frame_index(), Some(0));
+    assert_eq!(parallel_error.line(), Some(2));
+    assert_eq!(parallel_error.frame_index(), serial_error.frame_index());
+    assert_eq!(parallel_error.line(), serial_error.line());
+    assert_eq!(parallel_error.column(), serial_error.column());
+    assert_eq!(
+        parallel_error.to_string(),
+        serial_error.to_string(),
+        "parallel: {parallel_error}\nserial:   {serial_error}"
+    );
+}
+
+use oxyz_core::read_batch_from;
+
+/// A truncated second frame, surfaced through `read_batch_from` (which drives
+/// `RawFrames::selecting` directly, not `FrameIter`), reports the missing
+/// line's exact file-absolute number — not just that it errored.
+#[test]
+fn batch_truncated_frame_locates_exact_line() {
+    // Frame 0: 1 atom, complete (lines 1-3). Frame 1: declares 2 atoms but
+    // supplies only 1 before EOF (lines 4-6, then truncated).
+    let input = "1\ncomment\nH 0.0 0.0 0.0\n2\ncomment\nH 0.0 0.0 0.0\n";
+    let error =
+        read_batch_from(Cursor::new(input.as_bytes()), &[0, 1]).expect_err("truncated frame");
+    assert_eq!(error.line(), Some(7));
+}
+
 use oxyz_core::scan_frames;
 
 /// A bad count line surfaced by the structural scan reports its line.
