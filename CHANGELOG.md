@@ -43,6 +43,24 @@ recorded here.
 - `oxyz check --conformance` accepts `warn`, matching the Python API's
   conformance levels; like `strict` it reports extra columns/keys.
 
+### Performance
+
+- Faster whole-file reads, most of all on many-small-frame corpora. Profiling
+  found the parse allocation-bound — a heap allocation for every species symbol,
+  metadata key, and short value — which the system allocator serialised, capping
+  parallel scaling. Storing those short strings inline (they are almost always
+  ≤24 bytes) and no longer allocating a string for metadata values that are only
+  read cuts allocations by roughly a third. The internal parser and binding
+  changed; the API and output are unchanged. On the reference corpus fixture the
+  core read is ~28% faster serial and ~42% faster on 12 threads (thread scaling
+  2.7×→3.3×); end-to-end `oxyz.read` is ~17–19% faster. See
+  [benchmarks/RESULTS.md](benchmarks/RESULTS.md).
+
+### Dependencies
+
+- Added `compact_str` (pure Rust, no C toolchain) for the inline short-string
+  storage above.
+
 ### Changed
 
 - The native frame readers are unified under `read` and `iread`. Both take an

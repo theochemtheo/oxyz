@@ -1,3 +1,4 @@
+use compact_str::CompactString;
 use oxyz_core::model::{Column, ColumnData, ColumnKind, Frame, Value};
 use oxyz_core::project::{
     Axis, DeviationKind, Fill, PlanColumn, PlanMetadata, Projected, ProjectionPlan,
@@ -44,7 +45,7 @@ fn real_plan(name: &str, width: usize, required: bool, fill: Option<f64>) -> Pla
     }
 }
 
-fn frame_meta(n_atoms: usize, metadata: Vec<(String, Value)>) -> Frame {
+fn frame_meta(n_atoms: usize, metadata: Vec<(CompactString, Value)>) -> Frame {
     Frame {
         n_atoms,
         columns: Vec::new(),
@@ -362,7 +363,7 @@ fn materialises_non_real_fills() {
     assert_eq!(p.frame.columns[1].data.as_bool().unwrap(), &[true, true]);
     assert_eq!(
         p.frame.columns[2].data.as_str().unwrap(),
-        &["none".to_string(), "none".to_string()]
+        &[CompactString::from("none"), CompactString::from("none")]
     );
 }
 
@@ -516,15 +517,15 @@ fn kind_mismatched_fill_falls_back_instead_of_panicking() {
     assert_eq!(p.frame.columns[1].data.as_int().unwrap(), &[0, 0]);
     assert_eq!(
         p.frame.columns[2].data.as_str().unwrap(),
-        &["".to_string(), "".to_string()]
+        &[CompactString::from(""), CompactString::from("")]
     );
     assert_eq!(p.frame.columns[3].data.as_bool().unwrap(), &[false, false]);
     assert_eq!(p.frame.metadata[1].1, Value::Int(0));
     assert_eq!(p.frame.metadata[2].1, Value::Bool(false));
-    assert_eq!(p.frame.metadata[3].1, Value::Str(String::new()));
+    assert_eq!(p.frame.metadata[3].1, Value::Str("".into()));
     assert_eq!(p.frame.metadata[5].1, Value::IntArray(vec![0]));
     assert_eq!(p.frame.metadata[6].1, Value::BoolArray(vec![false]));
-    assert_eq!(p.frame.metadata[7].1, Value::StrArray(vec![String::new()]));
+    assert_eq!(p.frame.metadata[7].1, Value::StrArray(vec!["".into()]));
 }
 
 // --- parallel and streamed projected reads match the serial read ---------

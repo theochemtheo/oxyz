@@ -35,6 +35,13 @@ import matplotlib.pyplot as plt
 # Supplied by this script's inline metadata, not the project venv that ty
 # checks under.
 import seaborn as sns
+from _style import (
+    fmt_value,
+    reader_color,
+    reader_label,
+    reader_marker,
+    reader_order,
+)
 from matplotlib.ticker import LogLocator, NullFormatter
 
 REPO = Path(__file__).resolve().parent.parent
@@ -96,64 +103,6 @@ def flatten(data: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return rows
-
-
-# Reader order and colours are fixed globally so every reader keeps its
-# position and colour across panels and figures. oxyz rows share the
-# saturated base hue in fading shades; competitors stay muted.
-OXYZ_BASE = "#d95f02"
-OXYZ_ORDER = [
-    "oxyz",
-    "oxyz-serial",
-    "oxyz-iter",
-    "oxyz-batches",
-    "oxyz-read-batch",
-    "oxyz-to-ase",
-    "oxyz-scan",
-    "sequential-64-frames",
-    "shuffled-2048-atoms",
-]
-# Blend towards a light-but-still-orange endpoint so no shade washes out.
-OXYZ_SHADES = dict(
-    zip(
-        OXYZ_ORDER,
-        sns.blend_palette([OXYZ_BASE, "#f7bd84"], len(OXYZ_ORDER)),
-        strict=True,
-    )
-)
-COMPETITOR_COLORS = {
-    "ase": "#7570b3",
-    "cextxyz": "#1b9e77",
-    "cextxyz-to-ase": "#66a61e",
-    "atompack-serial": "#1f78b4",
-    "atompack-native": "#a6cee3",
-    "lmdb-pickle": "#e377c2",
-    "ase-sqlite": "#7570b3",
-    "ase-lmdb": "#9e9ac8",
-}
-FALLBACK_COLOR = "#999999"
-
-
-def reader_order(readers: set[str]) -> list[str]:
-    """oxyz rows first in their fixed order, competitors after."""
-    ours = sorted(
-        (r for r in readers if r not in COMPETITOR_COLORS),
-        key=lambda r: (OXYZ_ORDER.index(r) if r in OXYZ_ORDER else len(OXYZ_ORDER), r),
-    )
-    return ours + sorted(r for r in readers if r in COMPETITOR_COLORS)
-
-
-def reader_color(reader: str) -> Any:
-    if reader in OXYZ_SHADES:
-        return OXYZ_SHADES[reader]
-    return COMPETITOR_COLORS.get(reader, FALLBACK_COLOR)
-
-
-def fmt_value(value: float) -> str:
-    for cut, suffix in ((1e9, "G"), (1e6, "M"), (1e3, "k")):
-        if value >= cut:
-            return f"{value / cut:.3g}{suffix}"
-    return f"{value:.3g}"
 
 
 def metric_for(rows: list[dict[str, Any]]) -> str:
@@ -311,9 +260,142 @@ def scan_figure(rows: list[dict[str, Any]]) -> Path:
     return out
 
 
+def sweep_size_rows(
+    rows: list[dict[str, Any]], prefix: str
+) -> dict[str, list[tuple[int, float, float]]]:
+    """reader -> sorted [(size, mean, n_atoms)] for one sweep family. The size
+    is parsed from the group suffix (e.g. scaling_dataset/10000 -> 10000)."""
+    by_reader: dict[str, list[tuple[int, float, float]]] = {}
+    for r in rows:
+        if not r["group"].startswith(prefix + "/"):
+            continue
+        size = int(r["group"].split("/")[1])
+        # Size-sweep param ids carry the size (e.g. "oxyz-1000"); strip it back
+        # to the base reader so a reader's points across sizes form one curve.
+        reader = r["reader"].removesuffix(f"-{size}")
+        by_reader.setdefault(reader, []).append((size, r["mean"], r["n_atoms"]))
+    for reader in by_reader:
+        by_reader[reader].sort()
+    return by_reader
+
+
+def size_curve_figure(
+    rows: list[dict[str, Any]],
+    prefix: str,
+    name: str,
+    xlabel: str,
+    ncores: int | None = None,
+) -> Path | None:
+    """Two panels: read time vs size (loglog) and speedup vs ase (semilogx),
+    overlaying every reader — the extxyz plot_bench shape. Legends name the
+    call each line measures; the all-core oxyz.read line gets a distinct
+    marker so it is tellable from the serial one."""
+    by_reader = sweep_size_rows(rows, prefix)
+    if not by_reader:
+        return None
+
+    fig, (ax_t, ax_s) = plt.subplots(1, 2, figsize=(9.5, 4.0))
+    baseline = {s: m for s, m, _ in by_reader.get("ase", [])}
+
+    for reader in reader_order(set(by_reader)):
+        pts = by_reader[reader]
+        sizes = [s for s, _, _ in pts]
+        times = [m for _, m, _ in pts]
+        ax_t.loglog(
+            sizes,
+            times,
+            marker=reader_marker(reader),
+            label=reader_label(reader, ncores),
+            color=reader_color(reader),
+        )
+        if baseline and reader != "ase":
+            shared = [(s, baseline[s] / m) for s, m, _ in pts if s in baseline]
+            if shared:
+                ax_s.semilogx(
+                    [s for s, _ in shared],
+                    [sp for _, sp in shared],
+                    marker=reader_marker(reader),
+                    label=reader_label(reader, ncores),
+                    color=reader_color(reader),
+                )
+
+    ax_t.set_xlabel(xlabel)
+    ax_t.set_ylabel("read time (s) — lower is better")
+    ax_t.set_title(f"{name.replace('scaling_', '')}: time vs size")
+    ax_t.grid(True, which="both", alpha=0.3)
+    ax_t.legend(fontsize=8)
+
+    ax_s.axhline(1, color="gray", linewidth=0.8, linestyle="--")
+    ax_s.set_xlabel(xlabel)
+    ax_s.set_ylabel("speedup over ase.io")
+    ax_s.set_title("speedup vs size")
+    ax_s.grid(True, which="both", alpha=0.3)
+    ax_s.legend(fontsize=8)
+
+    fig.tight_layout()
+    out = FIGURES / f"{name}.svg"
+    fig.savefig(out)
+    plt.close(fig)
+    return out
+
+
+def thread_curve_figure(rows: list[dict[str, Any]]) -> Path | None:
+    """Throughput (atoms/s) vs thread count, one panel per family."""
+    families = [
+        ("scaling_threads/dataset", "dataset (many small frames)"),
+        ("scaling_threads/system", "system (few large frames)"),
+    ]
+    present = [(g, t) for g, t in families if any(r["group"] == g for r in rows)]
+    if not present:
+        return None
+
+    fig, axes = plt.subplots(
+        1, len(present), figsize=(4.6 * len(present), 4.0), squeeze=False
+    )
+    for ax, (group, title) in zip(axes[0], present, strict=True):
+        pts = sorted(
+            (r["threads"], r["n_atoms"] / r["mean"])
+            for r in rows
+            if r["group"] == group
+        )
+        threads = [t for t, _ in pts]
+        thru = [v for _, v in pts]
+        ax.plot(
+            threads,
+            thru,
+            marker=reader_marker("oxyz"),
+            color=reader_color("oxyz"),
+            label="oxyz.read",
+        )
+        # Linear-scaling reference from the 1-thread point.
+        if thru:
+            ideal = [thru[0] * t / threads[0] for t in threads]
+            ax.plot(
+                threads,
+                ideal,
+                linestyle="--",
+                color="gray",
+                linewidth=0.8,
+                label="linear",
+            )
+        ax.set_xlabel("threads")
+        ax.set_ylabel("atoms/s — higher is better")
+        ax.set_title(title)
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=8)
+
+    fig.tight_layout()
+    out = FIGURES / "scaling_threads.svg"
+    fig.savefig(out)
+    plt.close(fig)
+    return out
+
+
 def main() -> None:
     save = Path(sys.argv[1]) if len(sys.argv) > 1 else newest_save()
-    rows = flatten(json.loads(save.read_text()))
+    data = json.loads(save.read_text())
+    rows = flatten(data)
+    ncores = data["machine_info"].get("cpu", {}).get("count")
 
     # "ticks" rather than "whitegrid" so tick marks (and the log subticks)
     # actually draw; the grid comes back via rc, paler than either default.
@@ -341,6 +423,11 @@ def main() -> None:
     for r in rows:
         by_scenario.setdefault(r["scenario"], []).append(r)
 
+    # The scaling scenarios render as curves, not bars; keep them out of the
+    # bar loop.
+    for scaling in ("scaling_dataset", "scaling_system", "scaling_threads"):
+        by_scenario.pop(scaling, None)
+
     outputs = []
     shared = [s for s in SHARED_SCENARIOS if s in by_scenario]
     scan_rows = by_scenario.pop("scan", None)
@@ -354,6 +441,17 @@ def main() -> None:
         outputs.append(render_figure("scenarios", shared_rows, shared_groups))
     if scan_rows:
         outputs.append(scan_figure(scan_rows))
+
+    outputs.append(
+        size_curve_figure(rows, "scaling_dataset", "scaling_dataset", "frames", ncores)
+    )
+    outputs.append(
+        size_curve_figure(
+            rows, "scaling_system", "scaling_system", "atoms per frame", ncores
+        )
+    )
+    outputs.append(thread_curve_figure(rows))
+    outputs = [o for o in outputs if o is not None]
 
     for out in outputs:
         print(f"wrote {out.relative_to(REPO)} from {save.name}")

@@ -10,6 +10,10 @@ default = ["parallel"]
 parallel = ["dep:rayon"]
 
 [dependencies]
+# Inline small-string storage: species symbols, metadata keys, and short
+# string values (<=24 bytes) live on the stack, sparing the parser a heap
+# allocation each. Pure Rust, no C toolchain.
+compact_str = "0.8"
 fast-float2 = "0.2.3"
 flate2 = "1"
 memchr = "2.8.1"

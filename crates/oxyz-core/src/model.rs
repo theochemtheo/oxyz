@@ -10,6 +10,8 @@
 
 use std::fmt;
 
+use compact_str::CompactString;
+
 /// The type of a column, without its data — the `R`/`I`/`L`/`S` axis alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnKind {
@@ -45,7 +47,7 @@ pub enum ColumnData {
     /// extxyz kind `L`.
     Bool(Vec<bool>),
     /// extxyz kind `S`.
-    Str(Vec<String>),
+    Str(Vec<CompactString>),
 }
 
 impl ColumnData {
@@ -92,7 +94,7 @@ impl ColumnData {
         }
     }
 
-    pub fn as_str(&self) -> Option<&[String]> {
+    pub fn as_str(&self) -> Option<&[CompactString]> {
         match self {
             ColumnData::Str(values) => Some(values),
             _ => None,
@@ -108,7 +110,7 @@ impl ColumnData {
 pub struct Column {
     /// Name exactly as written in the Properties descriptor; aliasing
     /// (`force` vs `forces`) is a later layer's job.
-    pub name: String,
+    pub name: CompactString,
 
     /// Values per atom (e.g. 3 for `pos:R:3`).
     pub width: usize,
@@ -127,11 +129,11 @@ pub enum Value {
     Real(f64),
     Int(i64),
     Bool(bool),
-    Str(String),
+    Str(CompactString),
     RealArray(Vec<f64>),
     IntArray(Vec<i64>),
     BoolArray(Vec<bool>),
-    StrArray(Vec<String>),
+    StrArray(Vec<CompactString>),
 }
 
 /// One parsed frame: per-atom columns plus frame-level metadata.
@@ -148,7 +150,7 @@ pub struct Frame {
 
     /// Frame-level metadata, in file order. `Properties` is consumed into
     /// `columns` and not repeated here.
-    pub metadata: Vec<(String, Value)>,
+    pub metadata: Vec<(CompactString, Value)>,
 }
 
 impl Frame {
@@ -188,7 +190,7 @@ mod tests {
                 ColumnKind::Bool,
                 3,
             ),
-            (ColumnData::Str(vec!["a".to_owned()]), ColumnKind::Str, 1),
+            (ColumnData::Str(vec!["a".into()]), ColumnKind::Str, 1),
         ];
         for (data, kind, len) in columns {
             assert_eq!(data.kind(), kind);
@@ -209,8 +211,8 @@ mod tests {
         assert_eq!(ColumnData::Int(vec![7]).as_int(), Some(&[7][..]));
         assert_eq!(ColumnData::Bool(vec![true]).as_bool(), Some(&[true][..]));
 
-        let text = ColumnData::Str(vec!["a".to_owned()]);
-        assert_eq!(text.as_str(), Some(&["a".to_owned()][..]));
+        let text = ColumnData::Str(vec!["a".into()]);
+        assert_eq!(text.as_str(), Some(&["a".into()][..]));
         assert_eq!(text.as_real(), None);
     }
 }

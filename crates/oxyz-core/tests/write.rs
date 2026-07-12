@@ -27,7 +27,7 @@ fn temp_path(name: &str) -> PathBuf {
 
 fn col(name: &str, width: usize, data: ColumnData) -> Column {
     Column {
-        name: name.to_owned(),
+        name: name.into(),
         width,
         data,
     }
@@ -39,11 +39,7 @@ fn sample_frames() -> Vec<Frame> {
     let frame = Frame {
         n_atoms: 2,
         columns: vec![
-            col(
-                "species",
-                1,
-                ColumnData::Str(vec!["Si".to_owned(), "O".to_owned()]),
-            ),
+            col("species", 1, ColumnData::Str(vec!["Si".into(), "O".into()])),
             col(
                 "pos",
                 3,
@@ -51,7 +47,7 @@ fn sample_frames() -> Vec<Frame> {
             ),
             col("tag", 1, ColumnData::Int(vec![1, -2])),
         ],
-        metadata: vec![("energy".to_owned(), Value::Real(-12.5))],
+        metadata: vec![("energy".into(), Value::Real(-12.5))],
     };
     vec![frame.clone(), frame]
 }
@@ -146,11 +142,7 @@ fn many_frames(count: usize) -> Vec<Frame> {
             Frame {
                 n_atoms: 2,
                 columns: vec![
-                    col(
-                        "species",
-                        1,
-                        ColumnData::Str(vec!["Si".to_owned(), "O".to_owned()]),
-                    ),
+                    col("species", 1, ColumnData::Str(vec!["Si".into(), "O".into()])),
                     col(
                         "pos",
                         3,
@@ -158,7 +150,7 @@ fn many_frames(count: usize) -> Vec<Frame> {
                     ),
                     col("tag", 1, ColumnData::Int(vec![i as i64, -(i as i64)])),
                 ],
-                metadata: vec![("energy".to_owned(), Value::Real(-12.5 * f))],
+                metadata: vec![("energy".into(), Value::Real(-12.5 * f))],
             }
         })
         .collect()
@@ -196,7 +188,7 @@ fn parallel_write_reports_the_first_invalid_frame_and_leaves_no_file() {
     let mut frames = many_frames(50);
     frames[20] = Frame {
         n_atoms: 1,
-        columns: vec![col("species", 1, ColumnData::Str(vec!["H".to_owned()]))],
+        columns: vec![col("species", 1, ColumnData::Str(vec!["H".into()]))],
         metadata: vec![],
     };
 
@@ -279,16 +271,16 @@ prop_compose! {
         Frame {
             n_atoms: species.len(),
             columns: vec![
-                col("species", 1, ColumnData::Str(species)),
+                col("species", 1, ColumnData::Str(species.into_iter().map(Into::into).collect())),
                 col("pos", 3, ColumnData::Real(pos)),
                 col("charge", 1, ColumnData::Real(charge)),
                 col("tag", 1, ColumnData::Int(tag)),
             ],
             metadata: vec![
-                ("energy".to_owned(), Value::Real(energy)),
-                ("count".to_owned(), Value::Int(count)),
-                ("flag".to_owned(), Value::Bool(flag)),
-                ("box".to_owned(), Value::RealArray(lattice)),
+                ("energy".into(), Value::Real(energy)),
+                ("count".into(), Value::Int(count)),
+                ("flag".into(), Value::Bool(flag)),
+                ("box".into(), Value::RealArray(lattice)),
             ],
         }
     }

@@ -16,6 +16,7 @@
 use thiserror::Error;
 
 use crate::model::{Column, ColumnData, ColumnKind, Frame, Value};
+use compact_str::CompactString;
 
 #[derive(Debug, Error)]
 pub enum BatchError {
@@ -138,7 +139,7 @@ impl BatchBuilder {
                     .position(|slot| slot.as_ref().is_some_and(|c| c.name == column.name))
                     .ok_or_else(|| BatchError::MissingColumn {
                         frame: frame_pos,
-                        name: column.name.clone(),
+                        name: column.name.to_string(),
                     })?;
                 let found = incoming[position].take().expect("position just found");
                 append_column(column, found.data, found.width, frame_pos, false)?;
@@ -146,11 +147,11 @@ impl BatchBuilder {
             if let Some(extra) = incoming.into_iter().flatten().next() {
                 return Err(BatchError::UnexpectedColumn {
                     frame: frame_pos,
-                    name: extra.name,
+                    name: extra.name.to_string(),
                 });
             }
 
-            let mut incoming: Vec<Option<(String, Value)>> =
+            let mut incoming: Vec<Option<(CompactString, Value)>> =
                 frame.metadata.into_iter().map(Some).collect();
             for column in &mut self.metadata {
                 let position = incoming
@@ -158,7 +159,7 @@ impl BatchBuilder {
                     .position(|slot| slot.as_ref().is_some_and(|(key, _)| *key == column.name))
                     .ok_or_else(|| BatchError::MissingMetadata {
                         frame: frame_pos,
-                        key: column.name.clone(),
+                        key: column.name.to_string(),
                     })?;
                 let (_, value) = incoming[position].take().expect("position just found");
                 let (data, width) = value_to_data(value);
@@ -167,7 +168,7 @@ impl BatchBuilder {
             if let Some((key, _)) = incoming.into_iter().flatten().next() {
                 return Err(BatchError::UnexpectedMetadata {
                     frame: frame_pos,
-                    key,
+                    key: key.to_string(),
                 });
             }
         }
@@ -228,7 +229,7 @@ fn append_column(
         if is_metadata {
             BatchError::MetadataMismatch {
                 frame,
-                key: existing.name.clone(),
+                key: existing.name.to_string(),
                 expected_kind,
                 expected_width,
                 found_kind,
@@ -237,7 +238,7 @@ fn append_column(
         } else {
             BatchError::ColumnMismatch {
                 frame,
-                name: existing.name.clone(),
+                name: existing.name.to_string(),
                 expected_kind,
                 expected_width,
                 found_kind,
