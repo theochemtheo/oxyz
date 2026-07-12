@@ -143,3 +143,17 @@ fn scan_truncated_frame_locates_line() {
     let error = scan_frames(Cursor::new(input.as_bytes())).expect_err("truncated");
     assert_eq!(error.line(), Some(4));
 }
+
+/// Wording names the expected thing, not just the wrong one.
+#[test]
+fn messages_are_actionable() {
+    // Unknown Properties kind.
+    let error = first_error("1\nProperties=species:Q:1:pos:R:3\nH 0.0 0.0 0.0\n");
+    let message = error.to_string();
+    assert!(message.contains("Properties"), "{message}");
+    assert!(message.contains('Q'), "{message}");
+
+    // Missing Properties descriptor entirely.
+    let error = first_error("1\nenergy=-1.0\nH 0.0 0.0 0.0\n");
+    assert!(error.to_string().contains("Properties"), "{error}");
+}

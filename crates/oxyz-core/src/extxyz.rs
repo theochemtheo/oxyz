@@ -31,10 +31,12 @@ pub enum ExtxyzError {
     #[error("missing {0} line")]
     MissingLine(&'static str),
 
-    #[error("invalid atom count line: {line:?}")]
+    #[error("invalid atom count: expected a non-negative integer, found {line:?}")]
     InvalidAtomCount { line: String },
 
-    #[error("invalid comment metadata near byte {index}")]
+    #[error(
+        "invalid comment metadata near byte {index}: expected 'key=value' pairs, quoting values that contain spaces"
+    )]
     InvalidMetadata { index: usize },
 
     #[error("missing metadata key {key:?}")]
@@ -46,10 +48,12 @@ pub enum ExtxyzError {
         reason: &'static str,
     },
 
-    #[error("unknown Properties kind {kind:?} for column {name:?}")]
+    #[error("unknown Properties kind {kind:?} for column {name:?}; expected one of S, I, R, L")]
     UnknownPropertyKind { name: String, kind: String },
 
-    #[error("invalid Properties width {width:?} for column {name:?}")]
+    #[error(
+        "invalid Properties width {width:?} for column {name:?}; expected an integer in 1..=65536"
+    )]
     InvalidPropertyWidth { name: String, width: String },
 
     #[error("wrong column count: {actual} columns, expected {expected}")]
