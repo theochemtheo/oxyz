@@ -52,12 +52,8 @@ pub enum ExtxyzError {
     #[error("invalid Properties width {width:?} for column {name:?}")]
     InvalidPropertyWidth { name: String, width: String },
 
-    #[error("atom line {line_number} has {actual} columns; expected {expected}")]
-    WrongAtomColumnCount {
-        line_number: usize,
-        expected: usize,
-        actual: usize,
-    },
+    #[error("wrong column count: {actual} columns, expected {expected}")]
+    WrongAtomColumnCount { expected: usize, actual: usize },
 
     #[error("invalid {kind} in column {column:?}: {value:?}")]
     InvalidAtomValue {
@@ -179,12 +175,31 @@ impl ExtxyzError {
 }
 
 /// Wrap `source` with its source location.
-#[allow(dead_code)] // no construction site wraps an error in `Located` yet
 fn at(line: usize, column: Option<usize>, source: ExtxyzError) -> ExtxyzError {
     ExtxyzError::Located {
         line,
         column,
         source: Box::new(source),
+    }
+}
+
+/// 1-based character column of byte offset `byte` within `line`. Falls back to
+/// the byte offset + 1 when the prefix up to `byte` is not valid UTF-8 (only
+/// reachable on already-broken input). Error path only.
+fn char_column(line: &[u8], byte: usize) -> usize {
+    match std::str::from_utf8(line.get(..byte).unwrap_or(line)) {
+        Ok(prefix) => prefix.chars().count() + 1,
+        Err(_) => byte + 1,
+    }
+}
+
+/// The 1-based character column a comment-line error points at, if it carries a
+/// byte index into `comment`. Comment errors other than `InvalidMetadata`
+/// locate the line only.
+fn comment_column(comment: &str, error: &ExtxyzError) -> Option<usize> {
+    match error {
+        ExtxyzError::InvalidMetadata { index } => Some(char_column(comment.as_bytes(), *index)),
+        _ => None,
     }
 }
 
@@ -348,9 +363,13 @@ fn scan_inner<R: BufRead>(mut reader: R, with_volume: bool) -> Result<FrameIndex
             .and_then(|text| text.trim().parse::<usize>().ok())
             .ok_or_else(|| ExtxyzError::InFrame {
                 frame_index: entries.len(),
-                source: Box::new(ExtxyzError::InvalidAtomCount {
-                    line: String::from_utf8_lossy(&line).trim().to_owned(),
-                }),
+                source: Box::new(at(
+                    count_line,
+                    None,
+                    ExtxyzError::InvalidAtomCount {
+                        line: String::from_utf8_lossy(&line).trim().to_owned(),
+                    },
+                )),
             })?;
 
         if with_volume {
@@ -1646,17 +1665,22 @@ fn parse_atom_lines(
         }
 
         if cells.len() != row_width {
-            return Err(ExtxyzError::WrongAtomColumnCount {
+            return Err(at(
                 line_number,
-                expected: row_width,
-                actual: cells.len(),
-            });
+                None,
+                ExtxyzError::WrongAtomColumnCount {
+                    expected: row_width,
+                    actual: cells.len(),
+                },
+            ));
         }
 
         let mut cursor = 0;
         for column in columns.iter_mut() {
             let spans = &cells[cursor..cursor + column.width];
-            push_cells(column, spans.iter().map(|&(s, e)| &line[s..e]))?;
+            let start = cells[cursor].0;
+            push_cells(column, spans.iter().map(|&(s, e)| &line[s..e]))
+                .map_err(|error| at(line_number, Some(char_column(line, start)), error))?;
             cursor += column.width;
         }
 
@@ -1881,6 +1905,7 @@ impl<R: BufRead> FrameIter<R> {
     /// Parse one frame, or `None` at clean end-of-file. Anything after a
     /// frame must be a new frame — blank lines in between are an error.
     fn parse_frame(&mut self) -> Result<Option<Frame>> {
+        let count_line = self.line_number;
         if !self.fill_line()? {
             return Ok(None);
         }
@@ -1895,16 +1920,22 @@ impl<R: BufRead> FrameIter<R> {
 
         // Trimmed in the message so streamed and scanned reads of the same
         // bad line raise the identical error.
-        let n_atoms =
-            atom_count_line
-                .trim()
-                .parse::<usize>()
-                .map_err(|_| ExtxyzError::InvalidAtomCount {
+        let n_atoms = atom_count_line.trim().parse::<usize>().map_err(|_| {
+            at(
+                count_line,
+                None,
+                ExtxyzError::InvalidAtomCount {
                     line: atom_count_line.trim().to_owned(),
-                })?;
+                },
+            )
+        })?;
 
-        let comment = self.next_line("comment")?;
-        let (specs, metadata) = parse_comment_line(comment)?;
+        let comment_line = self.line_number;
+        let comment = self
+            .next_line("comment")
+            .map_err(|error| at(comment_line, None, error))?;
+        let (specs, metadata) = parse_comment_line(comment)
+            .map_err(|error| at(comment_line, comment_column(comment, &error), error))?;
 
         let mut columns: Vec<Column> = specs
             .into_iter()
@@ -1915,7 +1946,7 @@ impl<R: BufRead> FrameIter<R> {
         for _ in 0..n_atoms {
             let line_number = self.line_number;
             if !self.fill_line()? {
-                return Err(ExtxyzError::MissingLine("atom"));
+                return Err(at(line_number, None, ExtxyzError::MissingLine("atom")));
             }
             // Tokenise the raw bytes on ASCII whitespace. Atom rows are numbers
             // and element symbols, so the per-line UTF-8 check the count and
@@ -1938,20 +1969,25 @@ impl<R: BufRead> FrameIter<R> {
             }
 
             if self.cells.len() != row_width {
-                return Err(ExtxyzError::WrongAtomColumnCount {
+                return Err(at(
                     line_number,
-                    expected: row_width,
-                    actual: self.cells.len(),
-                });
+                    None,
+                    ExtxyzError::WrongAtomColumnCount {
+                        expected: row_width,
+                        actual: self.cells.len(),
+                    },
+                ));
             }
 
             let mut cursor = 0;
             for column in &mut columns {
                 let spans = &self.cells[cursor..cursor + column.width];
+                let start = self.cells[cursor].0;
                 push_cells(
                     column,
                     spans.iter().map(|&(start, end)| &self.buffer[start..end]),
-                )?;
+                )
+                .map_err(|error| at(line_number, Some(char_column(&self.buffer, start)), error))?;
                 cursor += column.width;
             }
         }

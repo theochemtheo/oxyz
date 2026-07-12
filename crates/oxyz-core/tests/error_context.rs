@@ -48,3 +48,55 @@ fn located_without_column_reports_line_only() {
     assert!(rendered.contains("line 7"), "{rendered}");
     assert!(!rendered.contains("column"), "{rendered}");
 }
+
+use oxyz_core::iter_frames_from;
+use std::io::Cursor;
+
+fn first_error(input: &str) -> ExtxyzError {
+    iter_frames_from(Cursor::new(input.as_bytes()))
+        .unwrap()
+        .find_map(Result::err)
+        .expect("expected a parse error")
+}
+
+/// A non-numeric atom value reports its frame, its file-absolute line, and the
+/// 1-based character column where the bad token starts.
+#[test]
+fn bad_atom_value_locates_line_and_column() {
+    // Line 1: count, line 2: comment, line 3: atom row. "abc" starts at col 3.
+    let input = "1\nProperties=species:S:1:pos:R:3\nH abc 0.0 0.0\n";
+    let error = first_error(input);
+    assert_eq!(error.frame_index(), Some(0));
+    assert_eq!(error.line(), Some(3));
+    assert_eq!(error.column(), Some(3));
+}
+
+/// A malformed comment (`=` with no value) reports the comment line and the
+/// character column of the failure.
+#[test]
+fn bad_metadata_locates_comment_line_and_column() {
+    let input = "1\nProperties=species:S:1:pos:R:3 bad=\nH 0.0 0.0 0.0\n";
+    let error = first_error(input);
+    assert_eq!(error.frame_index(), Some(0));
+    assert_eq!(error.line(), Some(2));
+    assert!(error.column().is_some());
+}
+
+/// A short atom row (too few columns) reports the atom line; no single token to
+/// pin a column on.
+#[test]
+fn wrong_column_count_locates_line_only() {
+    let input = "1\nProperties=species:S:1:pos:R:3\nH 0.0 0.0\n";
+    let error = first_error(input);
+    assert_eq!(error.frame_index(), Some(0));
+    assert_eq!(error.line(), Some(3));
+    assert_eq!(error.column(), None);
+    assert!(error.to_string().contains("wrong column count"), "{error}");
+}
+
+/// A non-numeric count line reports that line.
+#[test]
+fn bad_atom_count_locates_line() {
+    let error = first_error("notanumber\ncomment\n");
+    assert_eq!(error.line(), Some(1));
+}

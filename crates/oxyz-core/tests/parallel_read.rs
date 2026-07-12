@@ -82,7 +82,7 @@ fn large_frame_error_matches_serial() {
     );
 
     let serial = read_frames(&path).unwrap_err().to_string();
-    assert!(serial.contains("atom line"), "{serial}");
+    assert!(serial.contains("wrong column count"), "{serial}");
     for threads in [Some(1), Some(2), Some(8), None] {
         let parallel = read_frames_parallel(&path, threads)
             .unwrap_err()
