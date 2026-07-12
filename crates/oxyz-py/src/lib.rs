@@ -1597,7 +1597,8 @@ create_exception!(
     OxyzError,
     "Raised when extxyz content cannot be parsed.\n\n\
      An `OxyzError` (and so a `ValueError`) subclass. Carries the location of\n\
-     the offending input as attributes — `frame_index`, `line`, `column` —\n\
+     the offending input as attributes — `frame_index`, `line`, and `column`\n\
+     (the 1-based character column of the offending token within its line) —\n\
      each `None` when the parser cannot pin that dimension down, so callers can\n\
      find the bad frame without parsing the message string."
 );

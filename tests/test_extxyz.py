@@ -74,7 +74,7 @@ def test_parse_error_locates_a_short_atom_line(tmp_path: Path) -> None:
     assert error.column is None
 
 
-def test_parse_error_names_the_offending_column(tmp_path: Path) -> None:
+def test_parse_error_locates_the_offending_column(tmp_path: Path) -> None:
     path = tmp_path / "badvalue.xyz"
     path.write_text("1\nProperties=species:S:1:pos:R:3\nH 0 zzz 0\n")
 
@@ -82,7 +82,9 @@ def test_parse_error_names_the_offending_column(tmp_path: Path) -> None:
         oxyz.read(path)
     error = excinfo.value
     assert error.frame_index == 0
-    assert error.column == "pos"
+    assert error.line == 3
+    assert error.column == 3  # 1-based char column where the "pos" column starts
+    assert "pos" in str(error)
 
 
 def test_parse_error_location_defaults_to_none(tmp_path: Path) -> None:
