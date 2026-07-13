@@ -1,8 +1,14 @@
-//! Conformance against the extxyz comment-line value grammar: every
-//! "should work" form parses to its canonical typed value. Axes are grouped
-//! by scalar kind (integer, float, boolean) so each section stands alone.
-//! Intentional divergences from a literal reading of the grammar are called
-//! out inline with the reasoning, not just asserted silently.
+//! Conformance against the extxyz comment-line value grammar, as specified by
+//! libAtoms/extxyz `kv_tests.md`. The cases here encode that document's
+//! "should work" and "should fail" sections; the permalink pins the exact
+//! revision they were taken from:
+//!
+//! <https://github.com/libAtoms/extxyz/blob/c8c705814b208837ede7d4072f20fe8d40bb20df/kv_tests.md>
+//!
+//! Every "should work" form parses to its canonical typed value. Axes are
+//! grouped by scalar kind (integer, float, boolean) so each section stands
+//! alone. Intentional divergences from a literal reading of the grammar are
+//! called out inline with the reasoning, not just asserted silently.
 
 use std::io::Cursor;
 
