@@ -1681,6 +1681,15 @@ fn array_from_flat<T: Element>(
     if width == 1 {
         return Ok(values.into_pyarray(py).into_any());
     }
+    // Guard the width == 0 case explicitly — the parser never emits a 2-D
+    // value with zero columns, but `values.len() / width` below would panic
+    // on divide-by-zero if it ever did.
+    if width == 0 {
+        return Ok(Array2::<T>::from_shape_vec((0, 0), values)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?
+            .into_pyarray(py)
+            .into_any());
+    }
 
     // The parser upholds `values.len() == n_rows * width`; keep the error
     // path anyway rather than unwrap at the Python boundary.

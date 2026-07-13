@@ -258,6 +258,25 @@ def test_metadata_projection_through_reader(tmp_path):
     assert np.asarray(frames[1].metadata["stress"]).shape == (6,)
 
 
+def test_2d_metadata_shape_rejected_by_projection(tmp_path):
+    import oxyz
+
+    f = tmp_path / "meta2d.xyz"
+    f.write_text("1\nProperties=species:S:1:pos:R:3 key=[[1,2],[3,4]]\nH 0 0 0\n")
+    spec = SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+        ),
+        metadata=(MetadataRule("key", Kind.INT, shape=(2, 2), required=True),),
+        mode="project",
+    )
+    # 2-D metadata projection stays unsupported: a clear error, not a panic
+    # and not silent flattening to 1-D.
+    with pytest.raises(ValueError, match="more than one dimension"):
+        oxyz.read(f, schema=spec)
+
+
 def test_wrong_kind_under_warn_fills_nan_and_warns(tmp_path):
     import numpy as np
 

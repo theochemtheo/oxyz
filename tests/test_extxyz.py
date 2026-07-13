@@ -335,6 +335,37 @@ def test_bracket_array_metadata() -> None:
     assert frame.metadata["tags"] == ["slab", "relaxed"]
 
 
+def test_2d_bracket_array_metadata(tmp_path: Path) -> None:
+    props = "Properties=species:S:1:pos:R:3"
+    text = (
+        f"1\nint2d=[[1,2],[3,4]] real2d=[[1.5,2.5],[3.5,4.5]] "
+        f'bool2d=[[T,F],[F,T]] str2d=[["a","b"],["c","d"]] {props}\n'
+        "X 0.0 0.0 0.0\n"
+    )
+    path = tmp_path / "m.extxyz"
+    path.write_text(text)
+    frame = oxyz.read(path, 0)
+
+    int2d = as_array(frame.metadata["int2d"])
+    assert int2d.dtype == np.int64
+    assert int2d.shape == (2, 2)
+    assert int2d[1, 0] == 3
+    assert_array_equal(int2d, np.array([[1, 2], [3, 4]]))
+
+    real2d = as_array(frame.metadata["real2d"])
+    assert real2d.dtype == np.float64
+    assert real2d.shape == (2, 2)
+    assert_allclose(real2d, np.array([[1.5, 2.5], [3.5, 4.5]]))
+
+    bool2d = as_array(frame.metadata["bool2d"])
+    assert bool2d.dtype == np.bool_
+    assert bool2d.shape == (2, 2)
+    assert_array_equal(bool2d, np.array([[True, False], [False, True]]))
+
+    # Strings cross as a nested list, mirroring 2-D string columns.
+    assert frame.metadata["str2d"] == [["a", "b"], ["c", "d"]]
+
+
 def test_mace_training_schema_names_preserved() -> None:
     frame = oxyz.read(DATA_DIR / "mace_ref_energy_forces_stress.xyz", 0)
 
