@@ -125,3 +125,82 @@ fn should_work_booleans() {
         );
     }
 }
+
+/// kv_tests "scalar string": bare strings from the printable set, and quoted
+/// strings. Single quotes are ordinary bare characters (only `"` quotes; see
+/// the singlequote_metadata.extxyz fixture), so 'abc' is a valid bare string.
+#[test]
+fn should_work_strings() {
+    for src in ["TRuE", "1.3k7", "-2.75e", "+2.75e-"] {
+        assert_eq!(
+            read_value(src).unwrap(),
+            Value::Str(src.into()),
+            "src = {src:?}"
+        );
+    }
+    // Quoted string with spaces keeps its interior; quoting is stripped.
+    assert_eq!(
+        read_value("\"line one\"").unwrap(),
+        Value::Str("line one".into())
+    );
+    // Single-quoted: a bare string, quotes retained (intentional divergence).
+    assert_eq!(read_value("'abc'").unwrap(), Value::Str("'abc'".into()));
+}
+
+/// kv_tests "1-d array": whitespace (bare, quoted, braced) and new-style [ , ].
+#[test]
+fn should_work_1d_arrays() {
+    assert_eq!(
+        read_value("\"1 2 3\"").unwrap(),
+        Value::IntArray(vec![1, 2, 3])
+    );
+    assert_eq!(
+        read_value("{1 2 3}").unwrap(),
+        Value::IntArray(vec![1, 2, 3])
+    );
+    // Bare (unquoted) interior whitespace would split into further key=value
+    // pairs on a real comment line, so this form is only reachable quoted —
+    // matching the quoted int case above.
+    assert_eq!(
+        read_value("\"1.0 2.0 3.0\"").unwrap(),
+        Value::RealArray(vec![1.0, 2.0, 3.0])
+    );
+    assert_eq!(
+        read_value("[a,b]").unwrap(),
+        Value::StrArray(vec!["a".into(), "b".into()])
+    );
+    assert_eq!(
+        read_value("[ \"a\", \"b\" ]").unwrap(),
+        Value::StrArray(vec!["a".into(), "b".into()])
+    );
+    // Quoted commas/brackets inside string elements do not split.
+    assert_eq!(
+        read_value("[ \"a, b\", \"c]\" ]").unwrap(),
+        Value::StrArray(vec!["a, b".into(), "c]".into()])
+    );
+    assert_eq!(
+        read_value("[ T, F, bob ]").unwrap(),
+        Value::StrArray(vec!["T".into(), "F".into(), "bob".into()])
+    );
+}
+
+/// kv_tests "2-d array": nested new-style brackets -> flat buffer + shape.
+#[test]
+fn should_work_2d_arrays() {
+    assert_eq!(
+        read_value("[[1,2],[3,4]]").unwrap(),
+        Value::IntArray2D {
+            rows: 2,
+            cols: 2,
+            data: vec![1, 2, 3, 4]
+        }
+    );
+    assert_eq!(
+        read_value("[[1,2],[3.0,4]]").unwrap(),
+        Value::RealArray2D {
+            rows: 2,
+            cols: 2,
+            data: vec![1.0, 2.0, 3.0, 4.0]
+        }
+    );
+}

@@ -2353,18 +2353,21 @@ fn group_end(bytes: &[u8], open: usize) -> Result<usize> {
 /// `raw` here is either quote-stripped content (never starts with `"`), a
 /// brace group, or a bracket group.
 ///
-/// Array shapes (`[...]`, whitespace-separated, and `{...}`-wrapped
-/// whitespace groups) still route to the existing lenient array typing,
-/// wrapped in `Ok` — making arrays strict and grammar-conformant is a
-/// separate, later change; this pass only tightens scalars.
+/// The splitter tracks bracket *depth* only, so it accepts a mismatched
+/// group like `{1]`; typing is where that mismatch is finally rejected — a
+/// group opened with `{` must close with `}`, and `[` with `]`.
 fn parse_metadata_value(raw: &str) -> Result<Value> {
-    // New-style bracket array.
-    if raw.trim_start().starts_with('[') {
+    let trimmed_start = raw.trim_start();
+    // New-style bracket array (1-D or 2-D).
+    if trimmed_start.starts_with('[') {
         return parse_array_value(raw);
     }
     // Brace group: a scalar `{3}` or a whitespace array `{1 2 3}`.
-    if let Some(inner) = brace_inner(raw) {
-        return parse_group_inner(inner);
+    if trimmed_start.starts_with('{') {
+        return match brace_inner(raw) {
+            Some(inner) => parse_group_inner(inner),
+            None => Err(ExtxyzError::InvalidMetadata { index: 0 }),
+        };
     }
     // Quote-stripped content. A space can only appear here if the value was
     // quoted (bare values cannot contain spaces — the splitter breaks on
@@ -2430,8 +2433,7 @@ fn brace_inner(raw: &str) -> Option<&str> {
 }
 
 /// Type a `{...}` group's inner content: a single token is a scalar, several
-/// whitespace-separated tokens are a whitespace array (the existing lenient
-/// typing — not yet grammar-strict).
+/// whitespace-separated tokens are a whitespace array.
 fn parse_group_inner(inner: &str) -> Result<Value> {
     let trimmed = inner.trim();
     let mut tokens = trimmed.split_whitespace();
@@ -2445,11 +2447,93 @@ fn parse_group_inner(inner: &str) -> Result<Value> {
     }
 }
 
-/// Type a `[...]` bracket array with the existing lenient element typer,
-/// falling back to the raw string when the shape doesn't fit any element
-/// type (e.g. a nested 2-D array) — not yet grammar-strict.
+/// Type a `[...]` bracket array: 1-D (`[1,2,3]`, `["a","b"]`), or, when an
+/// element itself nests a `[`, 2-D (`[[1,2],[3,4]]`) — flattened into the
+/// matching `*Array2D` with its `rows`/`cols` shape. Top-level splitting is
+/// quote- and bracket-aware ([`split_top_level`]), so a comma or a literal
+/// `]` inside a `"..."` element is never mistaken for a separator or a
+/// mismatched close.
 fn parse_array_value(raw: &str) -> Result<Value> {
-    Ok(parse_bracket_array(raw).unwrap_or_else(|| Value::Str(raw.into())))
+    let inner = raw
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .ok_or(ExtxyzError::InvalidMetadata { index: 0 })?;
+
+    let elems = split_top_level(inner);
+
+    // A nested `[` in any element makes this a 2-D array: every element
+    // must itself be a complete `[...]` row.
+    if elems.iter().any(|(_, element)| element.contains('[')) {
+        return parse_array_2d(&elems);
+    }
+
+    if let Some((offset, _)) = elems.iter().find(|(_, element)| element.is_empty()) {
+        // A leading, trailing, or doubled comma (`[1,2,]`, `[,2,3]`) leaves
+        // an empty element; the grammar has no place for one.
+        return Err(ExtxyzError::InvalidMetadata { index: 1 + offset });
+    }
+
+    let elements: Vec<String> = elems.into_iter().map(|(_, element)| element).collect();
+    Ok(array_kind_value(classify_elements(&elements)))
+}
+
+/// Type the rows of a 2-D bracket array. Each top-level element (already
+/// split by the caller) must itself be a `[...]` row; rows are parsed as
+/// 1-D element lists and must agree on length (a ragged shape is `Err`).
+/// The flattened elements are classified once, so the widest kind across
+/// every row wins — an int row next to a real row promotes the whole array
+/// to real.
+fn parse_array_2d(elems: &[(usize, String)]) -> Result<Value> {
+    let mut rows: Vec<Vec<String>> = Vec::with_capacity(elems.len());
+    for (offset, element) in elems {
+        let row_inner = element
+            .strip_prefix('[')
+            .and_then(|rest| rest.strip_suffix(']'))
+            .ok_or(ExtxyzError::InvalidMetadata { index: 1 + offset })?;
+
+        let row_elems = split_top_level(row_inner);
+        if let Some((inner_offset, _)) = row_elems
+            .iter()
+            .find(|(_, cell)| cell.is_empty() || cell.contains('['))
+        {
+            // Either an empty cell (stray comma) or a further nested `[`
+            // (3-D+ arrays are not supported): both are malformed rows.
+            return Err(ExtxyzError::InvalidMetadata {
+                index: 2 + offset + inner_offset,
+            });
+        }
+        rows.push(row_elems.into_iter().map(|(_, cell)| cell).collect());
+    }
+
+    let cols = rows.first().map(Vec::len).unwrap_or(0);
+    if rows.iter().any(|row| row.len() != cols) {
+        return Err(ExtxyzError::InvalidMetadata { index: 0 });
+    }
+
+    let n_rows = rows.len();
+    let flat: Vec<String> = rows.into_iter().flatten().collect();
+    Ok(match classify_elements(&flat) {
+        ArrayKind::Int(data) => Value::IntArray2D {
+            rows: n_rows,
+            cols,
+            data,
+        },
+        ArrayKind::Real(data) => Value::RealArray2D {
+            rows: n_rows,
+            cols,
+            data,
+        },
+        ArrayKind::Bool(data) => Value::BoolArray2D {
+            rows: n_rows,
+            cols,
+            data,
+        },
+        ArrayKind::Str(data) => Value::StrArray2D {
+            rows: n_rows,
+            cols,
+            data,
+        },
+    })
 }
 
 fn whitespace_array_value(tokens: &[&str], raw: &str) -> Value {
@@ -2467,7 +2551,8 @@ fn whitespace_array_value(tokens: &[&str], raw: &str) -> Value {
         return Value::BoolArray(bools);
     }
 
-    // Mixed tokens are a sentence, not an array.
+    // A multi-word non-numeric whitespace value is a sentence, not a string
+    // array: only new-style `[...]` produces `StrArray`.
     Value::Str(raw.into())
 }
 
@@ -2485,44 +2570,97 @@ fn bool_token(token: &str) -> Option<bool> {
     }
 }
 
-/// Parse a new-style bracket array like `[2,2,1]` or `["slab","relaxed"]`.
-/// Returns `None` for anything else — including nested 2-D arrays, for now —
-/// so the caller falls through to the `Str` fallback.
-fn parse_bracket_array(raw: &str) -> Option<Value> {
-    let inner = raw.strip_prefix('[')?.strip_suffix(']')?;
+/// Split `inner` at top-level commas, treating `"..."` spans and nested
+/// `[...]`/`{...}` groups as atomic, so a comma or bracket inside a quoted
+/// element (or inside a nested array element) never splits it or is
+/// mistaken for a mismatched close. Each element is trimmed and paired with
+/// the byte offset of its first non-whitespace character within `inner`
+/// (or its untrimmed start, when empty) — for pointing a later error at the
+/// offending element rather than the whole value.
+fn split_top_level(inner: &str) -> Vec<(usize, String)> {
+    let bytes = inner.as_bytes();
+    let mut elems = Vec::new();
+    let mut start = 0usize;
+    let mut depth = 0i32;
+    let mut in_quote = false;
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'"' => in_quote = !in_quote,
+            b'[' | b'{' if !in_quote => depth += 1,
+            b']' | b'}' if !in_quote => depth -= 1,
+            b',' if !in_quote && depth == 0 => {
+                elems.push(trimmed_span(inner, start, i));
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    elems.push(trimmed_span(inner, start, bytes.len()));
+    elems
+}
 
-    if inner.contains('[') || inner.contains(']') {
-        return None;
+/// `inner[start..end]`, trimmed, paired with the byte offset (within
+/// `inner`) of its first non-whitespace character.
+fn trimmed_span(inner: &str, start: usize, end: usize) -> (usize, String) {
+    let slice = &inner[start..end];
+    let leading = slice.len() - slice.trim_start().len();
+    (start + leading, slice.trim().to_string())
+}
+
+/// One classified array's elements, by increasing generality: an int array
+/// stays exact; real, bool, or the string fallback is chosen only once every
+/// element fails the narrower kind. Quote-stripping happens only in the
+/// string fallback, so a quoted element like `"3"` never parses as a number
+/// — it stays a string, matching the grammar's intent for quoted array
+/// elements.
+enum ArrayKind {
+    Int(Vec<i64>),
+    Real(Vec<f64>),
+    Bool(Vec<bool>),
+    Str(Vec<CompactString>),
+}
+
+fn classify_elements(elements: &[String]) -> ArrayKind {
+    if let Some(ints) = elements
+        .iter()
+        .map(|element| element.parse::<i64>().ok())
+        .collect::<Option<Vec<_>>>()
+    {
+        return ArrayKind::Int(ints);
     }
 
-    if inner.trim().is_empty() {
-        return None;
+    if let Some(reals) = elements
+        .iter()
+        .map(|element| element.parse::<f64>().ok())
+        .collect::<Option<Vec<_>>>()
+    {
+        return ArrayKind::Real(reals);
     }
 
-    let elements: Vec<&str> = inner.split(',').map(str::trim).collect();
-
-    if elements.iter().any(|element| element.is_empty()) {
-        return None;
+    if let Some(bools) = elements
+        .iter()
+        .map(|element| bool_token(element))
+        .collect::<Option<Vec<_>>>()
+    {
+        return ArrayKind::Bool(bools);
     }
 
-    if let Some(ints) = parse_all::<i64>(&elements) {
-        return Some(Value::IntArray(ints));
-    }
-
-    if let Some(reals) = parse_all::<f64>(&elements) {
-        return Some(Value::RealArray(reals));
-    }
-
-    if let Some(bools) = elements.iter().map(|element| bool_token(element)).collect() {
-        return Some(Value::BoolArray(bools));
-    }
-
-    Some(Value::StrArray(
+    ArrayKind::Str(
         elements
             .iter()
             .map(|element| strip_quotes(element).into())
             .collect(),
-    ))
+    )
+}
+
+/// A 1-D `ArrayKind` as its matching `Value` variant.
+fn array_kind_value(kind: ArrayKind) -> Value {
+    match kind {
+        ArrayKind::Int(data) => Value::IntArray(data),
+        ArrayKind::Real(data) => Value::RealArray(data),
+        ArrayKind::Bool(data) => Value::BoolArray(data),
+        ArrayKind::Str(data) => Value::StrArray(data),
+    }
 }
 
 fn strip_quotes(token: &str) -> &str {
@@ -2598,11 +2736,61 @@ mod tests {
             parse_metadata_value(r#"["slab","relaxed"]"#).unwrap(),
             Value::StrArray(vec!["slab".into(), "relaxed".into()])
         );
-        // 2-D arrays fall back to the raw string for now.
+        // Strict grammar: a nested `[` makes it 2-D, not a raw-string
+        // fallback (changed from the prior lenient pass, which had no 2-D
+        // support at all).
         assert_eq!(
             parse_metadata_value("[[1,0],[0,1]]").unwrap(),
-            Value::Str("[[1,0],[0,1]]".into())
+            Value::IntArray2D {
+                rows: 2,
+                cols: 2,
+                data: vec![1, 0, 0, 1]
+            }
         );
+    }
+
+    #[test]
+    fn types_2d_bracket_arrays() {
+        assert_eq!(
+            parse_metadata_value("[[1,2],[3,4]]").unwrap(),
+            Value::IntArray2D {
+                rows: 2,
+                cols: 2,
+                data: vec![1, 2, 3, 4]
+            }
+        );
+        // An int row next to a real row promotes the whole array to real.
+        assert_eq!(
+            parse_metadata_value("[[1,2],[3.0,4]]").unwrap(),
+            Value::RealArray2D {
+                rows: 2,
+                cols: 2,
+                data: vec![1.0, 2.0, 3.0, 4.0]
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_ragged_2d_arrays() {
+        // Row 1 has two elements, row 2 has three: not a rectangle.
+        assert!(matches!(
+            parse_metadata_value("[[1,2],[3,4,5]]"),
+            Err(ExtxyzError::InvalidMetadata { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_empty_array_elements() {
+        // A leading, trailing, or doubled comma leaves an empty element.
+        for raw in ["[1,2,]", "[,2,3]", "[1,,3]"] {
+            assert!(
+                matches!(
+                    parse_metadata_value(raw),
+                    Err(ExtxyzError::InvalidMetadata { .. })
+                ),
+                "raw = {raw:?}"
+            );
+        }
     }
 
     #[test]
@@ -2632,6 +2820,21 @@ mod tests {
     fn splitter_rejects_unbalanced_group() {
         assert!(parse_comment_metadata("a={1 2").is_err());
         assert!(parse_comment_metadata("a=[1, 2").is_err());
+    }
+
+    #[test]
+    fn typing_rejects_mismatched_bracket_kind() {
+        // The splitter only tracks bracket *depth*, so it accepts `{1]` and
+        // `[1}` as balanced (depth returns to 0); typing is where the
+        // mismatched close is finally rejected.
+        assert!(matches!(
+            parse_metadata_value("{1]"),
+            Err(ExtxyzError::InvalidMetadata { .. })
+        ));
+        assert!(matches!(
+            parse_metadata_value("[1}"),
+            Err(ExtxyzError::InvalidMetadata { .. })
+        ));
     }
 
     #[test]

@@ -82,6 +82,33 @@ fn bad_metadata_locates_comment_line_and_column() {
     assert!(error.column().is_some());
 }
 
+/// A malformed *value* — not just a malformed `key=` pair — also locates the
+/// comment line and a column at or after the value's start. This is the
+/// value-typer's error-location contract: `parse_array_value` reports a byte
+/// index relative to the raw value it was given, and `offset_value_error`
+/// (in `parse_comment_line`) shifts it by the value's byte offset within the
+/// whole comment line so `comment_column` lands on the right place. Array
+/// typing is strict enough to fail on a malformed value (a trailing comma
+/// leaves an empty element), so this is a live `Err` exercising that path,
+/// not just a hand-built error.
+#[test]
+fn bad_array_value_locates_comment_line_and_column_at_the_value() {
+    // Line 1: count, line 2: comment. "key=[1,2,]" starts at character 34
+    // (1-based) on the comment line; the trailing comma leaves an empty
+    // element, which is `Err`.
+    let input = "1\nProperties=species:S:1:pos:R:3 key=[1,2,]\nH 0.0 0.0 0.0\n";
+    let error = first_error(input);
+    let comment = "Properties=species:S:1:pos:R:3 key=[1,2,]";
+    let value_start = comment.find("[1,2,]").expect("value present") + 1; // 1-based
+    assert_eq!(error.frame_index(), Some(0));
+    assert_eq!(error.line(), Some(2));
+    let column = error.column().expect("array-value error carries a column");
+    assert!(
+        column >= value_start,
+        "column {column} should land at/after the value's start {value_start}"
+    );
+}
+
 /// A short atom row (too few columns) reports the atom line; no single token to
 /// pin a column on.
 #[test]
