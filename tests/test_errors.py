@@ -56,3 +56,23 @@ def test_parse_error_is_caught_as_oxyz_error(tmp_path) -> None:
     broken.write_text("not-a-count\n")
     with pytest.raises(oxyz.OxyzError):
         oxyz.read(broken)
+
+
+def test_parse_error_reports_line_and_column(tmp_path) -> None:
+    broken = tmp_path / "bad_value.extxyz"
+    broken.write_text("1\nProperties=species:S:1:pos:R:3\nH abc 0.0 0.0\n")
+    with pytest.raises(oxyz.ParseError) as excinfo:
+        oxyz.read(broken)
+    error = excinfo.value
+    assert error.frame_index == 0
+    assert error.line == 3
+    assert error.column == 3  # 1-based character column of "abc"
+
+
+def test_parse_error_column_is_none_without_a_token(tmp_path) -> None:
+    short_row = tmp_path / "short_row.extxyz"
+    short_row.write_text("1\nProperties=species:S:1:pos:R:3\nH 0.0 0.0\n")
+    with pytest.raises(oxyz.ParseError) as excinfo:
+        oxyz.read(short_row)
+    assert excinfo.value.line == 3
+    assert excinfo.value.column is None

@@ -246,17 +246,18 @@ fn error_accessors_locate_the_failure() {
         .unwrap()
         .unwrap_err();
     assert_eq!(error.frame_index(), Some(0));
-    assert_eq!(error.line_number(), Some(3));
+    assert_eq!(error.line(), Some(3));
     assert_eq!(error.column(), None);
 
-    // A non-numeric value in a Real column pins the column instead.
+    // A non-numeric value in a Real column pins the line and the character
+    // column of the start of the failing column ("pos", at "0 nope 0").
     let bad_value = "1\nProperties=species:S:1:pos:R:3\nH 0 nope 0\n";
     let error = FrameIter::new(Cursor::new(bad_value))
         .next()
         .unwrap()
         .unwrap_err();
-    assert_eq!(error.column(), Some("pos"));
-    assert_eq!(error.line_number(), None);
+    assert_eq!(error.line(), Some(3));
+    assert_eq!(error.column(), Some(3));
 
     // A clean frame followed by a bad one: the index points at the second.
     let second_bad = "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n1\nProperties=species:S:1:pos:R:3\nH 0 nope 0\n";
@@ -264,7 +265,7 @@ fn error_accessors_locate_the_failure() {
     assert!(frames.next().unwrap().is_ok());
     let error = frames.next().unwrap().unwrap_err();
     assert_eq!(error.frame_index(), Some(1));
-    assert_eq!(error.column(), Some("pos"));
+    assert_eq!(error.column(), Some(3));
 }
 
 #[test]

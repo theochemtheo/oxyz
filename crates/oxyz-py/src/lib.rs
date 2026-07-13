@@ -1597,7 +1597,8 @@ create_exception!(
     OxyzError,
     "Raised when extxyz content cannot be parsed.\n\n\
      An `OxyzError` (and so a `ValueError`) subclass. Carries the location of\n\
-     the offending input as attributes — `frame_index`, `line`, `column` —\n\
+     the offending input as attributes — `frame_index`, `line`, and `column`\n\
+     (the 1-based character column of the offending token within its line) —\n\
      each `None` when the parser cannot pin that dimension down, so callers can\n\
      find the bad frame without parsing the message string."
 );
@@ -1633,8 +1634,8 @@ fn extxyz_error_to_py(error: ExtxyzError) -> PyErr {
     }
 
     let frame_index = error.frame_index();
-    let line = error.line_number();
-    let column = error.column().map(str::to_owned);
+    let line = error.line();
+    let column = error.column();
     let err = ParseError::new_err(error.to_string());
     Python::attach(|py| {
         // Set every field so access is uniform; instance values shadow the
