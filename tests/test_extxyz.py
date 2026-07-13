@@ -366,6 +366,64 @@ def test_2d_bracket_array_metadata(tmp_path: Path) -> None:
     assert frame.metadata["str2d"] == [["a", "b"], ["c", "d"]]
 
 
+def test_2d_bracket_array_metadata_single_row_or_column(tmp_path: Path) -> None:
+    # A single-column or single-row 2-D array must stay 2-D on read, not
+    # collapse to a 1-D ndarray — it is `[[...]]` metadata, not a plain array.
+    props = "Properties=species:S:1:pos:R:3"
+    text = (
+        f'1\ncol=[[1],[2],[3]] row=[[1,2,3]] strcol=[["a"],["b"]] {props}\n'
+        "X 0.0 0.0 0.0\n"
+    )
+    path = tmp_path / "m.extxyz"
+    path.write_text(text)
+    frame = oxyz.read(path, 0)
+
+    col = as_array(frame.metadata["col"])
+    assert col.shape == (3, 1)
+    assert_array_equal(col, np.array([[1], [2], [3]]))
+
+    row = as_array(frame.metadata["row"])
+    assert row.shape == (1, 3)
+    assert_array_equal(row, np.array([[1, 2, 3]]))
+
+    assert frame.metadata["strcol"] == [["a"], ["b"]]
+
+
+def test_2d_bracket_array_metadata_write_round_trip(tmp_path: Path) -> None:
+    # read -> write -> read must be lossless for every 2-D metadata kind,
+    # numeric shapes and the nested string form alike.
+    props = "Properties=species:S:1:pos:R:3"
+    text = (
+        f"1\nint2d=[[1,2],[3,4]] real2d=[[1.5,2.5],[3.5,4.5]] "
+        f'bool2d=[[T,F],[F,T]] str2d=[["a","b"],["c","d"]] {props}\n'
+        "X 0.0 0.0 0.0\n"
+    )
+    src = tmp_path / "src.extxyz"
+    src.write_text(text)
+    frame = oxyz.read(src, 0)
+
+    out = tmp_path / "out.extxyz"
+    oxyz.write(out, frame)
+    reread = oxyz.read(out, 0)
+
+    int2d = as_array(reread.metadata["int2d"])
+    assert int2d.dtype == np.int64
+    assert int2d.shape == (2, 2)
+    assert_array_equal(int2d, np.array([[1, 2], [3, 4]]))
+
+    real2d = as_array(reread.metadata["real2d"])
+    assert real2d.dtype == np.float64
+    assert real2d.shape == (2, 2)
+    assert_allclose(real2d, np.array([[1.5, 2.5], [3.5, 4.5]]))
+
+    bool2d = as_array(reread.metadata["bool2d"])
+    assert bool2d.dtype == np.bool_
+    assert bool2d.shape == (2, 2)
+    assert_array_equal(bool2d, np.array([[True, False], [False, True]]))
+
+    assert reread.metadata["str2d"] == [["a", "b"], ["c", "d"]]
+
+
 def test_mace_training_schema_names_preserved() -> None:
     frame = oxyz.read(DATA_DIR / "mace_ref_energy_forces_stress.xyz", 0)
 
