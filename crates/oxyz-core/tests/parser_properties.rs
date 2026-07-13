@@ -234,7 +234,7 @@ proptest! {
     ) {
         let mut input = format!("{n_atoms}\nProperties={descriptor}\n");
         for _ in 0..n_atoms {
-            let row = std::iter::repeat("1.0").take(row_cols).collect::<Vec<_>>().join(" ");
+            let row = std::iter::repeat_n("1.0", row_cols).collect::<Vec<_>>().join(" ");
             input.push_str(&row);
             input.push('\n');
         }
