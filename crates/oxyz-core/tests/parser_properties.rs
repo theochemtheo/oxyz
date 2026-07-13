@@ -164,3 +164,45 @@ proptest! {
         }
     }
 }
+
+/// A plausible comment line: some well-formed key=value pairs, then one
+/// corrupted token spliced in. Exercises the KV parser's error paths, not
+/// just uniform-random bytes.
+fn corrupt_comment_line() -> impl Strategy<Value = String> {
+    let good_pair = prop_oneof![
+        Just("energy=-1.0".to_string()),
+        Just("name=hello".to_string()),
+        Just("arr=\"1 2 3\"".to_string()),
+        Just("tag=[a,b,c]".to_string()),
+    ];
+    let corruption = prop_oneof![
+        Just("bad=\"unterminated".to_string()), // dangling quote
+        Just("arr={1 2".to_string()),           // unbalanced brace
+        Just("k=".to_string()),                 // value-less
+        Just("=v".to_string()),                 // key-less
+        Just("[,2,3]".to_string()),             // stray separator (leg-1 territory)
+        Just("lone".to_string()),               // bare token, no '='
+    ];
+    (proptest::collection::vec(good_pair, 0..4), corruption).prop_map(|(pairs, bad)| {
+        let mut parts = pairs;
+        parts.push(bad);
+        format!("Properties=species:S:1:pos:R:3 {}", parts.join(" "))
+    })
+}
+
+proptest! {
+    /// Corrupt comment lines never panic the parser or the scans. When a frame
+    /// errors, the error names its frame index (never a bare, frame-less error).
+    #[test]
+    fn corrupt_comment_lines_never_panic(comment in corrupt_comment_line()) {
+        let input = format!("1\n{comment}\nH 0.0 0.0 0.0\n");
+        for result in FrameIter::new(Cursor::new(input.as_bytes())) {
+            if let Err(error) = result {
+                prop_assert_eq!(error.frame_index(), Some(0));
+            }
+        }
+        // Scans read only structural lines but must not panic either.
+        let _ = scan_frames(Cursor::new(input.as_bytes()));
+        let _ = scan_frames_with_volume(Cursor::new(input.as_bytes()));
+    }
+}
