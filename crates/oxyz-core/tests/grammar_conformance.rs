@@ -267,3 +267,23 @@ fn should_fail_bare_key_without_equals() {
         "bare comment token with no '=' must be an error"
     );
 }
+
+/// kv_tests "almost bare string" (should-fail): `abc<char>def` for `<char>`
+/// in `" = , \ [ ] { }`. oxyz's bare-value branch only ever breaks on
+/// whitespace, so any of these characters mid-token stays part of the same
+/// bare string instead of ending it — a deliberate divergence, not an
+/// oversight: tightening the bare-value scan to stop on these characters
+/// would reject real messy bare values (e.g. a path or label containing `,`
+/// or `[`), which is worse than accepting a few forms the reference grammar
+/// calls malformed. Recorded so the should-fail sweep doesn't silently drop
+/// this class.
+#[test]
+fn divergence_almost_bare_string_is_accepted() {
+    for src in ["abc\"def", "abc=def", "abc,def", "abc[def"] {
+        assert_eq!(
+            read_value(src).unwrap(),
+            Value::Str(src.into()),
+            "src = {src:?}"
+        );
+    }
+}

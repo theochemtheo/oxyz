@@ -2231,7 +2231,7 @@ fn bool_cell(cell: &[u8]) -> Option<bool> {
     }
 }
 
-/// Tokenize the comment line into ordered `(key, raw value, value offset)`
+/// Tokenise the comment line into ordered `(key, raw value, value offset)`
 /// triples; file order and duplicate keys are preserved. `value offset` is
 /// the byte index of the raw value's first byte within `comment`, so a
 /// caller typing the value can shift a byte-offset error in that value back
