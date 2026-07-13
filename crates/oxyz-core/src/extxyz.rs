@@ -2270,6 +2270,13 @@ fn parse_comment_metadata(comment: &str) -> Result<Vec<(&str, &str)>> {
             let value = slice_comment(comment, value_start, i)?;
             i += 1;
             value
+        } else if bytes[i] == b'{' || bytes[i] == b'[' {
+            // A grouped value is a single token even when it contains
+            // interior whitespace or commas (e.g. `{ 3 }`, `["a, b", "c]"]`).
+            let value_start = i;
+            let end = group_end(bytes, i)?;
+            i = end;
+            slice_comment(comment, value_start, end)?
         } else {
             let value_start = i;
 
@@ -2294,6 +2301,31 @@ fn slice_comment(comment: &str, start: usize, end: usize) -> Result<&str> {
     comment
         .get(start..end)
         .ok_or(ExtxyzError::InvalidMetadata { index: start })
+}
+
+/// From `bytes[open]` (a `{` or `[`), return the index just past the matching
+/// close, tracking nesting of both bracket kinds and skipping quoted spans
+/// (so a `]`, `}`, or space inside a `"..."` span does not end the group).
+/// `Err(InvalidMetadata { index: open })` if the group never closes.
+fn group_end(bytes: &[u8], open: usize) -> Result<usize> {
+    let mut depth = 0usize;
+    let mut i = open;
+    let mut in_quote = false;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' => in_quote = !in_quote,
+            b'{' | b'[' if !in_quote => depth += 1,
+            b'}' | b']' if !in_quote => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(i + 1);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    Err(ExtxyzError::InvalidMetadata { index: open })
 }
 
 /// Type a raw comment-line value by its shape, falling back to `Str` when
@@ -2472,6 +2504,21 @@ mod tests {
             type_metadata_value("[[1,0],[0,1]]"),
             Value::Str("[[1,0],[0,1]]".into())
         );
+    }
+
+    #[test]
+    fn splitter_groups_braces_and_brackets() {
+        // Interior spaces inside {} or [] do not split the value.
+        let pairs = parse_comment_metadata("a={ 3 } b=[ \"x, y\", \"z]\" ]").unwrap();
+        assert_eq!(pairs.len(), 2);
+        assert_eq!((pairs[0].0, pairs[0].1), ("a", "{ 3 }"));
+        assert_eq!((pairs[1].0, pairs[1].1), ("b", "[ \"x, y\", \"z]\" ]"));
+    }
+
+    #[test]
+    fn splitter_rejects_unbalanced_group() {
+        assert!(parse_comment_metadata("a={1 2").is_err());
+        assert!(parse_comment_metadata("a=[1, 2").is_err());
     }
 
     #[test]
