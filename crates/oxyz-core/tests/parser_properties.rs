@@ -206,3 +206,46 @@ proptest! {
         let _ = scan_frames_with_volume(Cursor::new(input.as_bytes()));
     }
 }
+
+/// A structured Properties descriptor: valid-ish triples plus injected
+/// malformations (bad kind letter, non-numeric width, missing field).
+fn malformed_descriptor() -> impl Strategy<Value = String> {
+    let triple = prop_oneof![
+        Just("species:S:1".to_string()),
+        Just("pos:R:3".to_string()),
+        Just("bad:Q:1".to_string()), // unknown kind
+        Just("w:R:x".to_string()),   // non-numeric width
+        Just("miss:R".to_string()),  // missing width field
+        Just("z::1".to_string()),    // empty kind
+    ];
+    proptest::collection::vec(triple, 1..5).prop_map(|ts| ts.join(":"))
+}
+
+proptest! {
+    /// Malformed descriptors and ragged atom rows surface as Err (never a
+    /// panic), and any error names frame 0. Row width is chosen independently
+    /// of the declared widths, so column-count mismatches are covered.
+    #[test]
+    fn malformed_descriptors_and_ragged_rows_never_panic(
+        descriptor in malformed_descriptor(),
+        row_cols in 0usize..8,
+        n_atoms in 0usize..4,
+    ) {
+        let mut input = format!("{n_atoms}\nProperties={descriptor}\n");
+        for _ in 0..n_atoms {
+            let row = std::iter::repeat("1.0").take(row_cols).collect::<Vec<_>>().join(" ");
+            input.push_str(&row);
+            input.push('\n');
+        }
+        for result in FrameIter::new(Cursor::new(input.as_bytes())) {
+            if let Err(error) = result {
+                prop_assert_eq!(error.frame_index(), Some(0));
+                // A located error also carries a line; a descriptor error may
+                // land on the comment line (2) or an atom row (>=3).
+                if let Some(line) = error.line() {
+                    prop_assert!(line >= 2);
+                }
+            }
+        }
+    }
+}
