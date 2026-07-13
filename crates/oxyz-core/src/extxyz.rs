@@ -2231,6 +2231,12 @@ fn bool_cell(cell: &[u8]) -> Option<bool> {
     }
 }
 
+/// Characters the grammar excludes from a bare (unquoted) value — they are
+/// reserved for quoting, grouping, or separation. A bare value containing one
+/// is malformed (`kv_tests.md`'s "almost bare string" should-fail class);
+/// quoting the value permits any of them.
+const BARE_EXCLUDED_CHARS: [char; 8] = ['=', '"', ',', '[', ']', '{', '}', '\\'];
+
 /// Tokenise the comment line into ordered `(key, raw value, value offset)`
 /// triples; file order and duplicate keys are preserved. `value offset` is
 /// the byte index of the raw value's first byte within `comment`, so a
@@ -2306,7 +2312,14 @@ fn parse_comment_metadata(comment: &str) -> Result<Vec<(&str, &str, usize)>> {
                 return Err(ExtxyzError::InvalidMetadata { index: i });
             }
 
-            (slice_comment(comment, value_start, i)?, value_start)
+            let value = slice_comment(comment, value_start, i)?;
+            if let Some(offset) = value.find(BARE_EXCLUDED_CHARS) {
+                return Err(ExtxyzError::InvalidMetadata {
+                    index: value_start + offset,
+                });
+            }
+
+            (value, value_start)
         };
 
         pairs.push((key, value, value_offset));

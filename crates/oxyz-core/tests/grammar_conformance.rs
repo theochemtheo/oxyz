@@ -250,6 +250,29 @@ fn should_fail_cases() {
     assert!(read_value("[1, 2").is_err());
 }
 
+/// kv_tests "almost bare string" (should-fail): `abc<char>def` for `<char>`
+/// in `" = , \ [ ] { }`. A bare value containing one of the grammar's
+/// reserved characters is malformed, not a string with unusual content —
+/// quoting the value is how a real `,`, `[`, or `=` gets into a string.
+#[test]
+fn should_fail_almost_bare_string() {
+    for src in [
+        "abc\"def", "abc=def", "abc,def", "abc[def", "abc]def", "abc{def", "abc}def", "abc\\def",
+    ] {
+        assert!(read_value(src).is_err(), "expected Err for src = {src:?}");
+    }
+}
+
+/// A quoted value may contain any of the grammar's reserved characters —
+/// quoting is exactly what lifts the bare-value restriction.
+#[test]
+fn quoted_value_permits_excluded_characters() {
+    assert_eq!(
+        read_value("\"a=b,c[d\"").unwrap(),
+        Value::Str("a=b,c[d".into())
+    );
+}
+
 /// The "no key-value =" fail class (a comment token with no `=`) is a splitter
 /// concern, not a value-typer one — `read_value` always supplies `key=`, so it
 /// cannot express it. Assert it directly against the splitter.
@@ -266,24 +289,4 @@ fn should_fail_bare_key_without_equals() {
         result.is_err(),
         "bare comment token with no '=' must be an error"
     );
-}
-
-/// kv_tests "almost bare string" (should-fail): `abc<char>def` for `<char>`
-/// in `" = , \ [ ] { }`. oxyz's bare-value branch only ever breaks on
-/// whitespace, so any of these characters mid-token stays part of the same
-/// bare string instead of ending it — a deliberate divergence, not an
-/// oversight: tightening the bare-value scan to stop on these characters
-/// would reject real messy bare values (e.g. a path or label containing `,`
-/// or `[`), which is worse than accepting a few forms the reference grammar
-/// calls malformed. Recorded so the should-fail sweep doesn't silently drop
-/// this class.
-#[test]
-fn divergence_almost_bare_string_is_accepted() {
-    for src in ["abc\"def", "abc=def", "abc,def", "abc[def"] {
-        assert_eq!(
-            read_value(src).unwrap(),
-            Value::Str(src.into()),
-            "src = {src:?}"
-        );
-    }
 }

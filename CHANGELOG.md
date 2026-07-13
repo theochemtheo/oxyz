@@ -92,7 +92,9 @@ recorded here.
   and Fortran `d`/`D` float exponents (`-12.0d0`) are accepted; malformed
   values — trailing/leading commas in arrays (`[1,2,]`), ragged 2-D arrays,
   unbalanced brackets — are now rejected with a located error rather than
-  silently kept as strings.
+  silently kept as strings. A bare (unquoted) value containing `=`, `"`, `,`,
+  `[`, `]`, `{`, `}`, or `\` is likewise rejected; quoting the value still
+  permits any of them.
 - `Frame.to_ase()` is renamed to `Frame.to_atoms()`, matching the
   `oxyz.ase.to_atoms` function it delegates to.
 - `SchemaSpec.from_yaml_text` is renamed to `SchemaSpec.from_yaml`, pairing with
