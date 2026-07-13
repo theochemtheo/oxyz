@@ -42,6 +42,8 @@ recorded here.
   now has a matching `from_`/`to_` pair (`dict`, `json`, `yaml`, `file`).
 - `oxyz check --conformance` accepts `warn`, matching the Python API's
   conformance levels; like `strict` it reports extra columns/keys.
+- Comment-line metadata now types **2-D arrays** (`key=[[1,2],[3,4]]`) as
+  shaped arrays, surfaced in Python as 2-D numpy arrays.
 
 ### Performance
 
@@ -84,6 +86,13 @@ recorded here.
   populated wherever the parser can pin each down, so a malformed file can be
   located without parsing the message string; the messages themselves now name
   the expected input, not only the fault.
+- Comment-line value parsing now conforms to the libAtoms/extxyz key-value
+  grammar: brace-wrapped scalars and arrays (`{3}`, `{1 2 3}`), quoted arrays
+  with embedded separators (`[ "a, b", "c]" ]`), lowercase `t`/`f` booleans,
+  and Fortran `d`/`D` float exponents (`-12.0d0`) are accepted; malformed
+  values — trailing/leading commas in arrays (`[1,2,]`), ragged 2-D arrays,
+  unbalanced brackets — are now rejected with a located error rather than
+  silently kept as strings.
 - `Frame.to_ase()` is renamed to `Frame.to_atoms()`, matching the
   `oxyz.ase.to_atoms` function it delegates to.
 - `SchemaSpec.from_yaml_text` is renamed to `SchemaSpec.from_yaml`, pairing with
