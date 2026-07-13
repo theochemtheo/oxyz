@@ -193,6 +193,19 @@ fn comment_column(comment: &str, error: &ExtxyzError) -> Option<usize> {
     }
 }
 
+/// Shift a value typer's `InvalidMetadata { index }` — a byte offset relative
+/// to the raw value it was given — by that value's byte offset within the
+/// whole comment line, so [`comment_column`] locates it correctly. Any other
+/// error variant passes through unchanged.
+fn offset_value_error(error: ExtxyzError, value_offset: usize) -> ExtxyzError {
+    match error {
+        ExtxyzError::InvalidMetadata { index } => ExtxyzError::InvalidMetadata {
+            index: index + value_offset,
+        },
+        other => other,
+    }
+}
+
 pub fn read_first_frame(path: impl AsRef<Path>) -> Result<Frame> {
     iter_frames(path)?
         .next()
@@ -422,8 +435,8 @@ fn lattice_volume(comment: &str) -> Option<f64> {
     let raw = pairs
         .iter()
         .rev()
-        .find(|(key, _)| *key == "Lattice")
-        .map(|(_, value)| *value)?;
+        .find(|(key, _, _)| *key == "Lattice")
+        .map(|(_, value, _)| *value)?;
     let mut cell = [0.0f64; 9];
     let mut count = 0usize;
     for token in raw.split_whitespace() {
@@ -1516,11 +1529,13 @@ fn parse_comment_line(comment: &str) -> Result<CommentHeader> {
 
     let mut metadata = Vec::with_capacity(pairs.len().saturating_sub(1));
     let mut specs: Option<Vec<PropertySpec>> = None;
-    for (key, raw) in pairs {
+    for (key, raw, value_offset) in pairs {
         if key == "Properties" && specs.is_none() {
             specs = Some(parse_properties(raw)?);
         } else {
-            metadata.push((key.into(), type_metadata_value(raw)));
+            let value =
+                parse_metadata_value(raw).map_err(|e| offset_value_error(e, value_offset))?;
+            metadata.push((key.into(), value));
         }
     }
 
@@ -2216,13 +2231,22 @@ fn bool_cell(cell: &[u8]) -> Option<bool> {
     }
 }
 
-/// Tokenize the comment line into ordered `(key, raw value)` pairs; file
-/// order and duplicate keys are preserved.
+/// Characters the grammar excludes from a bare (unquoted) value — they are
+/// reserved for quoting, grouping, or separation. A bare value containing one
+/// is malformed (`kv_tests.md`'s "almost bare string" should-fail class);
+/// quoting the value permits any of them.
+const BARE_EXCLUDED_CHARS: [char; 8] = ['=', '"', ',', '[', ']', '{', '}', '\\'];
+
+/// Tokenise the comment line into ordered `(key, raw value, value offset)`
+/// triples; file order and duplicate keys are preserved. `value offset` is
+/// the byte index of the raw value's first byte within `comment`, so a
+/// caller typing the value can shift a byte-offset error in that value back
+/// into a column on the whole comment line.
 /// Borrows key and value slices out of `comment`: the pairs are consumed in
 /// the same scope (typed into `Value`s, or scanned for `Lattice`), so only the
 /// kept metadata key is owned later — never the raw value. Owning both here
 /// cost two allocations per key, the parse's largest allocation source.
-fn parse_comment_metadata(comment: &str) -> Result<Vec<(&str, &str)>> {
+fn parse_comment_metadata(comment: &str) -> Result<Vec<(&str, &str, usize)>> {
     let bytes = comment.as_bytes();
     let mut pairs = Vec::new();
     let mut i = 0;
@@ -2253,7 +2277,7 @@ fn parse_comment_metadata(comment: &str) -> Result<Vec<(&str, &str)>> {
             return Err(ExtxyzError::InvalidMetadata { index: i });
         }
 
-        let value = if bytes[i] == b'"' {
+        let (value, value_offset) = if bytes[i] == b'"' {
             i += 1;
             let value_start = i;
 
@@ -2269,7 +2293,14 @@ fn parse_comment_metadata(comment: &str) -> Result<Vec<(&str, &str)>> {
 
             let value = slice_comment(comment, value_start, i)?;
             i += 1;
-            value
+            (value, value_start)
+        } else if bytes[i] == b'{' || bytes[i] == b'[' {
+            // A grouped value is a single token even when it contains
+            // interior whitespace or commas (e.g. `{ 3 }`, `["a, b", "c]"]`).
+            let value_start = i;
+            let end = group_end(bytes, i)?;
+            i = end;
+            (slice_comment(comment, value_start, end)?, value_start)
         } else {
             let value_start = i;
 
@@ -2281,10 +2312,17 @@ fn parse_comment_metadata(comment: &str) -> Result<Vec<(&str, &str)>> {
                 return Err(ExtxyzError::InvalidMetadata { index: i });
             }
 
-            slice_comment(comment, value_start, i)?
+            let value = slice_comment(comment, value_start, i)?;
+            if let Some(offset) = value.find(BARE_EXCLUDED_CHARS) {
+                return Err(ExtxyzError::InvalidMetadata {
+                    index: value_start + offset,
+                });
+            }
+
+            (value, value_start)
         };
 
-        pairs.push((key, value));
+        pairs.push((key, value, value_offset));
     }
 
     Ok(pairs)
@@ -2296,35 +2334,84 @@ fn slice_comment(comment: &str, start: usize, end: usize) -> Result<&str> {
         .ok_or(ExtxyzError::InvalidMetadata { index: start })
 }
 
-/// Type a raw comment-line value by its shape, falling back to `Str` when
-/// nothing more specific fits, so typing never rejects a file. Quoting does
-/// not influence typing: `Lattice="9 0 0 ..."` must become numbers.
-fn type_metadata_value(raw: &str) -> Value {
-    if let Some(array) = parse_bracket_array(raw) {
-        return array;
+/// From `bytes[open]` (a `{` or `[`), return the index just past the matching
+/// close, tracking nesting of both bracket kinds and skipping quoted spans
+/// (so a `]`, `}`, or space inside a `"..."` span does not end the group).
+/// `Err(InvalidMetadata { index: open })` if the group never closes.
+fn group_end(bytes: &[u8], open: usize) -> Result<usize> {
+    let mut depth = 0usize;
+    let mut i = open;
+    let mut in_quote = false;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' => in_quote = !in_quote,
+            b'{' | b'[' if !in_quote => depth += 1,
+            b'}' | b']' if !in_quote => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(i + 1);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
     }
+    Err(ExtxyzError::InvalidMetadata { index: open })
+}
 
-    // The scalar and empty cases (energies, ids, flags — the bulk of comment
-    // keys) need no allocation; only a whitespace array collects.
-    let mut tokens = raw.split_whitespace();
+/// Strictly type a raw comment-line value. Byte offsets in any error are
+/// relative to `raw`; the caller ([`parse_comment_line`]) shifts them by the
+/// value's offset within the comment line. The splitter already strips a
+/// surrounding `"..."` quote pair and keeps `{...}`/`[...]` groups intact, so
+/// `raw` here is either quote-stripped content (never starts with `"`), a
+/// brace group, or a bracket group.
+///
+/// The splitter tracks bracket *depth* only, so it accepts a mismatched
+/// group like `{1]`; typing is where that mismatch is finally rejected — a
+/// group opened with `{` must close with `}`, and `[` with `]`.
+fn parse_metadata_value(raw: &str) -> Result<Value> {
+    let trimmed_start = raw.trim_start();
+    // New-style bracket array (1-D or 2-D).
+    if trimmed_start.starts_with('[') {
+        return parse_array_value(raw);
+    }
+    // Brace group: a scalar `{3}` or a whitespace array `{1 2 3}`.
+    if trimmed_start.starts_with('{') {
+        return match brace_inner(raw) {
+            Some(inner) => parse_group_inner(inner),
+            None => Err(ExtxyzError::InvalidMetadata { index: 0 }),
+        };
+    }
+    // Quote-stripped content. A space can only appear here if the value was
+    // quoted (bare values cannot contain spaces — the splitter breaks on
+    // them). Single token -> scalar; multiple tokens -> whitespace array or
+    // a sentence.
+    let trimmed = raw.trim();
+    let mut tokens = trimmed.split_whitespace();
     match (tokens.next(), tokens.next()) {
-        // Empty (e.g. a quoted "") or all-whitespace value.
-        (None, _) => Value::Str(raw.into()),
-        (Some(token), None) => scalar_value(token, raw),
+        (None, _) => Ok(Value::Str(raw.into())),
+        (Some(tok), None) => Ok(classify_scalar(tok, raw)),
         (Some(_), Some(_)) => {
-            let tokens: Vec<&str> = raw.split_whitespace().collect();
-            whitespace_array_value(&tokens, raw)
+            let tokens: Vec<&str> = trimmed.split_whitespace().collect();
+            Ok(whitespace_array_value(&tokens, raw))
         }
     }
 }
 
-fn scalar_value(token: &str, raw: &str) -> Value {
-    // Integers before booleans so `1` stays Int; `bool_token` excludes 0/1.
+/// Classify one bare scalar token by the grammar: int, else float (incl.
+/// Fortran d/D exponent), else bool, else bare string. Never fails — an
+/// unrecognised token is a valid bare string. Numeric/bool classification is
+/// on the trimmed `token`, but the string fallback keeps the original `raw`
+/// (untrimmed, quote-stripped): a quoted value preserves its interior
+/// whitespace, so `" hello "` stays `Str(" hello ")` while `" 3 "` still
+/// trims to `Int(3)`.
+fn classify_scalar(token: &str, raw: &str) -> Value {
+    // Integers before floats so a bare `1` stays Int, not Real.
     if let Ok(int) = token.parse::<i64>() {
         return Value::Int(int);
     }
 
-    if let Ok(real) = token.parse::<f64>() {
+    if let Some(real) = parse_float_grammar(token) {
         return Value::Real(real);
     }
 
@@ -2332,6 +2419,142 @@ fn scalar_value(token: &str, raw: &str) -> Value {
         Some(boolean) => Value::Bool(boolean),
         None => Value::Str(raw.into()),
     }
+}
+
+/// Float per the grammar, accepting Fortran `d`/`D` exponents by normalising
+/// them to `e` before Rust's parser sees them. Only treated as a float when
+/// the token actually has a point or an exponent marker, so a bare integer
+/// (no `.`/`e`/`d`) is never misread as one; the `d`/`D` replacement only
+/// allocates when one of those letters is actually present, keeping the
+/// (far more common) plain-float and non-float paths allocation-free.
+fn parse_float_grammar(token: &str) -> Option<f64> {
+    let has_fortran_exponent = token.bytes().any(|b| matches!(b, b'd' | b'D'));
+    if !has_fortran_exponent {
+        if !token.contains('.') && !token.contains(['e', 'E']) {
+            return None;
+        }
+        return token.parse::<f64>().ok();
+    }
+    let normalised = token.replace(['d', 'D'], "e");
+    normalised.parse::<f64>().ok()
+}
+
+/// `Some(inner)` if `raw` is exactly one `{...}` group spanning the whole
+/// value (a scalar `{3}` or a whitespace array `{1 2 3}`), else `None`.
+fn brace_inner(raw: &str) -> Option<&str> {
+    raw.strip_prefix('{')?.strip_suffix('}')
+}
+
+/// Type a `{...}` group's inner content: a single token is a scalar, several
+/// whitespace-separated tokens are a whitespace array.
+fn parse_group_inner(inner: &str) -> Result<Value> {
+    let trimmed = inner.trim();
+    let mut tokens = trimmed.split_whitespace();
+    match (tokens.next(), tokens.next()) {
+        (None, _) => Ok(Value::Str(inner.into())),
+        (Some(tok), None) => Ok(classify_scalar(tok, inner)),
+        (Some(_), Some(_)) => {
+            let tokens: Vec<&str> = trimmed.split_whitespace().collect();
+            Ok(whitespace_array_value(&tokens, inner))
+        }
+    }
+}
+
+/// Type a `[...]` bracket array: 1-D (`[1,2,3]`, `["a","b"]`), or, when an
+/// element itself nests a `[`, 2-D (`[[1,2],[3,4]]`) — flattened into the
+/// matching `*Array2D` with its `rows`/`cols` shape. Top-level splitting is
+/// quote- and bracket-aware ([`split_top_level`]), so a comma or a literal
+/// `]` inside a `"..."` element is never mistaken for a separator or a
+/// mismatched close.
+fn parse_array_value(raw: &str) -> Result<Value> {
+    let inner = raw
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .ok_or(ExtxyzError::InvalidMetadata { index: 0 })?;
+
+    let elems = split_top_level(inner);
+
+    // A top-level element that is itself a bracket group makes this a 2-D
+    // array: every element must then be a complete `[...]` row. The test is
+    // on the quote-aware split, so an element that merely *contains* a `[`
+    // inside a quoted string (e.g. `"a[b"`) starts with `"`, not `[`, and
+    // stays a 1-D string element rather than being mistaken for a row.
+    if elems.iter().any(|(_, element)| element.starts_with('[')) {
+        return parse_array_2d(&elems);
+    }
+
+    if let Some((offset, _)) = elems.iter().find(|(_, element)| element.is_empty()) {
+        // A leading, trailing, or doubled comma (`[1,2,]`, `[,2,3]`) leaves
+        // an empty element; the grammar has no place for one.
+        return Err(ExtxyzError::InvalidMetadata { index: 1 + offset });
+    }
+
+    let elements: Vec<String> = elems.into_iter().map(|(_, element)| element).collect();
+    Ok(array_kind_value(classify_elements(&elements)))
+}
+
+/// Type the rows of a 2-D bracket array. Each top-level element (already
+/// split by the caller) must itself be a `[...]` row; rows are parsed as
+/// 1-D element lists and must agree on length (a ragged shape is `Err`).
+/// The flattened elements are classified once, so the widest kind across
+/// every row wins — an int row next to a real row promotes the whole array
+/// to real.
+fn parse_array_2d(elems: &[(usize, String)]) -> Result<Value> {
+    let mut rows: Vec<Vec<String>> = Vec::with_capacity(elems.len());
+    for (offset, element) in elems {
+        let row_inner = element
+            .strip_prefix('[')
+            .and_then(|rest| rest.strip_suffix(']'))
+            .ok_or(ExtxyzError::InvalidMetadata { index: 1 + offset })?;
+
+        // A cell that has an unquoted `[` is malformed: either it *is* a
+        // further nested row (3-D+ arrays are not supported), or it is
+        // leftover junk from a missing separator between two rows (e.g.
+        // `[[1,2][1,2]]`, whose "row" splits to a bogus `2][1` cell). A `[`
+        // *inside* a quoted string cell (e.g. a 2-D string array's `"a[b"`)
+        // is ordinary string content, not a bracket, so it does not count —
+        // mirrors the top-level 1-D/2-D test's quote-awareness.
+        let row_elems = split_top_level(row_inner);
+        if let Some((inner_offset, _)) = row_elems
+            .iter()
+            .find(|(_, cell)| cell.is_empty() || contains_unquoted(cell, '['))
+        {
+            return Err(ExtxyzError::InvalidMetadata {
+                index: 2 + offset + inner_offset,
+            });
+        }
+        rows.push(row_elems.into_iter().map(|(_, cell)| cell).collect());
+    }
+
+    let cols = rows.first().map(Vec::len).unwrap_or(0);
+    if rows.iter().any(|row| row.len() != cols) {
+        return Err(ExtxyzError::InvalidMetadata { index: 0 });
+    }
+
+    let n_rows = rows.len();
+    let flat: Vec<String> = rows.into_iter().flatten().collect();
+    Ok(match classify_elements(&flat) {
+        ArrayKind::Int(data) => Value::IntArray2D {
+            rows: n_rows,
+            cols,
+            data,
+        },
+        ArrayKind::Real(data) => Value::RealArray2D {
+            rows: n_rows,
+            cols,
+            data,
+        },
+        ArrayKind::Bool(data) => Value::BoolArray2D {
+            rows: n_rows,
+            cols,
+            data,
+        },
+        ArrayKind::Str(data) => Value::StrArray2D {
+            rows: n_rows,
+            cols,
+            data,
+        },
+    })
 }
 
 fn whitespace_array_value(tokens: &[&str], raw: &str) -> Value {
@@ -2349,7 +2572,8 @@ fn whitespace_array_value(tokens: &[&str], raw: &str) -> Value {
         return Value::BoolArray(bools);
     }
 
-    // Mixed tokens are a sentence, not an array.
+    // A multi-word non-numeric whitespace value is a sentence, not a string
+    // array: only new-style `[...]` produces `StrArray`.
     Value::Str(raw.into())
 }
 
@@ -2361,50 +2585,103 @@ fn parse_all<T: std::str::FromStr>(tokens: &[&str]) -> Option<Vec<T>> {
 /// Comment-line booleans; excludes `0`/`1` (contrast [`bool_cell`]).
 fn bool_token(token: &str) -> Option<bool> {
     match token {
-        "T" | "TRUE" | "True" | "true" => Some(true),
-        "F" | "FALSE" | "False" | "false" => Some(false),
+        "t" | "T" | "TRUE" | "True" | "true" => Some(true),
+        "f" | "F" | "FALSE" | "False" | "false" => Some(false),
         _ => None,
     }
 }
 
-/// Parse a new-style bracket array like `[2,2,1]` or `["slab","relaxed"]`.
-/// Returns `None` for anything else — including nested 2-D arrays, for now —
-/// so the caller falls through to the `Str` fallback.
-fn parse_bracket_array(raw: &str) -> Option<Value> {
-    let inner = raw.strip_prefix('[')?.strip_suffix(']')?;
+/// Split `inner` at top-level commas, treating `"..."` spans and nested
+/// `[...]`/`{...}` groups as atomic, so a comma or bracket inside a quoted
+/// element (or inside a nested array element) never splits it or is
+/// mistaken for a mismatched close. Each element is trimmed and paired with
+/// the byte offset of its first non-whitespace character within `inner`
+/// (or its untrimmed start, when empty) — for pointing a later error at the
+/// offending element rather than the whole value.
+fn split_top_level(inner: &str) -> Vec<(usize, String)> {
+    let bytes = inner.as_bytes();
+    let mut elems = Vec::new();
+    let mut start = 0usize;
+    let mut depth = 0i32;
+    let mut in_quote = false;
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'"' => in_quote = !in_quote,
+            b'[' | b'{' if !in_quote => depth += 1,
+            b']' | b'}' if !in_quote => depth -= 1,
+            b',' if !in_quote && depth == 0 => {
+                elems.push(trimmed_span(inner, start, i));
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    elems.push(trimmed_span(inner, start, bytes.len()));
+    elems
+}
 
-    if inner.contains('[') || inner.contains(']') {
-        return None;
+/// `inner[start..end]`, trimmed, paired with the byte offset (within
+/// `inner`) of its first non-whitespace character.
+fn trimmed_span(inner: &str, start: usize, end: usize) -> (usize, String) {
+    let slice = &inner[start..end];
+    let leading = slice.len() - slice.trim_start().len();
+    (start + leading, slice.trim().to_string())
+}
+
+/// One classified array's elements, by increasing generality: an int array
+/// stays exact; real, bool, or the string fallback is chosen only once every
+/// element fails the narrower kind. Quote-stripping happens only in the
+/// string fallback, so a quoted element like `"3"` never parses as a number
+/// — it stays a string, matching the grammar's intent for quoted array
+/// elements.
+enum ArrayKind {
+    Int(Vec<i64>),
+    Real(Vec<f64>),
+    Bool(Vec<bool>),
+    Str(Vec<CompactString>),
+}
+
+fn classify_elements(elements: &[String]) -> ArrayKind {
+    if let Some(ints) = elements
+        .iter()
+        .map(|element| element.parse::<i64>().ok())
+        .collect::<Option<Vec<_>>>()
+    {
+        return ArrayKind::Int(ints);
     }
 
-    if inner.trim().is_empty() {
-        return None;
+    if let Some(reals) = elements
+        .iter()
+        .map(|element| element.parse::<f64>().ok())
+        .collect::<Option<Vec<_>>>()
+    {
+        return ArrayKind::Real(reals);
     }
 
-    let elements: Vec<&str> = inner.split(',').map(str::trim).collect();
-
-    if elements.iter().any(|element| element.is_empty()) {
-        return None;
+    if let Some(bools) = elements
+        .iter()
+        .map(|element| bool_token(element))
+        .collect::<Option<Vec<_>>>()
+    {
+        return ArrayKind::Bool(bools);
     }
 
-    if let Some(ints) = parse_all::<i64>(&elements) {
-        return Some(Value::IntArray(ints));
-    }
-
-    if let Some(reals) = parse_all::<f64>(&elements) {
-        return Some(Value::RealArray(reals));
-    }
-
-    if let Some(bools) = elements.iter().map(|element| bool_token(element)).collect() {
-        return Some(Value::BoolArray(bools));
-    }
-
-    Some(Value::StrArray(
+    ArrayKind::Str(
         elements
             .iter()
             .map(|element| strip_quotes(element).into())
             .collect(),
-    ))
+    )
+}
+
+/// A 1-D `ArrayKind` as its matching `Value` variant.
+fn array_kind_value(kind: ArrayKind) -> Value {
+    match kind {
+        ArrayKind::Int(data) => Value::IntArray(data),
+        ArrayKind::Real(data) => Value::RealArray(data),
+        ArrayKind::Bool(data) => Value::BoolArray(data),
+        ArrayKind::Str(data) => Value::StrArray(data),
+    }
 }
 
 fn strip_quotes(token: &str) -> &str {
@@ -2414,41 +2691,69 @@ fn strip_quotes(token: &str) -> &str {
         .unwrap_or(token)
 }
 
+/// Whether `needle` occurs in `haystack` outside any `"..."` span. A `"..."`
+/// span's interior is string content, so a bracket inside one (e.g. `"a[b"`)
+/// does not count — only a bare, unquoted occurrence does.
+fn contains_unquoted(haystack: &str, needle: char) -> bool {
+    let mut in_quote = false;
+    for c in haystack.chars() {
+        match c {
+            '"' => in_quote = !in_quote,
+            c if c == needle && !in_quote => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn types_scalar_metadata() {
-        assert_eq!(type_metadata_value("12"), Value::Int(12));
-        assert_eq!(type_metadata_value("298.15"), Value::Real(298.15));
-        assert_eq!(type_metadata_value("T"), Value::Bool(true));
-        assert_eq!(type_metadata_value("False"), Value::Bool(false));
-        assert_eq!(type_metadata_value("train"), Value::Str("train".into()));
+        assert_eq!(parse_metadata_value("12").unwrap(), Value::Int(12));
+        assert_eq!(parse_metadata_value("298.15").unwrap(), Value::Real(298.15));
+        assert_eq!(parse_metadata_value("T").unwrap(), Value::Bool(true));
+        assert_eq!(parse_metadata_value("False").unwrap(), Value::Bool(false));
+        // Lowercase t/f are also valid booleans, per the grammar.
+        assert_eq!(parse_metadata_value("t").unwrap(), Value::Bool(true));
+        assert_eq!(parse_metadata_value("f").unwrap(), Value::Bool(false));
+        assert_eq!(
+            parse_metadata_value("train").unwrap(),
+            Value::Str("train".into())
+        );
 
         // "1" is an integer, not a boolean, on the comment line.
-        assert_eq!(type_metadata_value("1"), Value::Int(1));
+        assert_eq!(parse_metadata_value("1").unwrap(), Value::Int(1));
+
+        // Fortran d/D exponents are floats, normalised like e/E.
+        assert_eq!(parse_metadata_value("1.5d0").unwrap(), Value::Real(1.5));
+        assert_eq!(parse_metadata_value("1.5D-2").unwrap(), Value::Real(0.015));
     }
 
     #[test]
     fn types_whitespace_separated_arrays() {
-        assert_eq!(type_metadata_value("3 0 0"), Value::IntArray(vec![3, 0, 0]));
         assert_eq!(
-            type_metadata_value("1.0 2.5"),
+            parse_metadata_value("3 0 0").unwrap(),
+            Value::IntArray(vec![3, 0, 0])
+        );
+        assert_eq!(
+            parse_metadata_value("1.0 2.5").unwrap(),
             Value::RealArray(vec![1.0, 2.5])
         );
         // Mixed int/real promotes to reals.
         assert_eq!(
-            type_metadata_value("1 2.5"),
+            parse_metadata_value("1 2.5").unwrap(),
             Value::RealArray(vec![1.0, 2.5])
         );
         assert_eq!(
-            type_metadata_value("T T F"),
+            parse_metadata_value("T T F").unwrap(),
             Value::BoolArray(vec![true, true, false])
         );
         // Mixed tokens are a sentence, kept whole.
         assert_eq!(
-            type_metadata_value("water monomer"),
+            parse_metadata_value("water monomer").unwrap(),
             Value::Str("water monomer".into())
         );
     }
@@ -2456,22 +2761,116 @@ mod tests {
     #[test]
     fn types_bracket_arrays() {
         assert_eq!(
-            type_metadata_value("[2,2,1]"),
+            parse_metadata_value("[2,2,1]").unwrap(),
             Value::IntArray(vec![2, 2, 1])
         );
         assert_eq!(
-            type_metadata_value("[4.5,5.0]"),
+            parse_metadata_value("[4.5,5.0]").unwrap(),
             Value::RealArray(vec![4.5, 5.0])
         );
         assert_eq!(
-            type_metadata_value(r#"["slab","relaxed"]"#),
+            parse_metadata_value(r#"["slab","relaxed"]"#).unwrap(),
             Value::StrArray(vec!["slab".into(), "relaxed".into()])
         );
-        // 2-D arrays fall back to the raw string for now.
+        // Strict grammar: a nested `[` makes it 2-D, not a raw-string
+        // fallback (changed from the prior lenient pass, which had no 2-D
+        // support at all).
         assert_eq!(
-            type_metadata_value("[[1,0],[0,1]]"),
-            Value::Str("[[1,0],[0,1]]".into())
+            parse_metadata_value("[[1,0],[0,1]]").unwrap(),
+            Value::IntArray2D {
+                rows: 2,
+                cols: 2,
+                data: vec![1, 0, 0, 1]
+            }
         );
+    }
+
+    #[test]
+    fn types_2d_bracket_arrays() {
+        assert_eq!(
+            parse_metadata_value("[[1,2],[3,4]]").unwrap(),
+            Value::IntArray2D {
+                rows: 2,
+                cols: 2,
+                data: vec![1, 2, 3, 4]
+            }
+        );
+        // An int row next to a real row promotes the whole array to real.
+        assert_eq!(
+            parse_metadata_value("[[1,2],[3.0,4]]").unwrap(),
+            Value::RealArray2D {
+                rows: 2,
+                cols: 2,
+                data: vec![1.0, 2.0, 3.0, 4.0]
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_ragged_2d_arrays() {
+        // Row 1 has two elements, row 2 has three: not a rectangle.
+        assert!(matches!(
+            parse_metadata_value("[[1,2],[3,4,5]]"),
+            Err(ExtxyzError::InvalidMetadata { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_empty_array_elements() {
+        // A leading, trailing, or doubled comma leaves an empty element.
+        for raw in ["[1,2,]", "[,2,3]", "[1,,3]"] {
+            assert!(
+                matches!(
+                    parse_metadata_value(raw),
+                    Err(ExtxyzError::InvalidMetadata { .. })
+                ),
+                "raw = {raw:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn types_brace_wrapped_scalars_and_arrays() {
+        // A brace-wrapped scalar with interior whitespace types the same as
+        // its bare form — the group is punctuation, not part of the value.
+        assert_eq!(parse_metadata_value("{3}").unwrap(), Value::Int(3));
+        assert_eq!(parse_metadata_value("{ 3 }").unwrap(), Value::Int(3));
+        // A brace-wrapped whitespace array still works via the existing
+        // whitespace-array typing.
+        assert_eq!(
+            parse_metadata_value("{1 2 3}").unwrap(),
+            Value::IntArray(vec![1, 2, 3])
+        );
+    }
+
+    #[test]
+    fn splitter_groups_braces_and_brackets() {
+        // Interior spaces inside {} or [] do not split the value.
+        let pairs = parse_comment_metadata("a={ 3 } b=[ \"x, y\", \"z]\" ]").unwrap();
+        assert_eq!(pairs.len(), 2);
+        assert_eq!((pairs[0].0, pairs[0].1), ("a", "{ 3 }"));
+        assert_eq!((pairs[1].0, pairs[1].1), ("b", "[ \"x, y\", \"z]\" ]"));
+    }
+
+    #[test]
+    fn splitter_rejects_unbalanced_group() {
+        assert!(parse_comment_metadata("a={1 2").is_err());
+        assert!(parse_comment_metadata("a=[1, 2").is_err());
+    }
+
+    #[test]
+    fn typing_rejects_mismatched_bracket_kind() {
+        // The splitter only tracks bracket *depth*, so it accepts `{1]` and
+        // `[1}` as balanced (depth returns to 0); typing is where the
+        // mismatched close is finally rejected.
+        assert!(matches!(
+            parse_metadata_value("{1]"),
+            Err(ExtxyzError::InvalidMetadata { .. })
+        ));
+        assert!(matches!(
+            parse_metadata_value("[1}"),
+            Err(ExtxyzError::InvalidMetadata { .. })
+        ));
     }
 
     #[test]

@@ -134,6 +134,28 @@ pub enum Value {
     IntArray(Vec<i64>),
     BoolArray(Vec<bool>),
     StrArray(Vec<CompactString>),
+    /// Flat row-major buffer; element `(r, c)` at `data[r * cols + c]`,
+    /// `data.len() == rows * cols`. Mirrors `Column`'s own row-major layout.
+    RealArray2D {
+        rows: usize,
+        cols: usize,
+        data: Vec<f64>,
+    },
+    IntArray2D {
+        rows: usize,
+        cols: usize,
+        data: Vec<i64>,
+    },
+    BoolArray2D {
+        rows: usize,
+        cols: usize,
+        data: Vec<bool>,
+    },
+    StrArray2D {
+        rows: usize,
+        cols: usize,
+        data: Vec<CompactString>,
+    },
 }
 
 /// One parsed frame: per-atom columns plus frame-level metadata.
@@ -214,5 +236,21 @@ mod tests {
         let text = ColumnData::Str(vec!["a".into()]);
         assert_eq!(text.as_str(), Some(&["a".into()][..]));
         assert_eq!(text.as_real(), None);
+    }
+
+    #[test]
+    #[allow(clippy::identity_op)] // `1 * cols + 0` spells out the (row, col) formula being tested
+    fn two_d_array_values_are_flat_row_major_with_shape() {
+        let v = Value::RealArray2D {
+            rows: 2,
+            cols: 2,
+            data: vec![1.0, 2.0, 3.0, 4.0],
+        };
+        let Value::RealArray2D { rows, cols, data } = &v else {
+            panic!("wrong variant")
+        };
+        assert_eq!((*rows, *cols), (2, 2));
+        assert_eq!(data.len(), rows * cols);
+        assert_eq!(data[1 * cols + 0], 3.0); // row 1, col 0
     }
 }

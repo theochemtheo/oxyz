@@ -935,7 +935,7 @@ fn kind_name(kind: ColumnKind) -> &'static str {
 }
 
 /// Split a metadata value type into the kind name and a numpy-style shape:
-/// `()` for scalars, `(n,)` for arrays.
+/// `()` for scalars, `(n,)` for 1-D arrays, `(rows, cols)` for 2-D arrays.
 fn value_type_parts(value_type: ValueType) -> (&'static str, Vec<usize>) {
     match value_type {
         ValueType::Real => ("Real", vec![]),
@@ -946,6 +946,10 @@ fn value_type_parts(value_type: ValueType) -> (&'static str, Vec<usize>) {
         ValueType::IntArray(n) => ("Int", vec![n]),
         ValueType::BoolArray(n) => ("Bool", vec![n]),
         ValueType::StrArray(n) => ("Str", vec![n]),
+        ValueType::RealArray2D(rows, cols) => ("Real", vec![rows, cols]),
+        ValueType::IntArray2D(rows, cols) => ("Int", vec![rows, cols]),
+        ValueType::BoolArray2D(rows, cols) => ("Bool", vec![rows, cols]),
+        ValueType::StrArray2D(rows, cols) => ("Str", vec![rows, cols]),
     }
 }
 
@@ -1054,6 +1058,25 @@ fn frame_to_pydict(py: Python<'_>, frame: Frame) -> PyResult<Bound<'_, PyDict>> 
             Value::BoolArray(values) => metadata.set_item(key, values.into_pyarray(py))?,
             Value::StrArray(values) => {
                 metadata.set_item(key, values.iter().map(|s| s.as_str()).collect::<Vec<_>>())?
+            }
+            // 2-D metadata is always a 2-D ndarray, even a single row or
+            // column — unlike a per-atom column (`array_from_flat`), there is
+            // no width == 1 case that means "really 1-D".
+            Value::RealArray2D { rows, cols, data } => {
+                metadata.set_item(key, array2d_from_flat(py, data, rows, cols)?)?
+            }
+            Value::IntArray2D { rows, cols, data } => {
+                metadata.set_item(key, array2d_from_flat(py, data, rows, cols)?)?
+            }
+            Value::BoolArray2D { rows, cols, data } => {
+                metadata.set_item(key, array2d_from_flat(py, data, rows, cols)?)?
+            }
+            Value::StrArray2D { cols, data, .. } => {
+                let rows: Vec<Vec<&str>> = data
+                    .chunks(cols)
+                    .map(|row| row.iter().map(|s| s.as_str()).collect())
+                    .collect();
+                metadata.set_item(key, rows)?
             }
         }
     }
@@ -1295,17 +1318,28 @@ fn str_column(list: &Bound<'_, PyList>) -> PyResult<(ColumnData, usize)> {
         ));
     }
 
-    let rows: Vec<Vec<String>> = list.extract()?;
-    let width = rows.first().map_or(1, Vec::len);
-    if rows.iter().any(|row| row.len() != width) {
-        return Err(PyValueError::new_err(
-            "string column rows have differing widths",
-        ));
-    }
+    let (rows, width) = rectangular_string_rows(list, 1)?;
     Ok((
         ColumnData::Str(rows.into_iter().flatten().map(Into::into).collect()),
         width,
     ))
+}
+
+/// Extract `list[list[str]]`, checking every row is the same length as the
+/// first (a ragged nested list is a `ValueError`, not a panic). `default_width`
+/// is returned for an empty list, where there is no first row to measure.
+fn rectangular_string_rows(
+    list: &Bound<'_, PyList>,
+    default_width: usize,
+) -> PyResult<(Vec<Vec<String>>, usize)> {
+    let rows: Vec<Vec<String>> = list.extract()?;
+    let width = rows.first().map_or(default_width, Vec::len);
+    if rows.iter().any(|row| row.len() != width) {
+        return Err(PyValueError::new_err(
+            "nested string list rows have differing widths",
+        ));
+    }
+    Ok((rows, width))
 }
 
 /// A numeric column's flat buffer and width, or `None` if `value` is not a 1-D
@@ -1332,12 +1366,72 @@ fn flat_array<T: Element + Clone>(value: &Bound<'_, PyAny>) -> Option<(Vec<T>, u
     Some((view.iter().cloned().collect(), width))
 }
 
+/// A 2-D numpy array of `T` (row-major), as its flat buffer plus `(rows,
+/// cols)`. `None` if the dtype doesn't match or the array isn't rank 2 —
+/// unlike `flat_array`, a 1-D array is not treated as width 1 here, since
+/// metadata needs to keep 1-D and 2-D apart (`Value::XArray` vs
+/// `Value::XArray2D`), not fold one into the other.
+fn flat_array_2d<T: Element + Clone>(value: &Bound<'_, PyAny>) -> Option<(Vec<T>, usize, usize)> {
+    let array = value.cast::<PyArrayDyn<T>>().ok()?;
+    let readonly = array.readonly();
+    let view = readonly.as_array();
+    if view.ndim() != 2 {
+        return None;
+    }
+    let shape = view.shape();
+    Some((view.iter().cloned().collect(), shape[0], shape[1]))
+}
+
+/// A 2-D numeric metadata array, or `None` if `value` is not a 2-D f64/i64/bool
+/// numpy array. Mirrors `numeric_array`'s dtype dispatch order (float, then
+/// int, then bool — a numpy bool array never matches the float/int dtype
+/// casts, so the order does not actually create ambiguity, but keeping it
+/// consistent avoids surprises).
+fn numeric_array_2d(value: &Bound<'_, PyAny>) -> Option<Value> {
+    if let Some((data, rows, cols)) = flat_array_2d::<f64>(value) {
+        return Some(Value::RealArray2D { rows, cols, data });
+    }
+    if let Some((data, rows, cols)) = flat_array_2d::<i64>(value) {
+        return Some(Value::IntArray2D { rows, cols, data });
+    }
+    if let Some((data, rows, cols)) = flat_array_2d::<bool>(value) {
+        return Some(Value::BoolArray2D { rows, cols, data });
+    }
+    None
+}
+
+/// A metadata string value from `list[str]` (`StrArray`) or `list[list[str]]`
+/// (`StrArray2D`) — the same nested convention `str_column` uses for string
+/// columns. A ragged nested list is a `ValueError`, not a panic.
+fn str_metadata(list: &Bound<'_, PyList>) -> PyResult<Value> {
+    let nested = list
+        .get_item(0)
+        .ok()
+        .is_some_and(|first| first.is_instance_of::<PyList>());
+
+    if !nested {
+        let flat: Vec<String> = list.extract()?;
+        return Ok(Value::StrArray(flat.into_iter().map(Into::into).collect()));
+    }
+
+    let (rows, cols) = rectangular_string_rows(list, 0)?;
+    Ok(Value::StrArray2D {
+        rows: rows.len(),
+        cols,
+        data: rows.into_iter().flatten().map(Into::into).collect(),
+    })
+}
+
 /// One metadata value. Strings stay strings; numpy arrays become the matching
-/// array variant; Python lists become string arrays; bool is tried before int
-/// (a Python bool is an int subclass).
+/// 1-D or 2-D array variant (rank picked by `ndim`); Python lists become
+/// string arrays, nested for `list[list[str]]`; bool is tried before int (a
+/// Python bool is an int subclass).
 fn py_to_value(value: &Bound<'_, PyAny>) -> PyResult<Value> {
     if value.is_instance_of::<PyString>() {
         return Ok(Value::Str(value.extract::<String>()?.into()));
+    }
+    if let Some(array2d) = numeric_array_2d(value) {
+        return Ok(array2d);
     }
     if let Some((data, _)) = numeric_array(value) {
         return Ok(match data {
@@ -1348,13 +1442,7 @@ fn py_to_value(value: &Bound<'_, PyAny>) -> PyResult<Value> {
         });
     }
     if value.is_instance_of::<PyList>() {
-        return Ok(Value::StrArray(
-            value
-                .extract::<Vec<String>>()?
-                .into_iter()
-                .map(Into::into)
-                .collect(),
-        ));
+        return str_metadata(value.cast::<PyList>()?);
     }
     if let Ok(b) = value.cast::<pyo3::types::PyBool>() {
         return Ok(Value::Bool(b.is_true()));
@@ -1658,6 +1746,15 @@ fn array_from_flat<T: Element>(
     if width == 1 {
         return Ok(values.into_pyarray(py).into_any());
     }
+    // Guard the width == 0 case explicitly — the parser never emits a 2-D
+    // value with zero columns, but `values.len() / width` below would panic
+    // on divide-by-zero if it ever did.
+    if width == 0 {
+        return Ok(Array2::<T>::from_shape_vec((0, 0), values)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?
+            .into_pyarray(py)
+            .into_any());
+    }
 
     // The parser upholds `values.len() == n_rows * width`; keep the error
     // path anyway rather than unwrap at the Python boundary.
@@ -1665,6 +1762,20 @@ fn array_from_flat<T: Element>(
     let array = Array2::from_shape_vec((n_rows, width), values)
         .map_err(|error| PyValueError::new_err(error.to_string()))?;
 
+    Ok(array.into_pyarray(py).into_any())
+}
+
+/// Turn a flat row-major buffer with an explicit `(rows, cols)` shape into a
+/// 2-D numpy array. Unlike `array_from_flat`, this never collapses to 1-D —
+/// 2-D metadata reads back as 2-D even for a single row or column.
+fn array2d_from_flat<T: Element>(
+    py: Python<'_>,
+    values: Vec<T>,
+    rows: usize,
+    cols: usize,
+) -> PyResult<Bound<'_, PyAny>> {
+    let array = Array2::from_shape_vec((rows, cols), values)
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
     Ok(array.into_pyarray(py).into_any())
 }
 

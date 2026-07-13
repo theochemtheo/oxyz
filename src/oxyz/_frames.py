@@ -19,7 +19,9 @@ if TYPE_CHECKING:
     from oxyz._schema_spec import Mode, SchemaSpec
 
 ColumnValues = np.ndarray | list[str] | list[list[str]]
-MetadataValue = float | int | bool | str | np.ndarray | list[str]
+# np.ndarray covers 1-D and 2-D numeric/bool metadata (shape (rows, cols) for
+# 2-D); 2-D string metadata crosses as list[list[str]], mirroring ColumnValues.
+MetadataValue = float | int | bool | str | np.ndarray | list[str] | list[list[str]]
 
 Compression = Literal["infer", "none", "gzip", "zstd", "zip"]
 """How to read a possibly-compressed file. `"infer"` detects the codec from the

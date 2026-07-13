@@ -26,7 +26,10 @@ class ParseError(OxyzError):
     column: int | None
 
 type ColumnValues = np.ndarray | list[str] | list[list[str]]
-type MetadataValue = float | int | bool | str | np.ndarray | list[str]
+# np.ndarray covers scalar-width-1 arrays through 2-D numeric/bool arrays
+# (shape (rows, cols)); 2-D string arrays cross as list[list[str]], mirroring
+# ColumnValues.
+type MetadataValue = float | int | bool | str | np.ndarray | list[str] | list[list[str]]
 
 class FrameData(TypedDict):
     n_atoms: int

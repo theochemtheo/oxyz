@@ -213,6 +213,13 @@ fn value_to_data(value: Value) -> (ColumnData, usize) {
             let width = values.len();
             (ColumnData::Str(values), width)
         }
+        // A 2-D value flattens into a fixed-width column like a 1-D array
+        // does: the batch is frame-major and does not preserve per-key shape,
+        // only per-column width.
+        Value::RealArray2D { rows, cols, data } => (ColumnData::Real(data), rows * cols),
+        Value::IntArray2D { rows, cols, data } => (ColumnData::Int(data), rows * cols),
+        Value::BoolArray2D { rows, cols, data } => (ColumnData::Bool(data), rows * cols),
+        Value::StrArray2D { rows, cols, data } => (ColumnData::Str(data), rows * cols),
     }
 }
 
