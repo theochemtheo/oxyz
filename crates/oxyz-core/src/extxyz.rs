@@ -2461,9 +2461,12 @@ fn parse_array_value(raw: &str) -> Result<Value> {
 
     let elems = split_top_level(inner);
 
-    // A nested `[` in any element makes this a 2-D array: every element
-    // must itself be a complete `[...]` row.
-    if elems.iter().any(|(_, element)| element.contains('[')) {
+    // A top-level element that is itself a bracket group makes this a 2-D
+    // array: every element must then be a complete `[...]` row. The test is
+    // on the quote-aware split, so an element that merely *contains* a `[`
+    // inside a quoted string (e.g. `"a[b"`) starts with `"`, not `[`, and
+    // stays a 1-D string element rather than being mistaken for a row.
+    if elems.iter().any(|(_, element)| element.starts_with('[')) {
         return parse_array_2d(&elems);
     }
 

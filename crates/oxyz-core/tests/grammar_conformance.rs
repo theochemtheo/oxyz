@@ -182,6 +182,18 @@ fn should_work_1d_arrays() {
         read_value("[ T, F, bob ]").unwrap(),
         Value::StrArray(vec!["T".into(), "F".into(), "bob".into()])
     );
+    // A `[` *inside* a quoted string element is part of the string, not a
+    // nested row: the array stays 1-D. The 1-D/2-D decision runs on the
+    // quote-aware split, so a quoted element like `"a[b"` starts with `"`,
+    // never `[`.
+    assert_eq!(
+        read_value("[ \"a[b\", \"c\" ]").unwrap(),
+        Value::StrArray(vec!["a[b".into(), "c".into()])
+    );
+    assert_eq!(
+        read_value("[ \"path[0]\", \"path[1]\" ]").unwrap(),
+        Value::StrArray(vec!["path[0]".into(), "path[1]".into()])
+    );
 }
 
 /// kv_tests "2-d array": nested new-style brackets -> flat buffer + shape.
