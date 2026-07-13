@@ -2494,13 +2494,18 @@ fn parse_array_2d(elems: &[(usize, String)]) -> Result<Value> {
             .and_then(|rest| rest.strip_suffix(']'))
             .ok_or(ExtxyzError::InvalidMetadata { index: 1 + offset })?;
 
+        // A cell that has an unquoted `[` is malformed: either it *is* a
+        // further nested row (3-D+ arrays are not supported), or it is
+        // leftover junk from a missing separator between two rows (e.g.
+        // `[[1,2][1,2]]`, whose "row" splits to a bogus `2][1` cell). A `[`
+        // *inside* a quoted string cell (e.g. a 2-D string array's `"a[b"`)
+        // is ordinary string content, not a bracket, so it does not count —
+        // mirrors the top-level 1-D/2-D test's quote-awareness.
         let row_elems = split_top_level(row_inner);
         if let Some((inner_offset, _)) = row_elems
             .iter()
-            .find(|(_, cell)| cell.is_empty() || cell.contains('['))
+            .find(|(_, cell)| cell.is_empty() || contains_unquoted(cell, '['))
         {
-            // Either an empty cell (stray comma) or a further nested `[`
-            // (3-D+ arrays are not supported): both are malformed rows.
             return Err(ExtxyzError::InvalidMetadata {
                 index: 2 + offset + inner_offset,
             });
@@ -2671,6 +2676,21 @@ fn strip_quotes(token: &str) -> &str {
         .strip_prefix('"')
         .and_then(|stripped| stripped.strip_suffix('"'))
         .unwrap_or(token)
+}
+
+/// Whether `needle` occurs in `haystack` outside any `"..."` span. A `"..."`
+/// span's interior is string content, so a bracket inside one (e.g. `"a[b"`)
+/// does not count — only a bare, unquoted occurrence does.
+fn contains_unquoted(haystack: &str, needle: char) -> bool {
+    let mut in_quote = false;
+    for c in haystack.chars() {
+        match c {
+            '"' => in_quote = !in_quote,
+            c if c == needle && !in_quote => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 #[cfg(test)]

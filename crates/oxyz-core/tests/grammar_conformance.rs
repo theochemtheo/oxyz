@@ -215,4 +215,55 @@ fn should_work_2d_arrays() {
             data: vec![1.0, 2.0, 3.0, 4.0]
         }
     );
+    // A literal `[` inside a quoted string *cell* of a 2-D array is part of
+    // that string, not a nested (3-D) row — the row-level guard must be as
+    // quote-aware as the top-level 1-D/2-D one.
+    assert_eq!(
+        read_value("[[\"a[b\",\"c\"],[\"d\",\"e\"]]").unwrap(),
+        Value::StrArray2D {
+            rows: 2,
+            cols: 2,
+            data: vec!["a[b".into(), "c".into(), "d".into(), "e".into()]
+        }
+    );
+}
+
+/// kv_tests "ones that should fail": malformed values must be Err. Cases that
+/// oxyz intentionally accepts (single-quoted bare strings, bare-int-as-int) are
+/// asserted as their conformant value elsewhere, with a decision on record.
+#[test]
+fn should_fail_cases() {
+    // These are malformed *values* — the strict typer must reject them.
+    let fail = [
+        "\"abc'",       // almost quoted: opens " never closes → splitter Err
+        "\"abc\"def",   // trailing junk after close quote → stray bare key Err
+        "[ 1, 2, ]",    // trailing comma → empty element
+        "[ , 2, 3 ]",   // leading comma → empty element
+        "[[1,2],[3]]",  // ragged 2-D
+        "[[1,2][1,2]]", // 2-D missing separating comma
+    ];
+    for src in fail {
+        assert!(read_value(src).is_err(), "expected Err for src = {src:?}");
+    }
+    // Unbalanced groups → Err at the splitter.
+    assert!(read_value("{1, 2").is_err());
+    assert!(read_value("[1, 2").is_err());
+}
+
+/// The "no key-value =" fail class (a comment token with no `=`) is a splitter
+/// concern, not a value-typer one — `read_value` always supplies `key=`, so it
+/// cannot express it. Assert it directly against the splitter.
+#[test]
+fn should_fail_bare_key_without_equals() {
+    use std::io::Cursor;
+    // Comment line is a bare token with no '=' at all.
+    let input = "1\nloneword\nX 0.0 0.0 0.0\n";
+    let result = iter_frames_from(Cursor::new(input.as_bytes()))
+        .unwrap()
+        .next()
+        .unwrap();
+    assert!(
+        result.is_err(),
+        "bare comment token with no '=' must be an error"
+    );
 }
