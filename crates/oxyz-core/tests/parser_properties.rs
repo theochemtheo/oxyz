@@ -5,8 +5,9 @@
 
 use std::io::Cursor;
 
+use oxyz_core::model::{Column, ColumnData, Frame};
 use oxyz_core::project::{Fill, PlanColumn, ProjectionPlan, project_frame};
-use oxyz_core::{FrameIter, scan_frames, scan_frames_with_volume};
+use oxyz_core::{BatchBuilder, BatchError, FrameIter, scan_frames, scan_frames_with_volume};
 use proptest::prelude::*;
 
 fn parse_all(input: &str) {
@@ -244,6 +245,70 @@ proptest! {
                 // land on the comment line (2) or an atom row (>=3).
                 if let Some(line) = error.line() {
                     prop_assert!(line >= 2);
+                }
+            }
+        }
+    }
+}
+
+/// One frame's schema: which of {a,b,c} columns it has and each one's kind.
+fn frame_schema() -> impl Strategy<Value = Vec<(char, u8)>> {
+    proptest::collection::vec((prop::sample::select(vec!['a', 'b', 'c']), 0u8..3), 0..3)
+}
+
+fn build_frame(n_atoms: usize, schema: &[(char, u8)]) -> Frame {
+    let columns = schema
+        .iter()
+        .map(|&(name, kind)| {
+            let data = match kind {
+                0 => ColumnData::Real(vec![1.0; n_atoms]),
+                1 => ColumnData::Int(vec![1; n_atoms]),
+                _ => ColumnData::Bool(vec![true; n_atoms]),
+            };
+            Column {
+                name: name.to_string().into(),
+                width: 1,
+                data,
+            }
+        })
+        .collect();
+    Frame {
+        n_atoms,
+        columns,
+        metadata: Vec::new(),
+    }
+}
+
+proptest! {
+    /// Pushing frames whose schemas disagree yields a BatchError that names the
+    /// offending frame index — never a panic, never a silent accept.
+    #[test]
+    fn ragged_batch_push_errors_name_the_frame(
+        first in frame_schema(),
+        rest in proptest::collection::vec(frame_schema(), 0..4),
+        n_atoms in 1usize..3,
+    ) {
+        let mut builder = BatchBuilder::new();
+        // The first push defines the contract; it must succeed.
+        prop_assume!(builder.push(build_frame(n_atoms, &first)).is_ok());
+
+        for (i, schema) in rest.iter().enumerate() {
+            match builder.push(build_frame(n_atoms, schema)) {
+                Ok(()) => {}
+                Err(error) => {
+                    // Every BatchError variant carries the frame position; it
+                    // must be the frame we just pushed (i + 1, after the first).
+                    let named = match error {
+                        BatchError::ColumnMismatch { frame, .. }
+                        | BatchError::MissingColumn { frame, .. }
+                        | BatchError::UnexpectedColumn { frame, .. }
+                        | BatchError::MetadataMismatch { frame, .. }
+                        | BatchError::MissingMetadata { frame, .. }
+                        | BatchError::UnexpectedMetadata { frame, .. } => Some(frame),
+                        _ => None,
+                    };
+                    prop_assert_eq!(named, Some(i + 1));
+                    break; // builder state is undefined after a rejected push
                 }
             }
         }
