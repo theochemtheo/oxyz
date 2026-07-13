@@ -29,6 +29,10 @@ pub enum ValueType {
     IntArray(usize),
     BoolArray(usize),
     StrArray(usize),
+    RealArray2D(usize, usize),
+    IntArray2D(usize, usize),
+    BoolArray2D(usize, usize),
+    StrArray2D(usize, usize),
 }
 
 impl ValueType {
@@ -42,6 +46,10 @@ impl ValueType {
             Value::IntArray(values) => ValueType::IntArray(values.len()),
             Value::BoolArray(values) => ValueType::BoolArray(values.len()),
             Value::StrArray(values) => ValueType::StrArray(values.len()),
+            Value::RealArray2D { rows, cols, .. } => ValueType::RealArray2D(*rows, *cols),
+            Value::IntArray2D { rows, cols, .. } => ValueType::IntArray2D(*rows, *cols),
+            Value::BoolArray2D { rows, cols, .. } => ValueType::BoolArray2D(*rows, *cols),
+            Value::StrArray2D { rows, cols, .. } => ValueType::StrArray2D(*rows, *cols),
         }
     }
 }
@@ -57,6 +65,10 @@ impl fmt::Display for ValueType {
             ValueType::IntArray(n) => write!(f, "IntArray[{n}]"),
             ValueType::BoolArray(n) => write!(f, "BoolArray[{n}]"),
             ValueType::StrArray(n) => write!(f, "StrArray[{n}]"),
+            ValueType::RealArray2D(r, c) => write!(f, "RealArray2D[{r},{c}]"),
+            ValueType::IntArray2D(r, c) => write!(f, "IntArray2D[{r},{c}]"),
+            ValueType::BoolArray2D(r, c) => write!(f, "BoolArray2D[{r},{c}]"),
+            ValueType::StrArray2D(r, c) => write!(f, "StrArray2D[{r},{c}]"),
         }
     }
 }
@@ -307,5 +319,20 @@ impl fmt::Display for Schema {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn value_type_of_two_d_array_carries_shape() {
+        let v = Value::IntArray2D {
+            rows: 2,
+            cols: 3,
+            data: vec![1, 2, 3, 4, 5, 6],
+        };
+        assert_eq!(ValueType::of(&v), ValueType::IntArray2D(2, 3));
     }
 }

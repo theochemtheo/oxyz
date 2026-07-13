@@ -117,6 +117,12 @@ fn value_kind_shape(value: &Value) -> (ColumnKind, Option<usize>) {
         Value::IntArray(v) => (ColumnKind::Int, Some(v.len())),
         Value::BoolArray(v) => (ColumnKind::Bool, Some(v.len())),
         Value::StrArray(v) => (ColumnKind::Str, Some(v.len())),
+        // Flattened length, matching the batch's own treatment of 2-D
+        // metadata: shape is not part of this typing contract, only width.
+        Value::RealArray2D { rows, cols, .. } => (ColumnKind::Real, Some(rows * cols)),
+        Value::IntArray2D { rows, cols, .. } => (ColumnKind::Int, Some(rows * cols)),
+        Value::BoolArray2D { rows, cols, .. } => (ColumnKind::Bool, Some(rows * cols)),
+        Value::StrArray2D { rows, cols, .. } => (ColumnKind::Str, Some(rows * cols)),
     }
 }
 

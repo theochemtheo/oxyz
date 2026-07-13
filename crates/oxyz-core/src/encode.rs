@@ -214,6 +214,12 @@ fn write_metadata<W: Write>(
         Value::IntArray(xs) => write_int_array(out, xs, quoted),
         Value::BoolArray(xs) => write_bool_array(out, xs, quoted),
         Value::StrArray(xs) => write_str_array(out, xs),
+        // 2-D values have no legacy quoted form to preserve, so they always
+        // write as nested brackets regardless of key.
+        Value::RealArray2D { rows, cols, data } => write_real_array_2d(out, *rows, *cols, data),
+        Value::IntArray2D { rows, cols, data } => write_int_array_2d(out, *rows, *cols, data),
+        Value::BoolArray2D { rows, cols, data } => write_bool_array_2d(out, *rows, *cols, data),
+        Value::StrArray2D { rows, cols, data } => write_str_array_2d(out, *rows, *cols, data),
     }
 }
 
@@ -252,6 +258,71 @@ fn write_str_array<W: Write>(out: &mut W, xs: &[CompactString]) -> io::Result<()
             out.write_all(b",")?;
         }
         write!(out, "\"{s}\"")?;
+    }
+    out.write_all(b"]")
+}
+
+fn write_real_array_2d<W: Write>(
+    out: &mut W,
+    rows: usize,
+    cols: usize,
+    data: &[f64],
+) -> io::Result<()> {
+    let mut buf = ryu::Buffer::new();
+    write_array_2d(out, rows, cols, |out, i| {
+        out.write_all(buf.format(data[i]).as_bytes())
+    })
+}
+
+fn write_int_array_2d<W: Write>(
+    out: &mut W,
+    rows: usize,
+    cols: usize,
+    data: &[i64],
+) -> io::Result<()> {
+    write_array_2d(out, rows, cols, |out, i| write!(out, "{}", data[i]))
+}
+
+fn write_bool_array_2d<W: Write>(
+    out: &mut W,
+    rows: usize,
+    cols: usize,
+    data: &[bool],
+) -> io::Result<()> {
+    write_array_2d(out, rows, cols, |out, i| out.write_all(bool_token(data[i])))
+}
+
+/// String arrays always bracket-quote each element, same as their 1-D sibling.
+fn write_str_array_2d<W: Write>(
+    out: &mut W,
+    rows: usize,
+    cols: usize,
+    data: &[CompactString],
+) -> io::Result<()> {
+    write_array_2d(out, rows, cols, |out, i| write!(out, "\"{}\"", data[i]))
+}
+
+/// Nested-bracket form for a 2-D value: `[[1,2],[3,4]]`. New-style only — a
+/// 2-D value has no legacy quoted precedent to preserve (unlike 1-D
+/// Lattice/pbc), so it always brackets.
+fn write_array_2d<W, F>(out: &mut W, rows: usize, cols: usize, mut element: F) -> io::Result<()>
+where
+    W: Write,
+    F: FnMut(&mut W, usize) -> io::Result<()>,
+{
+    out.write_all(b"[")?;
+    for r in 0..rows {
+        if r > 0 {
+            out.write_all(b",")?;
+        }
+        out.write_all(b"[")?;
+        for c in 0..cols {
+            if c > 0 {
+                out.write_all(b",")?;
+            }
+            element(out, r * cols + c)?;
+        }
+        out.write_all(b"]")?;
     }
     out.write_all(b"]")
 }
@@ -668,6 +739,25 @@ mod tests {
             write_frame(&mut Vec::new(), &no_species),
             Err(ExtxyzError::MissingRequiredColumn { name: "species" })
         ));
+    }
+
+    #[test]
+    fn two_d_metadata_writes_as_nested_brackets() {
+        let mut frame = water();
+        frame.metadata.push((
+            "grid".into(),
+            Value::RealArray2D {
+                rows: 2,
+                cols: 2,
+                data: vec![1.0, 2.0, 3.0, 4.0],
+            },
+        ));
+        let text = serialise(&frame);
+        let comment = text.lines().nth(1).unwrap();
+        assert!(
+            comment.contains("grid=[[1.0,2.0],[3.0,4.0]]"),
+            "comment line was: {comment}"
+        );
     }
 
     #[test]

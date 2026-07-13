@@ -935,7 +935,7 @@ fn kind_name(kind: ColumnKind) -> &'static str {
 }
 
 /// Split a metadata value type into the kind name and a numpy-style shape:
-/// `()` for scalars, `(n,)` for arrays.
+/// `()` for scalars, `(n,)` for 1-D arrays, `(rows, cols)` for 2-D arrays.
 fn value_type_parts(value_type: ValueType) -> (&'static str, Vec<usize>) {
     match value_type {
         ValueType::Real => ("Real", vec![]),
@@ -946,6 +946,10 @@ fn value_type_parts(value_type: ValueType) -> (&'static str, Vec<usize>) {
         ValueType::IntArray(n) => ("Int", vec![n]),
         ValueType::BoolArray(n) => ("Bool", vec![n]),
         ValueType::StrArray(n) => ("Str", vec![n]),
+        ValueType::RealArray2D(rows, cols) => ("Real", vec![rows, cols]),
+        ValueType::IntArray2D(rows, cols) => ("Int", vec![rows, cols]),
+        ValueType::BoolArray2D(rows, cols) => ("Bool", vec![rows, cols]),
+        ValueType::StrArray2D(rows, cols) => ("Str", vec![rows, cols]),
     }
 }
 
@@ -1054,6 +1058,25 @@ fn frame_to_pydict(py: Python<'_>, frame: Frame) -> PyResult<Bound<'_, PyDict>> 
             Value::BoolArray(values) => metadata.set_item(key, values.into_pyarray(py))?,
             Value::StrArray(values) => {
                 metadata.set_item(key, values.iter().map(|s| s.as_str()).collect::<Vec<_>>())?
+            }
+            // Reshape the flat row-major buffer through the same helper the
+            // per-atom columns use for width > 1 — `cols` plays the role of
+            // `width`, `rows` falls out of `data.len() / cols`.
+            Value::RealArray2D { cols, data, .. } => {
+                metadata.set_item(key, array_from_flat(py, data, cols)?)?
+            }
+            Value::IntArray2D { cols, data, .. } => {
+                metadata.set_item(key, array_from_flat(py, data, cols)?)?
+            }
+            Value::BoolArray2D { cols, data, .. } => {
+                metadata.set_item(key, array_from_flat(py, data, cols)?)?
+            }
+            Value::StrArray2D { cols, data, .. } => {
+                let rows: Vec<Vec<&str>> = data
+                    .chunks(cols)
+                    .map(|row| row.iter().map(|s| s.as_str()).collect())
+                    .collect();
+                metadata.set_item(key, rows)?
             }
         }
     }
