@@ -21,6 +21,12 @@ struct InvalidCase {
 
 /// Explicit, like `corpus_smoke.rs`: adding a fixture without an entry (or an
 /// entry without a fixture) fails loudly.
+///
+/// Several fixtures share the same `expected 'key=value' pairs` wording: the
+/// comment-line tokeniser reports every malformed key-value shape through one
+/// error variant. That is deliberate — they are distinguished here by their
+/// line and column, so the wording assertion guards message stability while the
+/// coordinates guard that each malformation is located where expected.
 const INVALID: &[InvalidCase] = &[
     InvalidCase {
         file: "dangling_metadata_value.extxyz",

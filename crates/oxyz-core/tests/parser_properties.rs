@@ -125,7 +125,8 @@ proptest! {
         plan_widths in proptest::collection::vec(1usize..4, 0..4),
         frame_cols in proptest::collection::vec((0usize..6, 0usize..4, 1usize..4), 0..6),
     ) {
-        use oxyz_core::model::{Column, ColumnData, ColumnKind, Frame};
+        // Column, ColumnData and Frame come from the module-level import.
+        use oxyz_core::model::ColumnKind;
 
         let plan = ProjectionPlan {
             columns: plan_widths
@@ -181,7 +182,7 @@ fn corrupt_comment_line() -> impl Strategy<Value = String> {
         Just("arr={1 2".to_string()),           // unbalanced brace
         Just("k=".to_string()),                 // value-less
         Just("=v".to_string()),                 // key-less
-        Just("[,2,3]".to_string()),             // stray separator (leg-1 territory)
+        Just("[,2,3]".to_string()),             // bracket array with a leading stray separator
         Just("lone".to_string()),               // bare token, no '='
     ];
     (proptest::collection::vec(good_pair, 0..4), corruption).prop_map(|(pairs, bad)| {
