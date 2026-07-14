@@ -71,6 +71,20 @@ fn bad_atom_value_locates_line_and_column() {
     assert_eq!(error.column(), Some(3));
 }
 
+/// A non-numeric value in a NON-first cell of a multi-width column (the 2nd
+/// `pos:R:3` cell here) reports that cell's own column, not the column's
+/// first-cell offset.
+#[test]
+fn bad_atom_value_in_non_first_cell_locates_that_cell() {
+    // Line 1: count, line 2: comment, line 3: atom row. "abc" is the 2nd of
+    // three `pos` cells: H=1, ' '=2, 0.0=3-5, ' '=6, abc=7-9.
+    let input = "1\nProperties=species:S:1:pos:R:3\nH 0.0 abc 0.0\n";
+    let error = first_error(input);
+    assert_eq!(error.frame_index(), Some(0));
+    assert_eq!(error.line(), Some(3));
+    assert_eq!(error.column(), Some(7));
+}
+
 /// A malformed comment (`=` with no value) reports the comment line and the
 /// character column of the failure.
 #[test]
@@ -149,6 +163,40 @@ fn parallel_bad_atom_value_matches_serial_location() {
     assert_eq!(error.frame_index(), Some(0));
     assert_eq!(error.line(), Some(10002));
     assert_eq!(error.column(), Some(3));
+}
+
+/// The parallel intra-frame atom path also locates a bad value in a
+/// NON-first cell of a multi-width column at that cell, not the column's
+/// first cell — matching the serial loop exactly.
+#[cfg(feature = "parallel")]
+#[test]
+fn parallel_bad_atom_value_in_non_first_cell_matches_serial_location() {
+    use oxyz_core::read_frames_parallel_from;
+    // A frame large enough to take the intra-frame parallel path (>256 KB),
+    // with the bad value in the 2nd of three `pos` cells on a known line.
+    let mut input = String::from("20000\nProperties=species:S:1:pos:R:3\n");
+    for _ in 0..9999 {
+        input.push_str("H 0.0 0.0 0.0\n");
+    }
+    input.push_str("H 0.0 bad 0.0\n"); // line 10002 (1 count + 1 comment + 10000th row)
+    for _ in 0..10000 {
+        input.push_str("H 0.0 0.0 0.0\n");
+    }
+    let bytes = input.into_bytes();
+
+    let parallel_error = read_frames_parallel_from(Cursor::new(bytes.clone()), Some(4))
+        .expect_err("expected a parse error");
+    let serial_error = iter_frames_from(Cursor::new(bytes))
+        .unwrap()
+        .find_map(Result::err)
+        .expect("expected a parse error");
+
+    // "H 0.0 bad 0.0": H=1, ' '=2, 0.0=3-5, ' '=6, bad=7-9.
+    assert_eq!(parallel_error.frame_index(), Some(0));
+    assert_eq!(parallel_error.line(), Some(10002));
+    assert_eq!(parallel_error.column(), Some(7));
+    assert_eq!(parallel_error.column(), serial_error.column());
+    assert_eq!(parallel_error.line(), serial_error.line());
 }
 
 /// The parallel intra-frame path locates a bad *comment* line identically to

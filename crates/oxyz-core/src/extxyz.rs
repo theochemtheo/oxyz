@@ -1687,9 +1687,9 @@ fn parse_atom_lines(
         let mut cursor = 0;
         for column in columns.iter_mut() {
             let spans = &cells[cursor..cursor + column.width];
-            let start = cells[cursor].0;
-            push_cells(column, spans.iter().map(|&(s, e)| &line[s..e]))
-                .map_err(|error| at(line_number, Some(char_column(line, start)), error))?;
+            push_cells(column, spans.iter().map(|&(s, e)| &line[s..e])).map_err(
+                |(idx, error)| at(line_number, Some(char_column(line, spans[idx].0)), error),
+            )?;
             cursor += column.width;
         }
 
@@ -2004,12 +2004,17 @@ impl<R: BufRead> FrameIter<R> {
             let mut cursor = 0;
             for column in &mut columns {
                 let spans = &self.cells[cursor..cursor + column.width];
-                let start = self.cells[cursor].0;
                 push_cells(
                     column,
                     spans.iter().map(|&(start, end)| &self.buffer[start..end]),
                 )
-                .map_err(|error| at(line_number, Some(char_column(&self.buffer, start)), error))?;
+                .map_err(|(idx, error)| {
+                    at(
+                        line_number,
+                        Some(char_column(&self.buffer, spans[idx].0)),
+                        error,
+                    )
+                })?;
                 cursor += column.width;
             }
         }
@@ -2171,34 +2176,43 @@ fn line_str(buffer: &[u8]) -> Result<&str> {
 
 /// Append one atom's cells onto the column's buffer. Cells are raw bytes:
 /// numbers and booleans parse straight from ASCII, and only string columns are
-/// validated as UTF-8.
-fn push_cells<'a>(column: &mut Column, cells: impl Iterator<Item = &'a [u8]>) -> Result<()> {
+/// validated as UTF-8. On failure, returns the index of the offending cell
+/// within `cells` alongside the error, so callers can locate the exact cell
+/// rather than the column's first cell.
+fn push_cells<'a>(
+    column: &mut Column,
+    cells: impl Iterator<Item = &'a [u8]>,
+) -> std::result::Result<(), (usize, ExtxyzError)> {
     match &mut column.data {
         ColumnData::Real(buffer) => {
-            for cell in cells {
+            for (idx, cell) in cells.enumerate() {
                 // fast-float2 parses straight from bytes; same accepted grammar
                 // as std, measurably faster on the 6-floats-per-atom-line shape.
                 buffer.push(
                     fast_float2::parse::<f64, _>(cell)
-                        .map_err(|_| invalid_cell(&column.name, "real", cell))?,
+                        .map_err(|_| (idx, invalid_cell(&column.name, "real", cell)))?,
                 );
             }
         }
         ColumnData::Int(buffer) => {
-            for cell in cells {
-                buffer
-                    .push(parse_int(cell).ok_or_else(|| invalid_cell(&column.name, "int", cell))?);
+            for (idx, cell) in cells.enumerate() {
+                buffer.push(
+                    parse_int(cell)
+                        .ok_or_else(|| (idx, invalid_cell(&column.name, "int", cell)))?,
+                );
             }
         }
         ColumnData::Bool(buffer) => {
-            for cell in cells {
-                buffer
-                    .push(bool_cell(cell).ok_or_else(|| invalid_cell(&column.name, "bool", cell))?);
+            for (idx, cell) in cells.enumerate() {
+                buffer.push(
+                    bool_cell(cell)
+                        .ok_or_else(|| (idx, invalid_cell(&column.name, "bool", cell)))?,
+                );
             }
         }
         ColumnData::Str(buffer) => {
-            for cell in cells {
-                buffer.push(line_str(cell)?.into());
+            for (idx, cell) in cells.enumerate() {
+                buffer.push(line_str(cell).map_err(|e| (idx, e))?.into());
             }
         }
     }

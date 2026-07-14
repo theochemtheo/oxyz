@@ -60,7 +60,7 @@ const INVALID: &[InvalidCase] = &[
         file: "bad_atom_value.extxyz",
         frame_index: 0,
         line: 3,
-        column: Some(3),
+        column: Some(7),
         wording: "invalid real in column",
     },
     InvalidCase {
