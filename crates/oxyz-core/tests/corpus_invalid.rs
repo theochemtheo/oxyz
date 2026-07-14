@@ -1,8 +1,8 @@
 //! The `invalid/` corpus: every malformed fixture must fail to parse with the
-//! leg-2 error contract — the right frame index, the file-absolute line, the
-//! column where pinpointable, and actionable wording. Not "an error was
-//! raised": the coordinates and wording are asserted per fixture, so the
-//! deterministic regression bank also guards the error surface.
+//! right frame index, the file-absolute line, the column where pinpointable,
+//! and actionable wording. Not "an error was raised": the coordinates and
+//! wording are asserted per fixture, so the deterministic regression bank
+//! also guards the error surface.
 
 use std::path::PathBuf;
 
