@@ -83,7 +83,7 @@ def test_parse_error_locates_the_offending_column(tmp_path: Path) -> None:
     error = excinfo.value
     assert error.frame_index == 0
     assert error.line == 3
-    assert error.column == 3  # 1-based char column where the "pos" column starts
+    assert error.column == 5  # 1-based char column of the offending "zzz" cell
     assert "pos" in str(error)
 
 

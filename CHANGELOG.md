@@ -108,6 +108,13 @@ recorded here.
 - `read_first` — use `read(path, 0)`. The never-public `read_frames_sliced`
   helper is absorbed into `read`'s slice handling.
 
+### Fixed
+
+- A parse error on an atom value now reports the column of the exact
+  offending cell, not the first cell of its column. A bad value in the 2nd or
+  3rd cell of a multi-width column (e.g. `pos:R:3`) previously pointed at the
+  column's first cell instead of the cell that actually failed to parse.
+
 ### Internal
 
 - Hardened the CI and release workflows: every GitHub Action is pinned to a

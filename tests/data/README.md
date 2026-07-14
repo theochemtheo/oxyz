@@ -34,3 +34,22 @@
 Compressed twins of `two_frame_same_schema.xyz` (gzip, zstd, zip, tar, tar.gz,
 plus concat-gzip and multi-member archives) live in `compressed/`; see its
 README.
+
+## `invalid/` — malformed fixtures
+
+Deterministic regression corpus of files that must fail to parse. Each is
+guarded by `corpus_invalid.rs`, which asserts the frame index, the line/column,
+and a wording substring of the error — not merely that one was raised.
+
+| File | Malformation |
+|---|---|
+| `dangling_metadata_value.extxyz` | Comment-line key with no value (`bad=`). |
+| `unterminated_quote.extxyz` | Quoted metadata value with no closing `"`. |
+| `unknown_property_kind.extxyz` | `Properties` kind letter outside `S`/`I`/`R`/`L`. |
+| `short_atom_row.extxyz` | Atom row with fewer columns than the schema declares. |
+| `bad_atom_value.extxyz` | Non-numeric value in a real column. |
+| `bad_atom_count.extxyz` | Count line that is not a non-negative integer. |
+| `truncated_frame.extxyz` | Second frame declares more atoms than the file supplies before EOF. |
+| `ragged_bracket_array.extxyz` | 2-D bracket array (`Lattice=[[1,2],[3]]`) whose rows disagree in length. |
+| `trailing_comma_array.extxyz` | New-style array with a trailing comma (`tags=[a,b,]`). |
+| `bare_string_excluded_char.extxyz` | Bare (unquoted) metadata value containing a grammar-reserved character (`note=a=b`). |
