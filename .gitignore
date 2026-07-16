@@ -45,3 +45,8 @@ docs/superpowers/
 # Benchmarks: generated fixtures and pytest-benchmark saved results
 benchmarks/.cache/
 .benchmarks/
+
+# Local reference datasets: multi-hundred-MB sources sliced into tests/data
+# fixtures and used as benchmark targets. Never committed. Anchored to the repo
+# root so it does not also ignore the committed tests/data fixtures.
+/data/
