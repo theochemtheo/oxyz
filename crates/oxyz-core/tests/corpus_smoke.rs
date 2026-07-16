@@ -16,6 +16,7 @@ const FIXTURES: &[&str] = &[
     "id_and_selection.extxyz",
     "mace_isolated_atom_and_head.xyz",
     "mace_ref_energy_forces_stress.xyz",
+    "mad_r2scan_sample.extxyz",
     "mass_and_charge.extxyz",
     "minimal_periodic.extxyz",
     "mixed_schema_optional_column.xyz",
