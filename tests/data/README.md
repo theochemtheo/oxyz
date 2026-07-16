@@ -30,6 +30,7 @@
 | `schema_extra_column.extxyz` | Second frame adds a `charge` column — exercises `strict` (error) vs `required` (allowed). |
 | `schema_drift_type.extxyz` | `magmom` changes width between frames (non-collinear `R:3` → collinear `R:1`) — a realistic per-atom width mismatch at frame 1. |
 | `mixed_schema_optional_column.xyz` | Two frames; the second lacks `charge` — the mixed-schema case that projection (`mode="project"`) makes batchable. |
+| `mad_r2scan_sample.extxyz` | MAD-1.5 r²SCAN slice: real, chemically diverse data — 98 elements across molecules, clusters, bulk, surfaces and low-dimensional structures, from a 102-element dataset in one standardised DFT workflow. See the source and attribution below. |
 
 Compressed twins of `two_frame_same_schema.xyz` (gzip, zstd, zip, tar, tar.gz,
 plus concat-gzip and multi-member archives) live in `compressed/`; see its
@@ -53,3 +54,18 @@ and a wording substring of the error — not merely that one was raised.
 | `ragged_bracket_array.extxyz` | 2-D bracket array (`Lattice=[[1,2],[3]]`) whose rows disagree in length. |
 | `trailing_comma_array.extxyz` | New-style array with a trailing comma (`tags=[a,b,]`). |
 | `bare_string_excluded_char.extxyz` | Bare (unquoted) metadata value containing a grammar-reserved character (`note=a=b`). |
+
+## `mad_r2scan_sample.extxyz` — source and attribution
+
+Sliced from `mad-1.5-r2scan-train.xyz` (303.5 MiB) in *High-quality,
+high-information datasets for universal atomistic machine learning* by Cesare
+Malosso, Filippo Bigi, Paolo Pegolo, Joseph W. Abbott, Philip Loche, Mariana
+Rossi, Michele Ceriotti and Arslan Mazitov — Materials Cloud Archive,
+[doi:10.24435/materialscloud:ak-4p](https://doi.org/10.24435/materialscloud:ak-4p)
+(v3), described in [arXiv:2603.02089](https://arxiv.org/abs/2603.02089). Used
+under [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/).
+
+Reproduce with `scripts/slice_mad_sample.py`: every 900th frame of the 180 184
+in the source, taken at the byte level so the sample keeps the source's exact
+formatting — 201 frames, 381404 bytes, spanning all 14 subsets, 98 elements and
+44 distinct atom counts (1–198). The full dataset is not committed.
