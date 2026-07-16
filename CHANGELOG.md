@@ -45,9 +45,9 @@ recorded here.
 - Comment-line metadata now types **2-D arrays** (`key=[[1,2],[3,4]]`) as
   shaped arrays, surfaced in Python as 2-D numpy arrays.
 - A committed **MAD-1.5** r²SCAN sample (`tests/data/mad_r2scan_sample.extxyz`)
-  in the test corpus, guarding that real, chemically diverse data — 102
-  elements across molecules, clusters, bulk, surfaces and low-dimensional
-  structures — parses.
+  in the test corpus, guarding that real, chemically diverse data — 98 elements
+  across molecules, clusters, bulk, surfaces and low-dimensional structures,
+  drawn from a 102-element dataset — parses.
 
 ### Performance
 

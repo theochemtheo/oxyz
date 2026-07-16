@@ -30,7 +30,7 @@
 | `schema_extra_column.extxyz` | Second frame adds a `charge` column — exercises `strict` (error) vs `required` (allowed). |
 | `schema_drift_type.extxyz` | `magmom` changes width between frames (non-collinear `R:3` → collinear `R:1`) — a realistic per-atom width mismatch at frame 1. |
 | `mixed_schema_optional_column.xyz` | Two frames; the second lacks `charge` — the mixed-schema case that projection (`mode="project"`) makes batchable. |
-| `mad_r2scan_sample.extxyz` | MAD-1.5 r²SCAN slice: real, chemically diverse data (102 elements; molecules, clusters, bulk, surfaces, low-dimensional) in one standardised DFT workflow. See the source and attribution below. |
+| `mad_r2scan_sample.extxyz` | MAD-1.5 r²SCAN slice: real, chemically diverse data — 98 elements across molecules, clusters, bulk, surfaces and low-dimensional structures, from a 102-element dataset in one standardised DFT workflow. See the source and attribution below. |
 
 Compressed twins of `two_frame_same_schema.xyz` (gzip, zstd, zip, tar, tar.gz,
 plus concat-gzip and multi-member archives) live in `compressed/`; see its
@@ -65,7 +65,7 @@ Rossi, Michele Ceriotti and Arslan Mazitov — Materials Cloud Archive,
 (v3), described in [arXiv:2603.02089](https://arxiv.org/abs/2603.02089). Used
 under [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/).
 
-Reproduce with `scripts/slice_mad_sample.py`: every 900th frame, taken at the
-byte level so the sample keeps the source's exact formatting — 201 frames,
-381404 bytes, spanning all 14 subsets and 44 distinct atom counts (1–198). The
-full dataset is not committed.
+Reproduce with `scripts/slice_mad_sample.py`: every 900th frame of the 180 184
+in the source, taken at the byte level so the sample keeps the source's exact
+formatting — 201 frames, 381404 bytes, spanning all 14 subsets, 98 elements and
+44 distinct atom counts (1–198). The full dataset is not committed.
