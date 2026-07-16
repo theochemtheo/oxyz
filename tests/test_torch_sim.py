@@ -26,9 +26,11 @@ pytestmark = pytest.mark.skipif(
 DATA_DIR = Path(__file__).parent / "data"
 
 # Files ase.io.read rejects (a stress shape ASE's reader will not accept), plus
-# the schema-conformance fixtures that vary `magmom` width or per-atom columns
-# between frames on purpose — oxyz's own batch reader requires a uniform
-# schema across frames, so these can't build a reference either way.
+# the fixtures whose schema varies between frames on purpose — `magmom` width or
+# per-atom columns, or (for the MAD sample) `Lattice` present on periodic frames
+# and absent on molecular ones. A SimState is inherently a batch, and oxyz's
+# batch reader requires a uniform schema across frames, so these can't build a
+# reference either way.
 ASE_REJECTS = {
     "simple.extxyz",
     "nonorthogonal.extxyz",
@@ -36,6 +38,7 @@ ASE_REJECTS = {
     "schema_drift_type.extxyz",
     "schema_extra_column.extxyz",
     "mixed_schema_optional_column.xyz",
+    "mad_r2scan_sample.extxyz",
 }
 
 GOLDEN = sorted(
