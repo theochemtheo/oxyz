@@ -66,7 +66,8 @@ ase.Atoms; the two output contracts are never compared in one table.
 WORKLOADS = """\
 ## Workloads
 
-Deterministic fixtures from `benchmarks/conftest.py`:
+Deterministic fixtures from `benchmarks/conftest.py`, plus one real dataset
+that is downloaded rather than generated (see Real dataset below):
 
 | file | shape |
 | --- | --- |
@@ -77,6 +78,7 @@ Deterministic fixtures from `benchmarks/conftest.py`:
 | store_100k | 100 000 frames × 64 atoms (store comparison) |
 | sweep_dataset_N | N frames, corpus-shaped (mean ~7 atoms, long tail to 240) |
 | sweep_system_N | 3 frames × N atoms |
+| mad-1.5-r2scan | 180 184 frames × 1–352 atoms (mean 14.6), 303.5 MiB real dataset |
 
 `selective/...` groups read every 20th frame. The `scaling_*` groups sweep
 the sweep fixtures over a size range; see the Scaling sweeps section.
@@ -96,6 +98,50 @@ many small frames; the system family sweeps atoms per frame over a few large
 frames. These groups back the scaling curves in `benchmarks/figures/`; the
 per-size tables here are the provenance record.
 """
+
+REAL_DATA_INTRO = """\
+## Real dataset
+
+The `real_data/...` groups read the full MAD-1.5 r²SCAN training set
+(`mad-1.5-r2scan-train.xyz`, 303.5 MiB, 180 184 frames, 2 630 122 atoms,
+1–352 atoms per frame): real, chemically diverse data — molecules, clusters,
+bulk crystals, surfaces and low-dimensional structures — from one
+standardised all-electron workflow, where every other workload here is
+generated. Frames disagree on schema (`Lattice` on the periodic ones, absent
+on the molecular ones), so every row reads frame by frame.
+
+From *High-quality, high-information datasets for universal atomistic machine
+learning* by Cesare Malosso, Filippo Bigi, Paolo Pegolo, Joseph W. Abbott,
+Philip Loche, Mariana Rossi, Michele Ceriotti and Arslan Mazitov — Materials
+Cloud Archive,
+[doi:10.24435/materialscloud:ak-4p](https://doi.org/10.24435/materialscloud:ak-4p)
+(v3), described in [arXiv:2603.02089](https://arxiv.org/abs/2603.02089). Used
+under [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/).
+
+The dataset is a 303.5 MiB download kept on a local path outside the repository,
+so these rows are skipped wherever absent and **cannot be regenerated from this
+repository alone**. To reproduce them, put the file at `data/mad-1.5-r2scan-train.xyz`.
+"""
+
+# Group-name prefixes that render under their own intro section; anything else
+# is a plain reader group.
+SECTION_PREFIXES = ("stores", "scaling", "real_data")
+
+
+def bucket_groups(
+    groups: dict[str, list[dict[str, Any]]],
+) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    """Split groups into the sections RESULTS.md renders, by name prefix."""
+    buckets: dict[str, dict[str, list[dict[str, Any]]]] = {
+        name: {} for name in (*SECTION_PREFIXES, "readers")
+    }
+    for group, rows in groups.items():
+        section = next(
+            (prefix for prefix in SECTION_PREFIXES if group.startswith(prefix)),
+            "readers",
+        )
+        buckets[section][group] = rows
+    return buckets
 
 
 def natural_key(group: str) -> tuple:
@@ -232,31 +278,39 @@ def main() -> None:
     for bench in data["benchmarks"]:
         groups.setdefault(bench["group"] or "ungrouped", []).append(bench)
 
-    stores = {g: rows for g, rows in groups.items() if g.startswith("stores")}
-    scaling = {g: rows for g, rows in groups.items() if g.startswith("scaling")}
-    readers = {
-        g: rows
-        for g, rows in groups.items()
-        if not g.startswith("stores") and not g.startswith("scaling")
-    }
+    buckets = bucket_groups(groups)
 
     parts = [
         INTRO.format(save=save.name),
         environment(data),
         WORKLOADS,
         "## Results\n",
-        *(group_table(group, rows) for group, rows in sorted(readers.items())),
+        *(
+            group_table(group, rows)
+            for group, rows in sorted(buckets["readers"].items())
+        ),
     ]
-    if stores:
+    if buckets["real_data"]:
+        parts += [
+            REAL_DATA_INTRO,
+            *(
+                group_table(group, rows)
+                for group, rows in sorted(buckets["real_data"].items())
+            ),
+        ]
+    if buckets["stores"]:
         parts += [
             STORES_INTRO,
-            *(group_table(group, rows) for group, rows in sorted(stores.items())),
+            *(
+                group_table(group, rows)
+                for group, rows in sorted(buckets["stores"].items())
+            ),
         ]
-    if scaling:
-        ordered = sorted(scaling.items(), key=lambda kv: natural_key(kv[0]))
+    if buckets["scaling"]:
+        ordered = sorted(buckets["scaling"].items(), key=lambda kv: natural_key(kv[0]))
         parts += [
             SCALING_INTRO,
-            *(group_table(g, rows) for g, rows in ordered),
+            *(group_table(group, rows) for group, rows in ordered),
         ]
     parts += [
         "## Where oxyz is not fastest\n",
