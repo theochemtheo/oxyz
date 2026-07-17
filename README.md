@@ -356,11 +356,12 @@ metadata:
 
 Timings below are means over repeated rounds — each case gets a
 one-second budget over at least five rounds — on an
-Apple M3 Pro under CPython 3.13. Full tables with standard deviations,
-the environment, and the fixture definitions are in
-[benchmarks/RESULTS.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/RESULTS.md);
+Apple M3 Pro under CPython 3.13; the exception is the MAD-1.5 rows, timed
+over a single round, which
 [benchmarks/run.py](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/run.py)
-reproduces them.
+reproduces only where the dataset is present. Full tables with standard
+deviations, the environment, and the fixture definitions are in
+[benchmarks/RESULTS.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/RESULTS.md).
 
 Read time as the file scales, over two independent size axes and over
 thread count. The dataset family is a corpus-shaped file of many small
@@ -374,9 +375,10 @@ frames (frame count swept); the system family is a few large frames
 ![Parsing throughput vs thread count](benchmarks/figures/scaling_threads.svg)
 
 Whole-file reads to numpy, against [cextxyz], the libAtoms C parser, via its
-`read_dicts` interface. The last row is the full MAD-1.5 r²SCAN training set
-(303.5 MiB, 180 184 frames of real, chemically diverse structures); the rest
-are generated fixtures:
+`read_dicts` interface. The last row is the full MAD-1.5
+([doi:10.24435/materialscloud:ak-4p](https://doi.org/10.24435/materialscloud:ak-4p))
+r²SCAN training set (303.5 MiB, 180 184 frames of real, chemically diverse
+structures); the rest are generated fixtures:
 
 | workload | `oxyz.read(threads=12)` | `oxyz.read(threads=1)` | `extxyz.read_dicts` |
 | --- | ---: | ---: | ---: |
