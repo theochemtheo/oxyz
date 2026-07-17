@@ -35,6 +35,14 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+      # Every other pin here names the exact version its SHA carries, so a
+      # moving major tag cannot drift off it. This one cannot: dtolnay ships
+      # the toolchain channels as force-pushed branches rather than tags, so
+      # `stable` is a branch and each Rust release orphans whatever commit we
+      # pinned — zizmor then fails every run with impostor-commit until all
+      # four uses below are re-pinned to the branch's new tip. Expect that
+      # roughly every six weeks; see
+      # https://github.com/theochemtheo/oxyz/pull/32.
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           components: clippy, rustfmt
