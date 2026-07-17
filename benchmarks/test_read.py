@@ -126,12 +126,15 @@ def ase_read_all(path: Path) -> list:
     return frames
 
 
-@row("ase.Atoms", "serial")
-def oxyz_to_ase_read_all(path: Path) -> list:
-    from oxyz.ase import read
+def oxyz_to_ase_read_all_with(threads: int | None):
+    @row("ase.Atoms", "serial" if threads == 1 else "parallel", threads=threads)
+    def read(path: Path) -> list:
+        from oxyz.ase import read as ase_read
 
-    # slice(None) rather than ":" picks the precisely-typed overload.
-    return read(path, index=slice(None))
+        # slice(None) rather than ":" picks the precisely-typed overload.
+        return ase_read(path, index=slice(None), threads=threads)
+
+    return read
 
 
 @row("ase.Atoms", "serial")
@@ -207,9 +210,16 @@ def cextxyz_to_ase_read_last(path: Path) -> object:
 
 
 READ_ALL = [
+    # threads=None is the default call: every core the machine has. The sweep
+    # stops at 8, so without this row no measurement reaches the core count the
+    # all-core label names.
+    pytest.param(oxyz_read_all_with(None), id="oxyz"),
     *(pytest.param(oxyz_read_all_with(t), id=f"oxyz-{t}t") for t in THREAD_SWEEP),
     pytest.param(oxyz_iter_read_all, id="oxyz-iter"),
-    pytest.param(oxyz_to_ase_read_all, id="oxyz-to-ase", marks=needs_ase),
+    pytest.param(oxyz_to_ase_read_all_with(None), id="oxyz-to-ase", marks=needs_ase),
+    pytest.param(
+        oxyz_to_ase_read_all_with(1), id="oxyz-to-ase-serial", marks=needs_ase
+    ),
     pytest.param(ase_read_all, id="ase", marks=needs_ase),
     pytest.param(cextxyz_read_all, id="cextxyz", marks=needs_cextxyz),
     pytest.param(cextxyz_to_ase_read_all, id="cextxyz-to-ase", marks=needs_ase_extxyz),
