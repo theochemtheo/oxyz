@@ -11,6 +11,9 @@
 #     "lmdb>=1.4",
 #     "torch>=2",
 #     "metatomic-torch",
+#     # _style (palette/labels) imports seaborn; without it the style unit
+#     # tests silently skip and stop guarding the figure labels.
+#     "seaborn>=0.13",
 # ]
 #
 # [tool.uv.sources]

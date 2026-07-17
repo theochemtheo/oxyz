@@ -19,6 +19,7 @@ OXYZ_ORDER = [
     "oxyz-batches",
     "oxyz-read-batch",
     "oxyz-to-ase",
+    "oxyz-to-ase-serial",
     "oxyz-scan",
     "sequential-64-frames",
     "shuffled-2048-atoms",
@@ -67,12 +68,18 @@ def fmt_value(value: float) -> str:
 
 
 # Scaling-curve legends name the call each line measures rather than the
-# internal reader id — clearer for a reader comparing libraries. `oxyz` is the
-# all-core numpy read, so its label carries the recording machine's core count.
+# internal reader id — clearer for a reader comparing libraries.
+# All-core rows are spelled as a call whose thread count is filled in with the
+# recording machine's core count; the rest are fixed strings.
+ALL_CORE_LABELS = {
+    "oxyz": "oxyz.read",
+    "oxyz-to-ase": "oxyz.ase.read",
+}
+
 READER_LABELS = {
     "oxyz-serial": "oxyz.read(threads=1)",
-    "oxyz-to-ase": "oxyz.ase.read",
-    "ase": "ase.io.read",
+    "oxyz-to-ase-serial": "oxyz.ase.read(threads=1)",
+    "ase": 'ase.io.read(format="extxyz")',
     "cextxyz": "extxyz.read_dicts",
     "cextxyz-to-ase": 'ase.io.read(format="cextxyz")',
 }
@@ -80,8 +87,9 @@ READER_LABELS = {
 
 def reader_label(reader: str, ncores: int | None = None) -> str:
     """The function-call label for a reader in a scaling legend."""
-    if reader == "oxyz":
-        return f"oxyz.read(threads={ncores})" if ncores else "oxyz.read()"
+    call = ALL_CORE_LABELS.get(reader)
+    if call is not None:
+        return f"{call}(threads={ncores})" if ncores else f"{call}()"
     return READER_LABELS.get(reader, reader)
 
 

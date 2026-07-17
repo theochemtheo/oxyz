@@ -30,17 +30,26 @@ def test_fmt_value_uses_si_suffixes():
 
 
 def test_reader_label_shows_function_calls():
-    # The all-core numpy read names the recording machine's core count.
+    # The all-core rows name the recording machine's core count.
     assert _style.reader_label("oxyz", 12) == "oxyz.read(threads=12)"
     assert _style.reader_label("oxyz-serial") == "oxyz.read(threads=1)"
-    assert _style.reader_label("oxyz-to-ase") == "oxyz.ase.read"
-    assert _style.reader_label("ase") == "ase.io.read"
+    assert _style.reader_label("oxyz-to-ase", 12) == "oxyz.ase.read(threads=12)"
+    assert _style.reader_label("oxyz-to-ase-serial") == "oxyz.ase.read(threads=1)"
+    assert _style.reader_label("ase") == 'ase.io.read(format="extxyz")'
     assert _style.reader_label("cextxyz") == "extxyz.read_dicts"
     assert _style.reader_label("cextxyz-to-ase") == 'ase.io.read(format="cextxyz")'
 
 
-def test_reader_label_falls_back_without_core_count():
+def test_all_core_labels_fall_back_without_core_count():
     assert _style.reader_label("oxyz") == "oxyz.read()"
+    assert _style.reader_label("oxyz-to-ase") == "oxyz.ase.read()"
+
+
+def test_serial_ase_reader_keeps_an_oxyz_shade():
+    # A new oxyz row absent from OXYZ_ORDER would render in the grey
+    # fallback colour and sort after the competitors.
+    assert _style.reader_color("oxyz-to-ase-serial") != _style.FALLBACK_COLOR
+    assert _style.reader_order({"ase", "oxyz-to-ase-serial"})[0] == "oxyz-to-ase-serial"
 
 
 def test_parallel_oxyz_has_distinct_marker():
