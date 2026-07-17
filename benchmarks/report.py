@@ -121,6 +121,10 @@ under [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/).
 The dataset is a 303.5 MiB download kept on a local path outside the repository,
 so these rows are skipped wherever absent and **cannot be regenerated from this
 repository alone**. To reproduce them, put the file at `data/mad-1.5-r2scan-train.xyz`.
+
+One read here is seconds of work, so the slower rows are timed over a single
+round: a `± 0.00` spread means the row was measured once, not that it is
+perfectly repeatable.
 """
 
 # Group-name prefixes that render under their own intro section; anything else
