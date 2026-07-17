@@ -71,14 +71,14 @@ that is downloaded rather than generated (see Real dataset below):
 
 | file | shape |
 | --- | --- |
-| many_small_frames | 2 000 frames × 16–64 atoms |
-| large_frames | 4 frames × 100 000 atoms |
-| metadata_heavy | 2 000 frames × 16–64 atoms, ~16-key comment lines |
+| many_small_frames | 2,000 frames × 16–64 atoms |
+| large_frames | 4 frames × 100,000 atoms |
+| metadata_heavy | 2,000 frames × 16–64 atoms, ~16-key comment lines |
 | mace_mixed | 5 isolated-atom frames + 995 bulk frames (32–96 atoms) |
-| store_100k | 100 000 frames × 64 atoms (store comparison) |
+| store_100k | 100,000 frames × 64 atoms (store comparison) |
 | sweep_dataset_N | N frames, corpus-shaped (mean ~7 atoms, long tail to 240) |
 | sweep_system_N | 3 frames × N atoms |
-| mad-1.5-r2scan | 180 184 frames × 1–352 atoms (mean 14.6), 303.5 MiB real dataset |
+| mad-1.5-r2scan | 180,184 frames × 1–352 atoms (mean 14.6), 303.5 MiB real dataset |
 
 `selective/...` groups read every 20th frame. The `scaling_*` groups sweep
 the sweep fixtures over a size range; see the Scaling sweeps section.
@@ -103,7 +103,7 @@ REAL_DATA_INTRO = """\
 ## Real dataset
 
 The `real_data/...` groups read the full MAD-1.5 r²SCAN training set
-(`mad-1.5-r2scan-train.xyz`, 303.5 MiB, 180 184 frames, 2 630 122 atoms,
+(`mad-1.5-r2scan-train.xyz`, 303.5 MiB, 180,184 frames, 2,630,122 atoms,
 1–352 atoms per frame): real, chemically diverse data — molecules, clusters,
 bulk crystals, surfaces and low-dimensional structures — from one
 standardised all-electron workflow, where every other workload here is

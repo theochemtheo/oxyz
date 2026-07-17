@@ -132,7 +132,7 @@ recorded here.
 - Refreshed the locked Rust dependencies; the `ndarray` pin moves to 0.17 to
   stay unified with the version the `numpy` crate builds against.
 - Benchmarks now cover the full MAD-1.5 r²SCAN training set (303.5 MiB,
-  180 184 frames) alongside the generated fixtures; see
+  180,184 frames) alongside the generated fixtures; see
   [benchmarks/RESULTS.md](benchmarks/RESULTS.md).
 
 ## [0.5.0] - 2026-07-03
