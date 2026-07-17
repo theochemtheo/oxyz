@@ -373,33 +373,38 @@ frames (frame count swept); the system family is a few large frames
 
 ![Parsing throughput vs thread count](benchmarks/figures/scaling_threads.svg)
 
-Whole-file reads to numpy (`oxyz.read` vs [cextxyz], the libAtoms C
-parser, via its `read_dicts`):
+Whole-file reads to numpy, against [cextxyz], the libAtoms C parser, via its
+`read_dicts` interface. The last row is the full MAD-1.5 r²SCAN training set
+(303.5 MiB, 180 184 frames of real, chemically diverse structures); the rest
+are generated fixtures:
 
-| workload | oxyz | oxyz `threads=1` | cextxyz |
+| workload | `oxyz.read(threads=12)` | `oxyz.read(threads=1)` | `extxyz.read_dicts` |
 | --- | ---: | ---: | ---: |
-| 2 000 small frames | **8.8 ms** | 18.1 ms | 240 ms |
-| 4 × 100 000 atoms | **23.9 ms** | 52.6 ms | 94.0 ms |
-| 2 000 frames, heavy metadata | **13.0 ms** | 25.6 ms | 408 ms |
-| MACE-style mixed file | **6.4 ms** | 12.8 ms | 152 ms |
+| 2 000 small frames | **8.55 ms** | 16.8 ms | 220 ms |
+| 4 × 100 000 atoms | **23.0 ms** | 50.4 ms | 90.2 ms |
+| 2 000 frames, heavy metadata | **12.8 ms** | 25.8 ms | 411 ms |
+| MAD-1.5, 180 184 frames | **1183 ms** | 1677 ms | 22699 ms |
 
-Whole-file reads to `ase.Atoms` (`oxyz.ase.read` vs the [ase-extxyz] plugin
-wrapping the same C parser, vs `ase.io.read`):
+Whole-file reads to `ase.Atoms`, against the [ase-extxyz] plugin (the same C
+parser behind ASE's IO) and ASE's own reader:
 
-| workload | oxyz.ase | ase-extxyz | ase |
-| --- | ---: | ---: | ---: |
-| 2 000 small frames | **67 ms** | 121 ms | 213 ms |
-| 4 × 100 000 atoms | **69 ms** | 92 ms | 437 ms |
-| 2 000 frames, heavy metadata | **81 ms** | 311 ms | 338 ms |
-| MACE-style mixed file | **39 ms** | 92 ms | 156 ms |
+| workload | `oxyz.ase.read(threads=12)` | `oxyz.ase.read(threads=1)` | `ase.io.read(format="cextxyz")` | `ase.io.read(format="extxyz")` |
+| --- | ---: | ---: | ---: | ---: |
+| 2 000 small frames | **64.3 ms** | 71.2 ms | 117 ms | 201 ms |
+| 4 × 100 000 atoms | **66.7 ms** | 92.8 ms | 87.5 ms | 426 ms |
+| 2 000 frames, heavy metadata | **77.2 ms** | 94.7 ms | 296 ms | 338 ms |
+| MAD-1.5, 180 184 frames | **7744 ms** | 8369 ms | 12694 ms | 17805 ms |
 
 Beyond whole-file reads: on selective reads (every 20th frame of the
-small-frames file) `oxyz.read_batch` takes 1.6 ms against 25 ms for ASE;
+small-frames file) `oxyz.read_batch` takes 1.5 ms against 22 ms for ASE;
 on peak memory, streaming `iread` through the small-frames file
 grows RSS by 12 MiB where `ase.io.iread` grows it by 56 MiB
 ([benchmarks/MEMORY.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/MEMORY.md)).
-The one place a text parser is predictably slower is against binary
-stores (LMDB, SQLite, mmap-backed formats); see
+Reading the full MAD-1.5 set needs the dataset itself, so those rows are
+reproducible only with the file in place; the recipe is in
+[benchmarks/RESULTS.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/RESULTS.md).
+The one place a text parser is predictably slower is against binary stores
+(LMDB, SQLite, mmap-backed formats); see
 [benchmarks/RESULTS.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/RESULTS.md)
 for those comparisons.
 
