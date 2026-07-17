@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 import oxyz
+from conftest import MAD_N_FRAMES
 
 needs_ase = pytest.mark.skipif(
     importlib.util.find_spec("ase") is None, reason="ase not installed"
@@ -445,3 +446,21 @@ def oxyz_shuffled_atom_batches_with(threads: int):
 )
 def test_batched_read_of_many_small_frames(benchmark, batched_read, many_small_frames):
     assert run(benchmark, batched_read, many_small_frames) > 0
+
+
+# The only real dataset in the suite: chemically diverse frames that disagree
+# on schema, at a size no generated fixture reaches. min_rounds=1 because a
+# single ase row here builds 180k Atoms objects off 303.5 MiB of text.
+@pytest.mark.benchmark(group="real_data/mad", min_rounds=1)
+@pytest.mark.parametrize("read", READ_ALL)
+def test_read_all_mad_full(benchmark, read, mad_full):
+    frames = run(benchmark, read, mad_full)
+    # The frame count doubles as a guard that the file on disk is this dataset.
+    assert len(frames) == MAD_N_FRAMES
+
+
+@pytest.mark.benchmark(group="real_data/mad_scan", min_rounds=1)
+@pytest.mark.parametrize("read", [pytest.param(oxyz_scan, id="oxyz-scan")])
+def test_scan_mad_full(benchmark, read, mad_full):
+    index = run(benchmark, read, mad_full, shape=None)
+    assert index.n_frames == MAD_N_FRAMES
