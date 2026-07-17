@@ -57,6 +57,12 @@ def pytest_benchmark_update_machine_info(config, machine_info) -> None:
 
 CACHE_DIR = Path(__file__).parent / ".cache"
 
+# The one workload that is not generated: a 303.5 MiB real dataset on a
+# gitignored local path (see .gitignore `/data/`). Absent on most machines, so
+# every row reading it skips rather than fails.
+MAD_PATH = Path(__file__).parent.parent / "data" / "mad-1.5-r2scan-train.xyz"
+MAD_N_FRAMES = 180_184
+
 # Bump to invalidate cached files when the generator changes.
 GENERATOR_VERSION = 2
 
@@ -275,6 +281,13 @@ def metadata_heavy() -> Path:
 @pytest.fixture(scope="session")
 def mace_mixed() -> Path:
     return trajectory_files()["mace_mixed"]
+
+
+@pytest.fixture(scope="session")
+def mad_full() -> Path:
+    if not MAD_PATH.exists():
+        pytest.skip(f"MAD-1.5 dataset not present at {MAD_PATH}")
+    return MAD_PATH
 
 
 # The store-comparison dataset. Fixed frame size keeps the maths obvious:

@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 import oxyz
+from conftest import MAD_N_FRAMES
 
 needs_ase = pytest.mark.skipif(
     importlib.util.find_spec("ase") is None, reason="ase not installed"
@@ -126,12 +127,15 @@ def ase_read_all(path: Path) -> list:
     return frames
 
 
-@row("ase.Atoms", "serial")
-def oxyz_to_ase_read_all(path: Path) -> list:
-    from oxyz.ase import read
+def oxyz_to_ase_read_all_with(threads: int | None):
+    @row("ase.Atoms", "serial" if threads == 1 else "parallel", threads=threads)
+    def read(path: Path) -> list:
+        from oxyz.ase import read as ase_read
 
-    # slice(None) rather than ":" picks the precisely-typed overload.
-    return read(path, index=slice(None))
+        # slice(None) rather than ":" picks the precisely-typed overload.
+        return ase_read(path, index=slice(None), threads=threads)
+
+    return read
 
 
 @row("ase.Atoms", "serial")
@@ -207,9 +211,16 @@ def cextxyz_to_ase_read_last(path: Path) -> object:
 
 
 READ_ALL = [
+    # threads=None is the default call: every core the machine has. The sweep
+    # stops at 8, so without this row no measurement reaches the core count the
+    # all-core label names.
+    pytest.param(oxyz_read_all_with(None), id="oxyz"),
     *(pytest.param(oxyz_read_all_with(t), id=f"oxyz-{t}t") for t in THREAD_SWEEP),
     pytest.param(oxyz_iter_read_all, id="oxyz-iter"),
-    pytest.param(oxyz_to_ase_read_all, id="oxyz-to-ase", marks=needs_ase),
+    pytest.param(oxyz_to_ase_read_all_with(None), id="oxyz-to-ase", marks=needs_ase),
+    pytest.param(
+        oxyz_to_ase_read_all_with(1), id="oxyz-to-ase-serial", marks=needs_ase
+    ),
     pytest.param(ase_read_all, id="ase", marks=needs_ase),
     pytest.param(cextxyz_read_all, id="cextxyz", marks=needs_cextxyz),
     pytest.param(cextxyz_to_ase_read_all, id="cextxyz-to-ase", marks=needs_ase_extxyz),
@@ -435,3 +446,21 @@ def oxyz_shuffled_atom_batches_with(threads: int):
 )
 def test_batched_read_of_many_small_frames(benchmark, batched_read, many_small_frames):
     assert run(benchmark, batched_read, many_small_frames) > 0
+
+
+# The only real dataset in the suite: chemically diverse frames that disagree
+# on schema, at a size no generated fixture reaches. min_rounds=1 because a
+# single ase row here builds 180k Atoms objects off 303.5 MiB of text.
+@pytest.mark.benchmark(group="real_data/mad", min_rounds=1)
+@pytest.mark.parametrize("read", READ_ALL)
+def test_read_all_mad_full(benchmark, read, mad_full):
+    frames = run(benchmark, read, mad_full)
+    # The frame count doubles as a guard that the file on disk is this dataset.
+    assert len(frames) == MAD_N_FRAMES
+
+
+@pytest.mark.benchmark(group="real_data/mad_scan", min_rounds=1)
+@pytest.mark.parametrize("read", [pytest.param(oxyz_scan, id="oxyz-scan")])
+def test_scan_mad_full(benchmark, read, mad_full):
+    index = run(benchmark, read, mad_full, shape=None)
+    assert index.n_frames == MAD_N_FRAMES

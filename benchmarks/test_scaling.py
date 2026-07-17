@@ -61,11 +61,12 @@ def cextxyz_read(path: Path) -> list:
     return frames
 
 
-@row("ase.Atoms", "serial")
+@row("ase.Atoms", "parallel")
 def oxyz_to_ase(path: Path) -> list:
     from oxyz.ase import read
 
-    # slice(None) rather than ":" picks the precisely-typed overload.
+    # slice(None) rather than ":" picks the precisely-typed overload. No
+    # `threads`, so the parse uses every core — as the legend's label says.
     return read(path, index=slice(None))
 
 
