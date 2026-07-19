@@ -174,6 +174,9 @@ max-complexity = 12
 "benchmarks/**" = ["ANN", "S", "T20", "INP", "PT", "TC", "RUF001"]
 # utility scripts print their results and are not an importable package.
 "scripts/**" = ["T20", "INP"]
+# doc examples print their output for a reader to eyeball and are not an
+# importable package.
+"examples/**" = ["T20", "INP"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
