@@ -12,7 +12,15 @@ EXAMPLES_DIR = Path(__file__).resolve().parent.parent / "examples"
 
 # Scoreboard: every runnable example, listed explicitly. Adding a script to
 # examples/ without adding it here (or vice versa) fails test_scoreboard_matches.
-EXAMPLES: tuple[str, ...] = ("scan_and_schema.py",)
+EXAMPLES: tuple[str, ...] = (
+    "scan_and_schema.py",
+    "read_numpy.py",
+    "batch_training_loop.py",
+    "schema_and_project.py",
+    "ase_dropin.py",
+    "pytorch_targets.py",
+    "write_roundtrip.py",
+)
 
 
 def test_scoreboard_matches_tree() -> None:

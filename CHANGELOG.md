@@ -48,6 +48,10 @@ recorded here.
   in the test corpus, guarding that real, chemically diverse data — 98 elements
   across molecules, clusters, bulk, surfaces and low-dimensional structures,
   drawn from a 102-element dataset — parses.
+- An [`examples/`](examples/) directory of runnable, self-contained snippets —
+  scanning and schema inference, reading to numpy, atom-budgeted batching,
+  schema projection, the ASE drop-in, the PyTorch targets, and a write
+  round-trip — each executed in CI against a committed sample.
 
 ### Performance
 
