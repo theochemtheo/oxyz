@@ -36,22 +36,12 @@ and metadata keys appear, with what types and shapes, and how consistently
 pip install oxyz            # minimal deps; add extras as needed, e.g. oxyz[ase]
 ```
 
-```python
-import oxyz
-
-frames = oxyz.read("train.extxyz")          # every frame, parsed on all cores
-frames[0].columns["pos"]                     # float64 ndarray, shape (n_atoms, 3)
-frames[0].metadata["energy"]                 # float
-
-schema = oxyz.infer_schema("train.extxyz")   # one pass over the whole file
-schema.is_consistent                         # False — a column drifts; now you know
-print(schema)                                # which keys drift, and in how many frames
-```
-
 From 1.0, oxyz follows [Semantic Versioning](https://semver.org): within a
 major version no release removes or incompatibly changes a public name (the
 names exported from `oxyz` and its documented submodules, and the `oxyz`
-command-line verbs and options), though new ones may be added.
+command-line verbs and options), though new ones may be added. The surface is
+settled for 1.0; the remaining pre-1.0 releases finish the benchmarks,
+correctness hardening, and docs against it rather than moving it.
 
 <!-- examples/ lands in a later change; the link below is intentional ahead of that -->
 <!-- rumdl-disable MD057 -->
