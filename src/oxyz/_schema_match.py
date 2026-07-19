@@ -24,8 +24,18 @@ if TYPE_CHECKING:
 
     from oxyz._frames import Frame
 
+# How a schema deviation is handled. "required": missing/mismatch/count
+# violations raise, extra fields are ignored. "strict": as required, but extra
+# fields raise too. "warn": every violation (extra included) is emitted as a
+# SchemaWarning instead of raising.
 Conformance = Literal["strict", "required", "warn"]
+
+# Which part of a frame a Violation concerns.
 Axis = Literal["column", "metadata", "frame"]
+
+# How a found value diverges from its rule: absent ("missing"), present but
+# undeclared ("extra"), wrong kind/width/shape ("mismatch"), or a pattern rule
+# matched too few/many fields ("count").
 Deviation = Literal["missing", "extra", "mismatch", "count"]
 
 _NUMPY_KIND: dict[str, Kind] = {
@@ -38,6 +48,30 @@ _NUMPY_KIND: dict[str, Kind] = {
 
 @dataclass(frozen=True, slots=True)
 class Violation:
+    """One schema deviation found in a frame.
+
+    Attributes
+    ----------
+    axis
+        Which part of the frame the deviation concerns.
+    name
+        The column name, metadata key, or frame-rule field.
+    deviation
+        How `found` diverges from what the rule expected.
+    expected
+        The expected signature, value, or bound as text, or `None` for
+        `extra`.
+    found
+        The observed signature, value, or count as text, or `None` for
+        `missing`.
+    frame_index
+        Index of the frame the violation was found in. Left `None` by every
+        producer in this module.
+    line
+        Source line of the frame. Left `None` by every producer in this
+        module.
+    """
+
     axis: Axis
     name: str
     deviation: Deviation
@@ -49,6 +83,25 @@ class Violation:
 
 @dataclass(frozen=True, slots=True)
 class CompiledSpec:
+    """A `SchemaSpec` partitioned for matching.
+
+    Literal rules are keyed by name; pattern rules are paired with their
+    compiled matcher.
+
+    Attributes
+    ----------
+    columns_literal
+        Literal-name column rules, keyed by `ColumnRule.name`.
+    columns_pattern
+        Glob/regex column rules, each paired with its compiled matcher.
+    metadata_literal
+        Literal-key metadata rules, keyed by `MetadataRule.key`.
+    metadata_pattern
+        Glob/regex metadata rules, each paired with its compiled matcher.
+    frame
+        The spec's frame rule, or `None`.
+    """
+
     columns_literal: dict[str, ColumnRule]
     columns_pattern: tuple[tuple[ColumnRule, re.Pattern[str]], ...]
     metadata_literal: dict[str, MetadataRule]
@@ -69,9 +122,11 @@ def _matcher(name: str) -> re.Pattern[str]:
 def _partition[Rule: (ColumnRule, MetadataRule)](
     rules: Iterable[Rule], identifier: Callable[[Rule], str]
 ) -> tuple[dict[str, Rule], tuple[tuple[Rule, re.Pattern[str]], ...]]:
-    """Split rules into literals (keyed by identifier) and (rule, matcher)
-    patterns. `identifier` reads a rule's name/key, differing between the two
-    rule types (`ColumnRule.name`, `MetadataRule.key`)."""
+    """Split rules into literals (keyed by identifier) and (rule, matcher) patterns.
+
+    `identifier` reads a rule's name/key, differing between the two rule
+    types (`ColumnRule.name`, `MetadataRule.key`).
+    """
     literal: dict[str, Rule] = {}
     patterns: list[tuple[Rule, re.Pattern[str]]] = []
     for rule in rules:
@@ -96,9 +151,11 @@ def compile_spec(spec: SchemaSpec) -> CompiledSpec:
 
 
 def column_signature(value: object) -> tuple[Kind, int]:
-    """Derive `(kind, width)` from a built column value: a numpy array (1-D =
-    width 1, 2-D = its second dim) or a list of strings / list of lists."""
+    """Derive `(kind, width)` from a built column value.
 
+    A numpy array is 1-D for width 1 or 2-D with its second dim as width; a
+    string column is a list of strings (width 1) or a list of lists.
+    """
     if isinstance(value, np.ndarray):
         kind = _NUMPY_KIND[value.dtype.kind]
         width = value.shape[1] if value.ndim == 2 else 1
@@ -114,9 +171,11 @@ def _column_sig_str(kind: Kind, width: int) -> str:
 
 
 def metadata_signature(value: object) -> tuple[Kind, tuple[int, ...]]:
-    """Derive `(kind, shape)` from a built metadata value. `bool` is checked
-    before `int` because Python's `bool` is a subclass of `int`."""
+    """Derive `(kind, shape)` from a built metadata value.
 
+    `bool` is checked before `int` because Python's `bool` is a subclass of
+    `int`.
+    """
     if isinstance(value, bool):
         return Kind.BOOL, ()
     if isinstance(value, int):
@@ -296,9 +355,11 @@ def _validate_frame_rule(frame: Frame, compiled: CompiledSpec) -> list[Violation
 def validate_frame(
     frame: Frame, compiled: CompiledSpec, level: Conformance
 ) -> list[Violation]:
-    """Return every schema deviation in `frame`. Never raises. `extra` items are
-    reported only under `strict`/`warn`; missing/mismatch/count at all levels."""
+    """Return every schema deviation in `frame`.
 
+    Never raises. `extra` items are reported only under `strict`/`warn`;
+    `missing`/`mismatch`/`count` at all levels.
+    """
     return (
         _validate_columns(frame, compiled, level)
         + _validate_metadata(frame, compiled, level)
@@ -307,8 +368,19 @@ def validate_frame(
 
 
 class SchemaError(OxyzError):
-    """A frame failed schema validation. Carries the offending `frame_index` and
-    entry `name` as attributes, so callers need not parse the message."""
+    """A frame failed schema validation.
+
+    Carries the offending frame and entry as attributes, so callers need not
+    parse the message.
+
+    Attributes
+    ----------
+    frame_index
+        Index of the offending frame, or `None` if not known.
+    name
+        The column name, metadata key, or frame-rule field that failed, or
+        `None` if not known.
+    """
 
     def __init__(
         self, message: str, *, frame_index: int | None = None, name: str | None = None
@@ -319,8 +391,11 @@ class SchemaError(OxyzError):
 
 
 class SchemaWarning(UserWarning):
-    """A schema deviation under `conformance="warn"`. Silence with
-    `warnings.filterwarnings("ignore", category=oxyz.SchemaWarning)`."""
+    """A schema deviation under `conformance="warn"`.
+
+    Silence with `warnings.filterwarnings("ignore",
+    category=oxyz.SchemaWarning)`.
+    """
 
 
 def body(violation: Violation) -> str:
@@ -345,7 +420,6 @@ def message(violation: Violation, frame_index: int) -> str:
 
 def resolve(schema: SchemaSpec | str | Path) -> CompiledSpec:
     """Compile a `SchemaSpec` directly, or load one from a file path first."""
-
     spec = schema if isinstance(schema, SchemaSpec) else SchemaSpec.from_file(schema)
     return compile_spec(spec)
 
@@ -353,10 +427,12 @@ def resolve(schema: SchemaSpec | str | Path) -> CompiledSpec:
 def enforce_frame(
     frame: Frame, compiled: CompiledSpec, level: Conformance, frame_index: int
 ) -> None:
-    """Validate one frame and apply policy: raise `SchemaError` on the first
-    violation under `strict`/`required`; emit a `SchemaWarning` per violation
-    under `warn`; do nothing when conformant."""
+    """Validate one frame and apply policy.
 
+    Raises `SchemaError` on the first violation under `strict`/`required`;
+    emits a `SchemaWarning` per violation under `warn`; does nothing when
+    conformant.
+    """
     violations = validate_frame(frame, compiled, level)
     if not violations:
         return
