@@ -47,11 +47,11 @@ if TYPE_CHECKING:
 
     from obstore.store import AzureConfig, GCSConfig, S3Config
 
-    # The accepted shape of `storage_options`, keyed by the provider the URL
-    # scheme selects. obstore's TypedDicts are the source of truth; all keys are
-    # optional (total=False), so AWS needs none and non-AWS stores set endpoint
-    # /region/path-style as required.
     StorageOptions = S3Config | GCSConfig | AzureConfig | dict[str, Any]
+    """The accepted shape of `storage_options`, keyed by the provider the URL
+    scheme selects. obstore's TypedDicts (endpoint, region, credentials, ...)
+    are the source of truth; all keys are optional (total=False), so AWS needs
+    none and non-AWS stores set endpoint/region/path-style as required."""
 else:
     StorageOptions = dict
 
@@ -67,11 +67,23 @@ _CHUNK = 1024 * 1024
 
 
 def _scheme(path: str | Path) -> str:
+    """Return `path`'s URL scheme, lowercased (empty for a plain filesystem path)."""
     return urlsplit(str(path)).scheme.lower()
 
 
 def is_remote(path: str | Path) -> bool:
-    """True if `path` is a URL in a supported remote scheme."""
+    """Report whether `path` is a URL in a supported remote scheme.
+
+    Parameters
+    ----------
+    path
+        The path or URL to check.
+
+    Returns
+    -------
+    bool
+        `True` if `path`'s scheme is one of `SUPPORTED_SCHEMES`.
+    """
     return _scheme(path) in SUPPORTED_SCHEMES
 
 
@@ -90,6 +102,7 @@ class RemoteSource:
 
 
 def _raise_missing(*_args: object, **_kwargs: object) -> Any:
+    """Raise the `obstore`-not-installed `ImportError`."""
     raise ImportError(
         "reading from a remote URL needs the optional 'obstore' dependency — "
         "install it with: pip install oxyz[s3]"
@@ -97,6 +110,7 @@ def _raise_missing(*_args: object, **_kwargs: object) -> Any:
 
 
 def _import_obstore() -> Any:
+    """Import and return the `obstore` module, or raise if it is not installed."""
     try:
         import obstore
     except ImportError:
@@ -119,6 +133,7 @@ def _split_url(url: str) -> tuple[str, str, str]:
 
 
 def _build_store(bucket_url: str, storage_options: StorageOptions | None) -> Any:
+    """Build an obstore store for `bucket_url`, splitting client/provider config."""
     _import_obstore()
     from obstore.store import from_url
 
@@ -190,7 +205,25 @@ def open_source(
     member: str | None,
     storage_options: StorageOptions | None,
 ) -> RemoteSource:
-    """Open `path` as a `RemoteSource` for the `_rust.*_reader` entries."""
+    """Open `path` as a `RemoteSource` for the `_rust.*_reader` entries.
+
+    Parameters
+    ----------
+    path
+        A URL in one of `SUPPORTED_SCHEMES`.
+    compression
+        Forces a codec, or `"infer"` to detect it from the key/magic bytes.
+    member
+        Selects one entry from an archive holding more than one; carried
+        through unused, for the reader to apply.
+    storage_options
+        Endpoint/credentials for the store, falling back to `AWS_*` env vars.
+
+    Returns
+    -------
+    RemoteSource
+        A streaming source ready for the `_rust.*_reader` entries.
+    """
     obstore = _import_obstore()
     _, bucket_url, key = _split_url(str(path))
     store = _build_store(bucket_url, storage_options)
