@@ -106,6 +106,10 @@ recorded here.
 - `read_batch`'s `indices=` parameter becomes `index=`, taking `read`'s full
   selection grammar (`":"`, an int, a slice or slice string, or a sequence);
   the default `":"` reads the whole file, as `indices=None` did.
+- Restructured the README into an onboarding arc — a quickstart front door
+  (install → first read → schema check), the beyond-ASE differences promoted
+  ahead of the compatibility detail, and the PyTorch targets grouped. Content
+  is reorganised, not removed.
 
 ### Removed
 
