@@ -205,8 +205,10 @@ def _cmd_freeze(args: argparse.Namespace) -> int:
 
 
 def _write_spec(spec: SchemaSpec, out: Path) -> None:
-    """Write a schema to `out`, dispatching on the extension (see
-    `SchemaSpec.to_file`); `.toml` is rejected (no TOML serialiser)."""
+    """Write a schema to `out`, dispatching on the extension.
+
+    See `SchemaSpec.to_file`; `.toml` is rejected (no TOML serialiser).
+    """
     spec.to_file(out)
 
 

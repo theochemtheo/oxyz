@@ -63,10 +63,11 @@ def to_tensor(
 
 
 def numbers(columns: dict[str, ColumnValues]) -> np.ndarray:
-    """Atomic numbers (int32) from columns: an explicit `Z`/`numbers` column
-    wins, else the `species` column is mapped via the shared element table.
+    """Return atomic numbers (int32) from columns.
 
-    Works on a single frame's per-atom columns or a batch's concatenated
+    An explicit `Z`/`numbers` column wins, else the `species` column is
+    mapped via the shared element table. Works on a single frame's per-atom
+    columns or a batch's concatenated
     columns alike. Raises `MissingSpeciesError` when no usable column is
     present and `oxyz._convert.UnknownSpeciesError` when a species token has no
     chemical symbol; the caller maps both to its own error type.
