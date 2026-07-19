@@ -24,6 +24,10 @@ if TYPE_CHECKING:
     from oxyz._schema_spec import FrameRule, Mode, SchemaSpec
 
 MemoryScaling = Literal["n_atoms", "n_atoms_x_density"]
+"""How `iread_batch`'s `memory_scales_with` weighs a frame for balanced-bin
+packing: `"n_atoms"` is the atom count; `"n_atoms_x_density"` is
+`n_atoms**2 / volume`, a proxy for the neighbour-graph size that drives MLIP
+memory."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,9 +36,32 @@ class Batch:
 
     `columns` holds per-atom arrays with `total_atoms` rows; `metadata` holds
     per-frame arrays with `n_frames` rows. Frame `i` occupies rows
-    `offsets[i]:offsets[i + 1]` of every column. `frame_indices` records
-    which file frame each batch entry came from — provenance for shuffled
-    training batches.
+    `offsets[i]:offsets[i + 1]` of every column.
+
+    Attributes
+    ----------
+    columns
+        Per-atom data keyed by column name, e.g. `"species"`, `"pos"`,
+        `"forces"`, concatenated across frames.
+    metadata
+        Per-frame data keyed by name, e.g. `"energy"`, `"Lattice"`, one row
+        per frame.
+    offsets
+        CSR row boundaries, length `n_frames + 1`.
+    frame_indices
+        Which file frame each batch entry came from — provenance for a
+        shuffled or gathered batch.
+    n_frames
+        Number of frames in the batch.
+    total_atoms
+        Total atom count across all frames.
+    n_atoms
+        Per-frame atom counts, `np.diff(offsets)`.
+    ptr
+        Alias of `offsets`, under its PyG name.
+    batch
+        Per-atom frame id within this batch (PyG's `batch` vector), computed
+        on each access.
     """
 
     columns: dict[str, ColumnValues]
@@ -44,10 +71,12 @@ class Batch:
 
     @property
     def n_frames(self) -> int:
+        """Number of frames in the batch."""
         return len(self.offsets) - 1
 
     @property
     def total_atoms(self) -> int:
+        """Total atom count across all frames."""
         return int(self.offsets[-1])
 
     @property
@@ -75,8 +104,10 @@ def _scan_count(
     member: str | None,
     storage_options: _remote.StorageOptions | None,
 ) -> int:
-    """Frame count from a structural scan (no value parsing), for resolving a
-    slice or negative index against the file length."""
+    """Frame count from a structural scan (no value parsing).
+
+    For resolving a slice or negative index against the file length.
+    """
     from oxyz._scan import scan
 
     return scan(
@@ -91,10 +122,12 @@ def _resolve_batch_indices(
     member: str | None,
     storage_options: _remote.StorageOptions | None,
 ) -> list[int] | None:
-    """Turn `read_batch`'s `index` into a concrete selection: `None` for the
-    whole file (fast path, no scan) or a list of frame indices to gather in
-    order. A slice or negative int resolves against the frame count; `":"` and an
-    explicit sequence do not scan."""
+    """Turn `read_batch`'s `index` into a concrete selection.
+
+    `None` means the whole file (fast path, no scan); otherwise a list of
+    frame indices to gather in order. A slice or negative int resolves
+    against the frame count; `":"` and an explicit sequence do not scan.
+    """
     from oxyz._select import parse_index
 
     if isinstance(index, str):
@@ -160,6 +193,50 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
     batch contains — columns, metadata, and the frame rule — exactly as the frame
     readers do, before concatenation; a mixed-schema file still cannot batch, so
     use `mode="project"` to reshape it.
+
+    Parameters
+    ----------
+    path
+        File path, or an S3-compatible URL (``s3://``, ``gs://``, ``az://`` —
+        needs the ``oxyz[s3]`` extra).
+    index
+        Which frames to gather; see above.
+    threads
+        `None` parses on every core; `1` is the exact serial path.
+    schema
+        A `SchemaSpec`, or a path to a schema file; see above.
+    conformance
+        How a schema deviation is handled: `"strict"`, `"required"` (default),
+        or `"warn"`.
+    mode
+        Overrides the schema's own `mode`; see above.
+    compression
+        Forces a codec instead of inferring it from `path`; see `read`.
+    member
+        Selects one entry from an archive holding more than one; see `read`.
+    storage_options
+        Endpoint/credentials for a remote store; see `read`.
+
+    Returns
+    -------
+    Batch
+        The gathered frames, concatenated.
+
+    Raises
+    ------
+    oxyz.ParseError
+        On malformed input, carrying the frame index and location.
+    IndexError
+        On an out-of-range or negative explicit index.
+
+    Examples
+    --------
+    >>> import oxyz
+    >>> batch = oxyz.read_batch("examples/data/water.extxyz")
+    >>> batch.columns["pos"].shape
+    (9, 3)
+    >>> batch.metadata["energy"].shape
+    (3,)
     """
     _check_threads(threads)
     _require_schema_for_mode(schema, mode)
@@ -288,6 +365,61 @@ def iread_batch(  # noqa: C901, PLR0913  the keyword options are the batching co
     deviations; under `warn` an unfillable frame is dropped, so a batch whose
     frames all drop is skipped and the batch count is not purely a function of
     the strategy. `mode` without a `schema` is an error.
+
+    Parameters
+    ----------
+    path
+        File path, an S3-compatible URL, or `"-"` for stdin.
+    frames_per_batch
+        Fixed structure count per batch; one of the three strategies.
+    atoms_per_batch
+        Greedy file-order atom-count budget per batch; one of the three
+        strategies.
+    memory_scales_with
+        `"n_atoms"` or `"n_atoms_x_density"`, packed into balanced bins under
+        `max_scaler`; one of the three strategies.
+    max_scaler
+        The per-bin weight budget for `memory_scales_with`.
+    shuffle
+        Draw frames in a seeded random order instead of file order.
+    seed
+        Seeds `shuffle`; requires `shuffle=True`.
+    threads
+        Parsing parallelism within each batch; `None` for all cores, `1` for
+        serial. Never affects batch composition.
+    schema
+        A `SchemaSpec`, or a path to a schema file; see above.
+    conformance
+        How a schema deviation is handled; see above.
+    mode
+        Overrides the schema's own `mode`; see above.
+    compression
+        Forces a codec instead of inferring it from `path`; see `read`.
+    member
+        Selects one entry from an archive holding more than one; see `read`.
+    storage_options
+        Endpoint/credentials for a remote store; see `read`.
+
+    Returns
+    -------
+    Iterator[Batch]
+        Batches in the strategy's order, each with its own `frame_indices`.
+
+    Raises
+    ------
+    ValueError
+        On an invalid combination of knobs (zero or more than one strategy,
+        `seed` without `shuffle`, `shuffle` with `memory_scales_with`, an
+        out-of-range knob, or a strategy unsupported on a compressed or
+        remote source).
+
+    Examples
+    --------
+    >>> import oxyz
+    >>> for b in oxyz.iread_batch("examples/data/water.extxyz", frames_per_batch=2):
+    ...     print(b.columns["pos"].shape[0], b.frame_indices.tolist())
+    6 [0, 1]
+    3 [2]
     """
     strategies = sum(
         knob is not None
@@ -467,8 +599,9 @@ def _planned_batches(  # noqa: PLR0913  the planning knobs plus projection
 
     Planning is serial and happens before any parsing, so `threads` cannot
     influence which frames land in which batch. The reader's own index
-    supplies the atom counts (and, for density, the cell volumes), so the file
-    is scanned exactly once."""
+    supplies the atom counts (and, for density, the cell volumes), so the
+    file is scanned exactly once.
+    """
     validate_compiled = None
     if spec is not None and projection is None:
         from oxyz._schema_match import resolve
@@ -561,10 +694,12 @@ def _memory_weights(
 def _balanced_bins(
     order: np.ndarray, weights: np.ndarray, max_volume: float
 ) -> list[list[int]]:
-    """Best-fit-decreasing bin packing, after `torch_sim`'s
-    `to_constant_volume_bins`: heaviest first, into the most-full bin that still
-    has room, opening a new bin only when none does. A frame heavier than the
-    budget opens (and fills) a bin of its own."""
+    """Best-fit-decreasing bin packing, after `torch_sim`'s `to_constant_volume_bins`.
+
+    Heaviest first, into the most-full bin that still has room, opening a new
+    bin only when none does. A frame heavier than the budget opens (and
+    fills) a bin of its own.
+    """
     entries = sorted(
         ((float(weights[i]), int(i)) for i in order), key=lambda entry: -entry[0]
     )
@@ -593,7 +728,7 @@ def _batch_from_data(data: _rust.BatchData, frame_indices: Sequence[int]) -> Bat
 
 
 def _empty_batch() -> Batch:
-    """A batch with no frames — what a fully-dropped projecting read returns."""
+    """Build a batch with no frames, for a fully-dropped projecting read."""
     return Batch(
         columns={},
         metadata={},
@@ -607,9 +742,9 @@ def _resolve_projected_batch(
     conformance: Conformance,
     spec: SchemaSpec | None = None,
 ) -> Batch | None:
-    """Apply projection policy to a `(batch_data, survivors, reports)` triple and
-    return the surviving `Batch`, or `None` when every frame dropped.
+    """Apply projection policy to a `(batch_data, survivors, reports)` triple.
 
+    Returns the surviving `Batch`, or `None` when every frame dropped.
     Reports arrive in request order, so the first strict/required violation
     raised is deterministic and matches the frame readers; `warn` warns per
     deviation and the caller skips a `None` (empty) result. The frame rule, if
@@ -633,10 +768,12 @@ def _resolve_projected_batch(
 def _enforce_frame_rule_on_batch(
     batch: Batch, frame_rule: FrameRule, conformance: Conformance
 ) -> None:
-    """Check a batch's per-frame structural facts (`n_atoms` bounds,
-    `lattice_required`) against the frame rule, in frame order — the batch
-    analogue of the frame readers' frame-rule validation. Raises under
-    strict/required on the first violation; warns under warn."""
+    """Check a batch's per-frame structural facts against the frame rule.
+
+    Checks `n_atoms` bounds and `lattice_required`, in frame order — the
+    batch analogue of the frame readers' frame-rule validation. Raises under
+    strict/required on the first violation; warns under warn.
+    """
     import warnings
 
     from oxyz._schema_match import SchemaError, SchemaWarning, Violation, message
@@ -674,9 +811,11 @@ def _materialise_batch_frames(
     member: str | None,
     storage_options: _remote.StorageOptions | None,
 ) -> tuple[list[_rust.FrameData], list[int]]:
-    """Parse the frames a batch will contain as `FrameData` dicts, with their
-    file indices. A selection reads the whole file and picks (the validate path
-    is not on the hot loop); `indices=None` returns every frame in file order."""
+    """Parse the frames a batch will contain, as `FrameData` dicts with file indices.
+
+    A selection reads the whole file and picks (the validate path is not on
+    the hot loop); `selection=None` returns every frame in file order.
+    """
     if _remote.is_remote(path):
         src = _remote.open_source(
             path,
@@ -709,8 +848,11 @@ def _read_batch_validate(
     member: str | None,
     storage_options: _remote.StorageOptions | None,
 ) -> Batch:
-    """Validate each constituent frame (columns, metadata, frame rule) then
-    assemble the batch — the validate-mode analogue of the projecting read."""
+    """Validate each constituent frame, then assemble the batch.
+
+    Checks columns, metadata, and the frame rule per frame — the
+    validate-mode analogue of the projecting read.
+    """
     from oxyz._frames import _frame_from_data
     from oxyz._schema_match import enforce_frame, resolve
 
