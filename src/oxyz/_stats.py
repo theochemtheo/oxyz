@@ -11,6 +11,11 @@ class AtomCountStats:
     median, and population standard deviation are derived on demand; all are
     None for an empty file. `min`/`max`/`total` are left to each host, which
     already has them.
+
+    Attributes
+    ----------
+    n_atoms
+        Per-frame atom count, supplied by the host dataclass.
     """
 
     __slots__ = ()
@@ -18,12 +23,15 @@ class AtomCountStats:
 
     @property
     def mean_atoms(self) -> float | None:
+        """Arithmetic mean of `n_atoms`, or None if empty."""
         return float(self.n_atoms.mean()) if self.n_atoms.size else None
 
     @property
     def median_atoms(self) -> float | None:
+        """Median of `n_atoms`, or None if empty."""
         return float(np.median(self.n_atoms)) if self.n_atoms.size else None
 
     @property
     def std_atoms(self) -> float | None:
+        """Population standard deviation of `n_atoms`, or None if empty."""
         return float(self.n_atoms.std()) if self.n_atoms.size else None

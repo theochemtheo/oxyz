@@ -24,28 +24,41 @@ class FrameIndex(AtomCountStats):
     `mean_atoms`/`median_atoms`/`std_atoms` come from `AtomCountStats`, with
     `std_atoms` the population standard deviation. All statistics are None for
     an empty file.
+
+    Attributes
+    ----------
+    offsets
+        Byte offset of each frame's first line.
+    n_atoms
+        Declared atom count per frame, dtype `intp`.
+    volumes
+        Per-frame cell volume `|det(Lattice)|`, only for
+        `scan(..., with_volume=True)`; `NaN` for a frame with no `Lattice`.
+        None when volume was not requested.
     """
 
     offsets: np.ndarray
     n_atoms: np.ndarray
     volumes: np.ndarray | None = None
-    """Per-frame cell volume `|det(Lattice)|`, only for `scan(..., with_volume=True)`;
-    `NaN` for a frame with no `Lattice`. `None` when volume was not requested."""
 
     @property
     def n_frames(self) -> int:
+        """Number of frames."""
         return len(self.n_atoms)
 
     @property
     def total_atoms(self) -> int:
+        """Sum of `n_atoms` across all frames."""
         return int(self.n_atoms.sum())
 
     @property
     def min_atoms(self) -> int | None:
+        """Smallest per-frame atom count, or None if empty."""
         return int(self.n_atoms.min()) if self.n_frames else None
 
     @property
     def max_atoms(self) -> int | None:
+        """Largest per-frame atom count, or None if empty."""
         return int(self.n_atoms.max()) if self.n_frames else None
 
 
@@ -79,6 +92,33 @@ def scan(
     A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through
     the same scanner (needs the ``oxyz[s3]`` extra); ``storage_options`` passes
     endpoint/credentials to the store.
+
+    Parameters
+    ----------
+    path
+        File path or remote URL to scan.
+    with_volume
+        Also record each frame's cell volume in `volumes`.
+    compression
+        Forces a codec (`"infer"`, `"none"`, `"gzip"`, `"zstd"`, `"zip"`)
+        instead of inferring it from `path`.
+    member
+        Selects one entry from a `.zip`/`.tar`/`.tar.gz` holding more than
+        one.
+    storage_options
+        Endpoint/credentials for a remote store, falling back to `AWS_*`
+        env vars.
+
+    Returns
+    -------
+    FrameIndex
+        Per-frame byte offsets and declared atom counts.
+
+    Examples
+    --------
+    >>> import oxyz
+    >>> oxyz.scan("examples/data/water.extxyz").n_frames
+    3
     """
     if _remote.is_remote(path):
         src = _remote.open_source(
