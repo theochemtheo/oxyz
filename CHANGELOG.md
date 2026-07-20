@@ -4,11 +4,7 @@ All notable changes to oxyz are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-While the version is below 1.0 the public API is not yet settled: minor
-releases may make breaking changes, patch releases will not. Such changes are
-recorded here.
-
-## [Unreleased]
+## [1.0.0] - 2026-07-20
 
 ### Added
 
@@ -323,6 +319,7 @@ for reading atomistic-simulation datasets into numpy or ASE.
 - abi3 wheels for CPython 3.11 and newer on Linux (x86_64, aarch64), macOS
   (arm64, x86_64), and Windows (x64).
 
+[1.0.0]: https://github.com/theochemtheo/oxyz/releases/tag/v1.0.0
 [0.5.0]: https://github.com/theochemtheo/oxyz/releases/tag/v0.5.0
 [0.4.0]: https://github.com/theochemtheo/oxyz/releases/tag/v0.4.0
 [0.3.0]: https://github.com/theochemtheo/oxyz/releases/tag/v0.3.0

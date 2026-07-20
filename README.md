@@ -36,12 +36,10 @@ That is the part of dataset ingestion that usually goes unchecked.
 pip install oxyz            # minimal deps; add extras as needed, e.g. oxyz[ase]
 ```
 
-From 1.0, oxyz follows [Semantic Versioning](https://semver.org): within a
-major version no release removes or incompatibly changes a public name (the
-names exported from `oxyz` and its documented submodules, and the `oxyz`
-command-line verbs and options), though new ones may be added. The surface is
-settled for 1.0; the remaining pre-1.0 releases finish the benchmarks,
-correctness hardening, and docs against it rather than moving it.
+oxyz follows [Semantic Versioning](https://semver.org): within a major version
+no release removes or incompatibly changes a public name (the names exported
+from `oxyz` and its documented submodules, and the `oxyz` command-line verbs
+and options), though new ones may be added.
 
 Runnable, self-contained versions of each use below live in
 [`examples/`](examples/).
