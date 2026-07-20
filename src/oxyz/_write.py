@@ -72,7 +72,7 @@ def write(
     Examples
     --------
     >>> import tempfile, pathlib, oxyz
-    >>> frames = oxyz.read("examples/data/water.extxyz")
+    >>> frames = oxyz.read(DATA / "water.extxyz")
     >>> with tempfile.TemporaryDirectory() as d:
     ...     out = pathlib.Path(d) / "out.extxyz"
     ...     oxyz.write(out, frames)
@@ -94,7 +94,7 @@ class Writer:
     Examples
     --------
     >>> import tempfile, pathlib, oxyz
-    >>> frames = oxyz.read("examples/data/water.extxyz")
+    >>> frames = oxyz.read(DATA / "water.extxyz")
     >>> with tempfile.TemporaryDirectory() as d:
     ...     out = pathlib.Path(d) / "out.extxyz"
     ...     with oxyz.Writer(out) as writer:

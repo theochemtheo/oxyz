@@ -145,7 +145,7 @@ def read(  # noqa: PLR0913  keyword options mirror the SimState data model
     Examples
     --------
     >>> import oxyz.torch_sim
-    >>> state = oxyz.torch_sim.read("examples/data/water.extxyz")
+    >>> state = oxyz.torch_sim.read(DATA / "water.extxyz")
     >>> int(state.positions.shape[0])
     9
     """

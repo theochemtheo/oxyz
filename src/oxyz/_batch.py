@@ -232,7 +232,7 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
     Examples
     --------
     >>> import oxyz
-    >>> batch = oxyz.read_batch("examples/data/water.extxyz")
+    >>> batch = oxyz.read_batch(DATA / "water.extxyz")
     >>> batch.columns["pos"].shape
     (9, 3)
     >>> batch.metadata["energy"].shape
@@ -416,7 +416,7 @@ def iread_batch(  # noqa: C901, PLR0913  the keyword options are the batching co
     Examples
     --------
     >>> import oxyz
-    >>> for b in oxyz.iread_batch("examples/data/water.extxyz", frames_per_batch=2):
+    >>> for b in oxyz.iread_batch(DATA / "water.extxyz", frames_per_batch=2):
     ...     print(b.columns["pos"].shape[0], b.frame_indices.tolist())
     6 [0, 1]
     3 [2]

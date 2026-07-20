@@ -176,7 +176,7 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
     Examples
     --------
     >>> import oxyz
-    >>> frames = oxyz.read("examples/data/water.extxyz")
+    >>> frames = oxyz.read(DATA / "water.extxyz")
     >>> len(frames)
     3
     >>> frames[0].columns["pos"].shape
@@ -282,7 +282,7 @@ def iread(
     Examples
     --------
     >>> import oxyz
-    >>> [f.columns["pos"].shape for f in oxyz.iread("examples/data/water.extxyz")]
+    >>> [f.columns["pos"].shape for f in oxyz.iread(DATA / "water.extxyz")]
     [(3, 3), (3, 3), (3, 3)]
     """
     from oxyz._select import gathered_frames, nth_frame, parse_index, sliced_frames

@@ -189,8 +189,8 @@ convention = "numpy"
 # doctests (oxyz.metatomic, oxyz.torch_sim) import torch, so they need the `dev`
 # group's torch stack installed — the default `uv sync` provides it; a run under
 # `uv sync --no-default-groups` would error on those imports rather than skip.
-# The doctests also read `examples/data/` by a repo-root-relative path, so run
-# pytest from the repository root (as CI does).
+# They read `examples/data/` via the absolute `DATA` path injected by
+# src/oxyz/conftest.py, so they resolve regardless of the working directory.
 testpaths = ["tests", "src/oxyz"]
 addopts = "--doctest-modules"
 doctest_optionflags = ["NORMALIZE_WHITESPACE", "ELLIPSIS"]
@@ -218,3 +218,6 @@ manifest-path = "crates/oxyz-py/Cargo.toml"
 module-name = "oxyz._rust"
 python-source = "src"
 features = ["extension-module"]
+# conftest.py is test-only (it provides the doctest `DATA` fixture); keep it out
+# of the built sdist/wheel.
+exclude = ["src/oxyz/conftest.py"]

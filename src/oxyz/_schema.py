@@ -271,9 +271,9 @@ def infer_schema(
     Examples
     --------
     >>> import oxyz
-    >>> oxyz.infer_schema("examples/data/water.extxyz").is_consistent
+    >>> oxyz.infer_schema(DATA / "water.extxyz").is_consistent
     True
-    >>> oxyz.infer_schema("examples/data/mixed.extxyz").is_consistent
+    >>> oxyz.infer_schema(DATA / "mixed.extxyz").is_consistent
     False
     """
     if _remote.is_remote(path):

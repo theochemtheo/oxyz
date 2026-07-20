@@ -117,7 +117,7 @@ def scan(
     Examples
     --------
     >>> import oxyz
-    >>> oxyz.scan("examples/data/water.extxyz").n_frames
+    >>> oxyz.scan(DATA / "water.extxyz").n_frames
     3
     """
     if _remote.is_remote(path):

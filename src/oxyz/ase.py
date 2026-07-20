@@ -365,7 +365,7 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
     Examples
     --------
     >>> import oxyz.ase
-    >>> images = oxyz.ase.read("examples/data/water.extxyz", ":")
+    >>> images = oxyz.ase.read(DATA / "water.extxyz", ":")
     >>> len(images)
     3
     """

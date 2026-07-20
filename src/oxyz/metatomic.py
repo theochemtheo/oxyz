@@ -196,7 +196,7 @@ def read(  # noqa: PLR0913  keyword options mirror the System data model
     --------
     >>> import torch
     >>> import oxyz.metatomic
-    >>> systems = oxyz.metatomic.read("examples/data/water.extxyz", dtype=torch.float64)
+    >>> systems = oxyz.metatomic.read(DATA / "water.extxyz", dtype=torch.float64)
     >>> len(systems)
     3
     """
