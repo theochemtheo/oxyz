@@ -24,8 +24,8 @@ print(schema)                               # which keys drift, and in how many 
 
 `oxyz` exists for the gap between "extxyz is the lingua franca of atomistic
 ML datasets" and "every Python extxyz reader is slow enough to matter".
-Reading a dataset into numpy is 16–25× faster than `ase.io.read` on the
-benchmarks below; reading it into `ase.Atoms` objects is 2.6–6.6× faster.
+Reading a dataset into numpy is 17–27× faster than `ase.io.read` on the
+benchmarks below; reading it into `ase.Atoms` objects is 3.1–6.2× faster.
 The same single pass can also tell you the dataset's schema: which columns
 and metadata keys appear, with what types and shapes, and how consistently.
 That is the part of dataset ingestion that usually goes unchecked.
@@ -387,23 +387,23 @@ structures); the rest are generated fixtures:
 
 | workload | `oxyz.read(threads=12)` | `oxyz.read(threads=1)` | `extxyz.read_dicts` |
 | --- | ---: | ---: | ---: |
-| 2,000 small frames | **9.43 ms** | 18.1 ms | 229 ms |
-| 4 × 100,000 atoms | **23.5 ms** | 52.2 ms | 91.5 ms |
-| 2,000 frames, heavy metadata | **14.1 ms** | 26.5 ms | 429 ms |
-| MAD-1.5, 180,184 frames | **1.20 s** | 1.73 s | 23.4 s |
+| 2,000 small frames | **8.97 ms** | 17.2 ms | 233 ms |
+| 4 × 100,000 atoms | **24.6 ms** | 52.3 ms | 92.3 ms |
+| 2,000 frames, heavy metadata | **13.3 ms** | 26.5 ms | 426 ms |
+| MAD-1.5, 180,184 frames | **1.18 s** | 1.69 s | 22.2 s |
 
 Whole-file reads to `ase.Atoms`, against the [ase-extxyz] plugin (the same C
 parser behind ASE's IO) and ASE's own reader:
 
 | workload | `oxyz.ase.read(threads=12)` | `oxyz.ase.read(threads=1)` | `ase.io.read(format="cextxyz")` | `ase.io.read(format="extxyz")` |
 | --- | ---: | ---: | ---: | ---: |
-| 2,000 small frames | **63.4 ms** | 76.6 ms | 122 ms | 217 ms |
-| 4 × 100,000 atoms | **66.9 ms** | 96.5 ms | 92.0 ms | 441 ms |
-| 2,000 frames, heavy metadata | **83.6 ms** | 96.0 ms | 309 ms | 358 ms |
-| MAD-1.5, 180,184 frames | **7.50 s** | 8.80 s | 12.9 s | 19.6 s |
+| 2,000 small frames | **64.8 ms** | 73.3 ms | 121 ms | 204 ms |
+| 4 × 100,000 atoms | **68.8 ms** | 93.3 ms | 90.1 ms | 423 ms |
+| 2,000 frames, heavy metadata | **80.0 ms** | 95.8 ms | 308 ms | 355 ms |
+| MAD-1.5, 180,184 frames | **7.67 s** | 8.68 s | 12.5 s | 25.7 s |
 
 Beyond whole-file reads: on selective reads (every 20th frame of the
-small-frames file) `oxyz.read_batch` takes 1.7 ms against 22 ms for ASE;
+small-frames file) `oxyz.read_batch` takes 1.6 ms against 22 ms for ASE;
 on peak memory, streaming `iread` through the small-frames file
 grows RSS by 12 MiB where `ase.io.iread` grows it by 56 MiB
 ([benchmarks/MEMORY.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/MEMORY.md)).
