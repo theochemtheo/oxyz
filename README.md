@@ -43,11 +43,8 @@ command-line verbs and options), though new ones may be added. The surface is
 settled for 1.0; the remaining pre-1.0 releases finish the benchmarks,
 correctness hardening, and docs against it rather than moving it.
 
-<!-- examples/ lands in a later change; the link below is intentional ahead of that -->
-<!-- rumdl-disable MD057 -->
 Runnable, self-contained versions of each use below live in
 [`examples/`](examples/).
-<!-- rumdl-enable MD057 -->
 
 ### Install
 
