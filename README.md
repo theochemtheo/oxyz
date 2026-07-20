@@ -64,8 +64,7 @@ x86_64), and Windows (x64).
 
 oxyz follows [SPEC 0](https://scientific-python.org/specs/spec-0000/) for its
 support window: Python versions are dropped three years after release, so the
-current minimum is 3.12. Older interpreters can pin an earlier oxyz (3.11 is
-supported up to 0.2.0).
+current minimum is 3.12.
 
 Installing puts an `oxyz` command on the path; `oxyz scan train.extxyz`
 summarises a file without writing any Python. It also runs without
