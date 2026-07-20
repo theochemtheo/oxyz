@@ -24,5 +24,7 @@ PyPI trusted publishing must be configured for the `oxyz` project — owner
 
 ## Versioning
 
-While the version is below 1.0, minor releases may make breaking changes and
-patch releases will not; such changes are recorded in `CHANGELOG.md`.
+oxyz follows [Semantic Versioning](https://semver.org): within a major version
+no release removes or incompatibly changes a public name, though new ones may be
+added; a breaking change bumps the major. Every change is recorded in
+`CHANGELOG.md`.
