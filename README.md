@@ -13,13 +13,13 @@ tells you whether a training file is what you think it is.
 ```python
 import oxyz
 
-frames = oxyz.read("train.extxyz")        # all cores, one pass
-frames[0].columns["pos"]                         # float64 ndarray, shape (n_atoms, 3)
-frames[0].metadata["energy"]                     # float
+frames = oxyz.read("train.extxyz")          # all cores, one pass
+frames[0].columns["pos"]                    # float64 ndarray, shape (n_atoms, 3)
+frames[0].metadata["energy"]                # float
 
 schema = oxyz.infer_schema("train.extxyz")
-schema.is_consistent                             # False — now you know before training
-print(schema)                                    # which keys drift, and in how many frames
+schema.is_consistent                        # False — now you know before training
+print(schema)                               # which keys drift, and in how many frames
 ```
 
 `oxyz` exists for the gap between "extxyz is the lingua franca of atomistic
@@ -223,7 +223,7 @@ some frames, readable as one batch:
 
 ```python
 frames = oxyz.read("mixed.extxyz", schema=spec)        # spec.mode == "project"
-batch = oxyz.read_batch("mixed.extxyz", schema=spec)          # now batchable
+batch = oxyz.read_batch("mixed.extxyz", schema=spec)   # now batchable
 ```
 
 Projection works across the frame readers, the batch readers, and the
@@ -428,11 +428,11 @@ or an iterable mixing them, and writes extxyz, choosing the codec from the path
 extension (overridable with `compression=`):
 
 ```python
-oxyz.write("out.extxyz", frames)             # a Frame or list of Frames
-oxyz.write("out.extxyz.gz", atoms)           # an ase.Atoms, gzipped by extension
-oxyz.write("-", frames)                       # "-" writes to stdout
+oxyz.write("out.extxyz", frames)         # a Frame or list of Frames
+oxyz.write("out.extxyz.gz", atoms)       # an ase.Atoms, gzipped by extension
+oxyz.write("-", frames)                  # "-" writes to stdout
 
-with oxyz.Writer("traj.extxyz") as w:        # incremental, constant memory
+with oxyz.Writer("traj.extxyz") as w:    # incremental, constant memory
     for frame in produce():
         w.write(frame)
 ```
@@ -462,7 +462,7 @@ Any reader takes a compressed path and decodes it while streaming, so
 decompressing to a temporary file:
 
 ```python
-oxyz.read("run.xyz.gz")               # .gz, .tar.gz, .zip, .zst, .tar
+oxyz.read("run.xyz.gz")                    # .gz, .tar.gz, .zip, .zst, .tar
 oxyz.read("runs.zip", member="run2.xyz")   # pick one archive entry
 oxyz.read("run.bin", compression="gzip")   # force a codec by hand
 ```
