@@ -96,11 +96,13 @@ def _metadata_rules(schema: Schema) -> tuple[list[MetadataRule], dict[str, str]]
 def spec_and_notes(
     schema: Schema, *, glob_min_run: int = 3
 ) -> tuple[SchemaSpec, dict[str, str]]:
-    """Turn an observed `Schema` into a prescriptive `SchemaSpec` plus a
-    name -> drift-note map for `render_yaml`. Partial-presence entries are
-    `required=False`; enumerable column families collapse to a `*` glob with a
-    `count`; the `frame` section is never emitted (bounds are never auto-pinned)."""
+    """Turn an observed `Schema` into a prescriptive `SchemaSpec`.
 
+    Also returns a name -> drift-note map for `render_yaml`. Partial-presence
+    entries are `required=False`; enumerable column families collapse to a
+    `*` glob with a `count`; the `frame` section is never emitted (bounds are
+    never auto-pinned).
+    """
     columns, column_notes = _collapse_columns(schema, glob_min_run)
     metadata, metadata_notes = _metadata_rules(schema)
     return SchemaSpec(columns=tuple(columns), metadata=tuple(metadata)), {

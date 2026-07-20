@@ -18,7 +18,20 @@ if TYPE_CHECKING:
 
 
 class Kind(StrEnum):
-    """The four extxyz value kinds, shared by columns and metadata."""
+    """The four extxyz value kinds, shared by columns and metadata.
+
+    Attributes
+    ----------
+    REAL
+        Floating-point; letter code `R` in a `ColumnRule`/`MetadataRule`
+        `kind`.
+    INT
+        Integer; letter code `I`.
+    BOOL
+        Boolean; letter code `L`.
+    STR
+        String; letter code `S`.
+    """
 
     REAL = "Real"
     INT = "Int"
@@ -32,6 +45,15 @@ class ColumnVariant:
 
     `frames` counts how many frames used exactly this combination; the
     variant counts on a column sum to its `frames_present`.
+
+    Attributes
+    ----------
+    kind
+        Value kind observed.
+    width
+        Number of components per atom (1 for a scalar column).
+    frames
+        Number of frames that used this (kind, width) combination.
     """
 
     kind: Kind
@@ -45,6 +67,15 @@ class MetadataVariant:
 
     `shape` follows numpy: `()` for scalars, `(n,)` for arrays. `frames`
     counts how many frames used exactly this combination.
+
+    Attributes
+    ----------
+    kind
+        Value kind observed.
+    shape
+        Array shape observed, `()` for a scalar.
+    frames
+        Number of frames that used this (kind, shape) combination.
     """
 
     kind: Kind
@@ -61,6 +92,18 @@ class ColumnSchema:
     `unified` is the single (kind, width) every frame's column can be read
     as — the sole variant, or the Real that an Int/Real pair of equal width
     promotes to — and None when the variants genuinely conflict.
+
+    Attributes
+    ----------
+    name
+        Column name, e.g. `"pos"`, `"forces"`.
+    variants
+        Every (kind, width) combination observed, in first-seen order.
+    frames_present
+        Number of frames that carried this column at all.
+    unified
+        The single (kind, width) every frame's column can be read as, or
+        None on a genuine conflict.
     """
 
     name: str
@@ -75,6 +118,18 @@ class MetadataSchema:
 
     Mirrors `ColumnSchema`; `unified` is (kind, shape) under the same
     Int/Real promotion rule, or None on a genuine conflict.
+
+    Attributes
+    ----------
+    key
+        Metadata key, e.g. `"Lattice"`, `"energy"`.
+    variants
+        Every (kind, shape) combination observed, in first-seen order.
+    frames_present
+        Number of frames that carried this key at all.
+    unified
+        The single (kind, shape) every frame's value can be read as, or
+        None on a genuine conflict.
     """
 
     key: str
@@ -85,8 +140,7 @@ class MetadataSchema:
 
 @dataclass(frozen=True, slots=True)
 class Schema(AtomCountStats):
-    """Observed structure of a dataset: which columns and metadata keys
-    appear, with what types and shapes, and how consistently.
+    """Observed structure of a dataset: columns, metadata, and consistency.
 
     Built by `infer_schema` in one pass; records counts, not frame indices.
     `is_consistent` is strict: every column and key has a single variant and
@@ -95,6 +149,26 @@ class Schema(AtomCountStats):
     are None only for an empty file. The same single pass keeps the per-frame
     `n_atoms`, so `mean_atoms`/`median_atoms`/`std_atoms` (from
     `AtomCountStats`) match what a `scan` would report without a second read.
+
+    Attributes
+    ----------
+    n_frames
+        Number of frames in the file.
+    total_atoms
+        Sum of `n_atoms` across all frames.
+    min_atoms
+        Smallest per-frame atom count, or None if empty.
+    max_atoms
+        Largest per-frame atom count, or None if empty.
+    n_atoms
+        Declared atom count per frame.
+    columns
+        Every per-atom column observed, in first-seen order.
+    metadata
+        Every comment-line metadata key observed, in first-seen order.
+    is_consistent
+        Whether every column and key has a single variant and appears in
+        every frame.
     """
 
     n_frames: int
@@ -112,18 +186,23 @@ class Schema(AtomCountStats):
         return self._report
 
     def to_spec(self) -> SchemaSpec:
-        """Best-effort prescriptive schema from what was observed: partial-presence
-        entries optional, enumerable column families collapsed to `*` globs, no
-        `frame` bounds. Feed it back to `read(..., schema=...)`."""
+        """Best-effort prescriptive schema from what was observed.
+
+        Partial-presence entries come out optional, enumerable column
+        families collapse to `*` globs, and there are no `frame` bounds.
+        Feed the result back to `read(..., schema=...)`.
+        """
         from oxyz._schema_emit import spec_from_schema
 
         return spec_from_schema(self)
 
     def __str__(self) -> str:
+        """Alias for `report()`."""
         return self._report
 
 
 def _column_schema(data: _rust.ColumnSchemaData) -> ColumnSchema:
+    """Build a `ColumnSchema` from the Rust scan's raw data for one column."""
     unified = data["unified"]
     return ColumnSchema(
         name=data["name"],
@@ -137,6 +216,7 @@ def _column_schema(data: _rust.ColumnSchemaData) -> ColumnSchema:
 
 
 def _metadata_schema(data: _rust.MetadataSchemaData) -> MetadataSchema:
+    """Build a `MetadataSchema` from the Rust scan's raw data for one key."""
     unified = data["unified"]
     return MetadataSchema(
         key=data["key"],
@@ -168,6 +248,33 @@ def infer_schema(
     A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through
     the same parser (needs the ``oxyz[s3]`` extra); ``storage_options`` passes
     endpoint/credentials to the store.
+
+    Parameters
+    ----------
+    path
+        File path or remote URL to fold into a schema.
+    compression
+        Forces a codec (`"infer"`, `"none"`, `"gzip"`, `"zstd"`, `"zip"`)
+        instead of inferring it from `path`.
+    member
+        Selects one entry from a `.zip`/`.tar`/`.tar.gz` holding more than
+        one.
+    storage_options
+        Endpoint/credentials for a remote store, falling back to `AWS_*`
+        env vars.
+
+    Returns
+    -------
+    Schema
+        Observed columns, metadata, and atom-count statistics.
+
+    Examples
+    --------
+    >>> import oxyz
+    >>> oxyz.infer_schema(DATA / "water.extxyz").is_consistent
+    True
+    >>> oxyz.infer_schema(DATA / "mixed.extxyz").is_consistent
+    False
     """
     if _remote.is_remote(path):
         src = _remote.open_source(

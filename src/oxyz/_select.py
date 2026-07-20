@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 
 def _is_streaming_only(path: str | Path, compression: Compression) -> bool:
-    """A source that cannot seek: a remote URL, or a compressed local file."""
+    """Return whether the source cannot seek: a remote URL or compressed local file."""
     if _remote.is_remote(path):
         return True
     return _rust.is_compressed(str(path), compression)
@@ -52,9 +52,11 @@ def parse_index(index: int | str | slice) -> int | slice:
 
 
 def _reject_member_on_plain(member: str | None) -> None:
-    """A non-compressed file is never an archive, so `member=` cannot apply. The
-    forward read paths reject it in the core (`MemberOnNonArchive`); the seek
-    path bypasses the core, so it must reject `member=` itself to match."""
+    """Reject `member=` on a non-compressed file, which is never an archive.
+
+    The forward read paths reject it in the core (`MemberOnNonArchive`); the
+    seek path bypasses the core, so it must reject `member=` itself to match.
+    """
     if member is not None:
         raise ValueError(
             "member= is only valid for an archive (.zip/.tar/.tar.gz) source"
@@ -130,9 +132,11 @@ def nth_frame(
 
 
 def _in_range(index: int, n_frames: int) -> int:
-    """A non-negative index below `n_frames`, or an IndexError. Explicit-set
-    selection (`read(path, [i, j, ...])`) is non-negative only, matching
-    `read_batch`; a negative index is rejected rather than wrapped."""
+    """Return `index` if it is non-negative and below `n_frames`, else raise IndexError.
+
+    Explicit-set selection (`read(path, [i, j, ...])`) is non-negative only,
+    matching `read_batch`; a negative index is rejected rather than wrapped.
+    """
     if index < 0 or index >= n_frames:
         raise IndexError(
             f"frame index {index} out of range: file has {n_frames} frames"
@@ -152,7 +156,7 @@ def gathered_frames(  # noqa: PLR0913  the read/schema/projection options are th
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
 ) -> list[Frame]:
-    """An explicit set of frames, in the given order (repeats allowed).
+    """Read an explicit set of frames, in the given order (repeats allowed).
 
     With a `schema`, or on a streaming-only (compressed/remote) source, the
     whole file is read once and the requested frames are picked; a seekable
@@ -188,8 +192,11 @@ def gathered_frames(  # noqa: PLR0913  the read/schema/projection options are th
 
 
 def is_forward(frames: slice) -> bool:
-    """A slice reads front-to-back iff its bounds are non-negative and its step
-    positive; anything else (negative bound or step) must resolve via the index."""
+    """Return whether `frames` reads front-to-back.
+
+    True iff its bounds are non-negative and its step positive; anything
+    else (negative bound or step) must resolve via the index.
+    """
     start, stop, step = frames.start, frames.stop, frames.step
     return all(bound is None or bound >= 0 for bound in (start, stop)) and (
         step is None or step > 0
@@ -262,8 +269,11 @@ def sliced_frames(
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
 ) -> Iterator[Frame]:
-    """Forward slices stream; negative bounds or steps go via the index (or, on a
-    compressed or remote source, or with a `schema`, via a full in-memory read)."""
+    """Forward slices stream; other slices go via the index or a full in-memory read.
+
+    Negative bounds or steps go via the index, or — on a compressed or
+    remote source, or with a `schema` — via a full in-memory read.
+    """
     if is_forward(frames):
         stream = _iter_all(
             path,

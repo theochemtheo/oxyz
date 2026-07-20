@@ -48,6 +48,12 @@ recorded here.
   in the test corpus, guarding that real, chemically diverse data — 98 elements
   across molecules, clusters, bulk, surfaces and low-dimensional structures,
   drawn from a 102-element dataset — parses.
+- An [`examples/`](examples/) directory of runnable, self-contained snippets —
+  scanning and schema inference, reading to numpy, atom-budgeted batching,
+  schema projection, the ASE drop-in, the PyTorch targets, and a write
+  round-trip — each executed in CI against a committed sample.
+- `AGENTS.md`: a tool-agnostic onboarding guide for coding agents — repo map,
+  the `uv` build/test commands, the TDD loop, and the pre-PR gates.
 
 ### Performance
 
@@ -106,6 +112,18 @@ recorded here.
 - `read_batch`'s `indices=` parameter becomes `index=`, taking `read`'s full
   selection grammar (`":"`, an int, a slice or slice string, or a sequence);
   the default `":"` reads the whole file, as `indices=None` did.
+- Restructured the README into an onboarding arc — a quickstart front door
+  (install → first read → schema check), the beyond-ASE differences promoted
+  ahead of the compatibility detail, and the PyTorch targets grouped. Content
+  is reorganised rather than removed, bar the out-of-date Roadmap section, which
+  is dropped.
+- Docstrings across the public surface completed to the numpy convention and
+  enforced going forward: `ruff` (pydocstyle `D`) checks formatting on every
+  docstring in `src/oxyz` and presence on the public-path modules; a new
+  `tests/test_public_docstrings.py` checks presence on the rest of the
+  re-exported `oxyz.__all__` surface and the `oxyz.ase`/`oxyz.metatomic`/
+  `oxyz.torch_sim` entry points, which ruff cannot see (their definitions
+  live in underscore-prefixed modules).
 
 ### Removed
 

@@ -70,10 +70,10 @@ ATOMIC_MASSES: np.ndarray = np.array(
 
 
 def numbers_to_masses(atomic_numbers: np.ndarray) -> np.ndarray:
-    """Standard atomic weights for an array of atomic numbers, via `ATOMIC_MASSES`.
+    """Return standard atomic weights for an array of atomic numbers.
 
-    Callers pass numbers from `species_to_numbers` or a `Z` column, in range
-    `0..118` for real elements.
+    Looks up `ATOMIC_MASSES`. Callers pass numbers from `species_to_numbers`
+    or a `Z` column, in range `0..118` for real elements.
     """
     return ATOMIC_MASSES[atomic_numbers]
 

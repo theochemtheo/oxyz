@@ -19,9 +19,14 @@ if TYPE_CHECKING:
     from oxyz._schema_spec import Mode, SchemaSpec
 
 ColumnValues = np.ndarray | list[str] | list[list[str]]
+"""A per-atom column's values: an array for numeric/bool data, `list[str]` for
+a 1-D string column, `list[list[str]]` for a 2-D one."""
+
 # np.ndarray covers 1-D and 2-D numeric/bool metadata (shape (rows, cols) for
 # 2-D); 2-D string metadata crosses as list[list[str]], mirroring ColumnValues.
 MetadataValue = float | int | bool | str | np.ndarray | list[str] | list[list[str]]
+"""A comment-line metadata value: a scalar, an array, or (for 2-D string
+metadata) `list[list[str]]`."""
 
 Compression = Literal["infer", "none", "gzip", "zstd", "zip"]
 """How to read a possibly-compressed file. `"infer"` detects the codec from the
@@ -37,6 +42,16 @@ class Frame:
     conversions (Fortran-order `Lattice` to a 3x3 cell) belong to a later
     normalisation layer. `metadata` is a dict, so a repeated key keeps only its
     last value.
+
+    Attributes
+    ----------
+    n_atoms
+        Number of atoms in the frame (the XYZ file's leading count line).
+    columns
+        Per-atom data keyed by column name, e.g. `"species"`, `"pos"`,
+        `"forces"`, each shaped `(n_atoms, ...)`.
+    metadata
+        Comment-line key/value pairs, e.g. `"Lattice"`, `"energy"`, `"pbc"`.
     """
 
     n_atoms: int
@@ -107,37 +122,67 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
 ) -> Frame | list[Frame]:
-    """Read frames from an extxyz file, selecting with `index`.
+    """Read frames from an extxyz file into numpy-backed `Frame` objects.
 
-    `index` is oxyz's selection grammar: an int (one `Frame`), a slice or an
-    ASE-style slice string like `"1:10:2"` (a `list[Frame]`), or an explicit
-    sequence of non-negative ints (a `list[Frame]` in that order, repeats
-    allowed). The default `":"` reads every frame. An int returns a single
-    `Frame`; every other form returns a list.
-
-    Reads run on all cores by default; `threads=1` streams serially, and a
-    bounded or single-frame selection stops as soon as the last requested frame
-    is read. Results and errors are identical regardless of `threads`. For
-    constant memory over a large file, stream with `iread`.
-
-    A compressed path (`.gz`, `.zst`, `.zip`, `.tar.gz`, `.tar`) is decoded on
-    the fly, so reads stay parallel without decompressing to a temporary file.
-    `compression` forces a codec (one of `"infer"`, `"none"`, `"gzip"`,
-    `"zstd"`, `"zip"`) instead of inferring it from the name; `member` selects
-    one entry from a `.zip`/`.tar`/`.tar.gz` holding more than one.
-
-    A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through the
-    same parser (needs the ``oxyz[s3]`` extra); ``storage_options`` passes
-    endpoint/credentials to the store, falling back to ``AWS_*`` env vars. A
+    Reads run on all cores by default, and a bounded or single-frame selection
+    stops as soon as the last requested frame is read. A compressed path is
+    decoded on the fly, so reads stay parallel without decompressing to a
+    temporary file; a remote URL streams the object through the same parser. A
     remote or compressed source cannot seek, so a negative or reverse selection
-    there reads the whole file and indexes in memory (as ASE does).
+    there reads the whole file and indexes in memory (as ASE does). For
+    bounded memory over a large file, stream with `iread` instead.
 
-    `schema` (a `SchemaSpec` or a path to a `.json`/`.yaml`/`.toml` file)
-    validates each frame read; `conformance` is `"strict"`, `"required"`
-    (default), or `"warn"`. `mode` (`None`/`"validate"`/`"project"`) overrides
-    the schema's own `mode`; under `project` each frame is reshaped to the
-    schema (extras dropped, optionals filled) and an unfillable frame is dropped
-    under `warn`. See `oxyz.SchemaSpec`.
+    Parameters
+    ----------
+    path
+        File path, an S3-compatible URL (``s3://``, ``gs://``, ``az://`` —
+        needs the ``oxyz[s3]`` extra), or `"-"` for stdin.
+    index
+        Which frames to return: `":"` (default) reads all; an `int` returns a
+        single `Frame`; a slice or slice-string (`"1:10:2"`) or a sequence of
+        non-negative ints selects a subset, in order (repeats allowed).
+    threads
+        `None` parses on every core; `1` is the exact serial path. Results and
+        errors are identical either way.
+    schema
+        A `SchemaSpec`, or a path to a `.json`/`.yaml`/`.toml` schema file,
+        validated against each frame as it is read. See `oxyz.SchemaSpec`.
+    conformance
+        How a schema deviation is handled: `"strict"`, `"required"` (default),
+        or `"warn"`.
+    mode
+        Overrides the schema's own `mode`. `"project"` reshapes each frame to
+        the schema (extras dropped, optionals filled); an unfillable frame is
+        dropped under `conformance="warn"`.
+    compression
+        Forces a codec (`"infer"`, `"none"`, `"gzip"`, `"zstd"`, `"zip"`)
+        instead of inferring it from `path`.
+    member
+        Selects one entry from a `.zip`/`.tar`/`.tar.gz` holding more than one.
+    storage_options
+        Endpoint/credentials for a remote store, falling back to `AWS_*` env
+        vars.
+
+    Returns
+    -------
+    Frame or list[Frame]
+        A single `Frame` for an integer `index`, otherwise a list.
+
+    Raises
+    ------
+    oxyz.ParseError
+        On malformed input, carrying the frame index and location.
+
+    Examples
+    --------
+    >>> import oxyz
+    >>> frames = oxyz.read(DATA / "water.extxyz")
+    >>> len(frames)
+    3
+    >>> frames[0].columns["pos"].shape
+    (3, 3)
+    >>> frames[0].columns["pos"].dtype
+    dtype('float64')
     """
     from oxyz._select import frames_for_read, gathered_frames, nth_frame, parse_index
 
@@ -194,19 +239,52 @@ def iread(
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
 ) -> Iterator[Frame]:
-    """Stream frames one at a time, in constant memory, selecting with `index`.
+    """Iterate frames one at a time, streaming in bounded memory.
 
-    The selection grammar is `read`'s, but frames are yielded lazily rather than
-    materialised into a list; an int index yields exactly one frame. The file
-    stays open while iterating and closes when the iterator is dropped. After a
-    parse error the stream position is untrustworthy, so iteration ends: the
-    error is raised once, then StopIteration. To materialise every frame at once
-    (and in parallel), use `read`.
+    Parameters and `index` semantics match `read`; frames are yielded lazily
+    rather than materialised into a list, so peak memory is bounded by the
+    largest frame rather than the file length. An int index yields exactly one
+    frame. The file stays open while iterating and closes when the iterator is
+    dropped. After a parse error the stream position is untrustworthy, so
+    iteration ends: the error is raised once, then `StopIteration`. Selecting
+    an explicit sequence of frames reads eagerly — an arbitrary set cannot
+    stream — while a slice or the default `":"` stays lazy. To materialise
+    every frame at once (and in parallel), use `read` instead.
 
-    A compressed path is decoded while streaming; see `read` for the
-    `compression`, `member`, `schema`, and remote-source options. Selecting an
-    explicit sequence of frames reads eagerly — an arbitrary set cannot stream —
-    while a slice or the default `":"` stays lazy.
+    Parameters
+    ----------
+    path
+        File path, an S3-compatible URL, or `"-"` for stdin.
+    index
+        Selection grammar; see `read`.
+    schema
+        A `SchemaSpec`, or a path to a schema file; see `read`.
+    conformance
+        How a schema deviation is handled; see `read`.
+    mode
+        Overrides the schema's own `mode`; see `read`.
+    compression
+        Forces a codec instead of inferring it from `path`; see `read`.
+    member
+        Selects one entry from an archive holding more than one; see `read`.
+    storage_options
+        Endpoint/credentials for a remote store; see `read`.
+
+    Returns
+    -------
+    Iterator[Frame]
+        Frames in file order (or in `index` order, for a sequence).
+
+    Raises
+    ------
+    oxyz.ParseError
+        On malformed input, carrying the frame index and location.
+
+    Examples
+    --------
+    >>> import oxyz
+    >>> [f.columns["pos"].shape for f in oxyz.iread(DATA / "water.extxyz")]
+    [(3, 3), (3, 3), (3, 3)]
     """
     from oxyz._select import gathered_frames, nth_frame, parse_index, sliced_frames
 
@@ -255,8 +333,11 @@ def iread(
 
 
 def _check_threads(threads: int | None) -> None:
-    """`None` parses on all cores, an integer >= 1 sets the count. Reject 0 and
-    negatives rather than letting rayon read `num_threads(0)` as "all cores"."""
+    """Reject an invalid `threads` value.
+
+    `None` parses on all cores, an integer >= 1 sets the count. Reject 0 and
+    negatives rather than letting rayon read `num_threads(0)` as "all cores".
+    """
     if threads is not None and threads < 1:
         raise ValueError(f"threads must be a positive integer or None, got {threads!r}")
 
@@ -264,8 +345,11 @@ def _check_threads(threads: int | None) -> None:
 def _projection(
     schema: SchemaSpec | str | Path, mode: Mode | None
 ) -> tuple[ProjectionPlan | None, SchemaSpec]:
-    """The crossing plan (`None` under validate mode) and the resolved spec, for
-    a reader that was given a `schema`."""
+    """Resolve `schema` and compile its projection plan.
+
+    Returns the crossing plan (`None` under validate mode) and the resolved
+    spec, for a reader that was given a `schema`.
+    """
     from oxyz._project import compile_projection, effective_mode
     from oxyz._schema_spec import SchemaSpec
 
@@ -279,9 +363,12 @@ def _require_schema_for_mode(schema: object, mode: Mode | None) -> None:
 
 
 def _frame_rule_compiled(spec: SchemaSpec) -> CompiledSpec | None:
-    """A compiled spec to check the frame rule against each projected frame, or
-    `None` when the spec has no frame rule. Columns and metadata already conform
-    after projection, so only frame-axis (`n_atoms`, `lattice`) checks bite."""
+    """Compile `spec`'s frame rule, if it has one.
+
+    Returns `None` when the spec has no frame rule. Columns and metadata
+    already conform after projection, so only frame-axis (`n_atoms`,
+    `lattice`) checks bite.
+    """
     if spec.frame is None:
         return None
     from oxyz import _schema_match
@@ -295,8 +382,11 @@ def _keep_projected(
     spec: SchemaSpec,
     indices: Iterable[int],
 ) -> list[Frame]:
-    """Apply projection policy to `(data, deviations)` items paired with their
-    file `indices`: raise/warn/drop, then frame-rule-check the survivors."""
+    """Apply projection policy to `(data, deviations)` items and return the kept frames.
+
+    Items are paired with their file `indices`: raise/warn/drop, then
+    frame-rule-check the survivors.
+    """
     from oxyz import _schema_match
     from oxyz._project import enforce_projection
 
@@ -323,8 +413,11 @@ def _read_all(
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
 ) -> list[Frame]:
-    """Read and materialise every frame (the whole-file primitive behind
-    `read`/`iread`); parses on all cores unless `threads=1`."""
+    """Read and materialise every frame.
+
+    The whole-file primitive behind `read`/`iread`; parses on all cores unless
+    `threads=1`.
+    """
     _check_threads(threads)
     _require_schema_for_mode(schema, mode)
     plan = spec = None
@@ -381,10 +474,13 @@ def _read_all_sliced(  # noqa: PLR0913  the read/schema/projection options are t
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
 ) -> list[Frame]:
-    """`_read_all`, but apply `frames` before wrapping: parse every frame
-    (`threads=None`: all cores), then build `Frame` objects only for those the
-    slice keeps — so an unbounded forward slice that drops a prefix or steps
-    (`"1000:"`, `"::2"`) does not pay to wrap the frames it discards."""
+    """Read every frame, then apply `frames` before wrapping.
+
+    Like `_read_all`, but parse every frame (`threads=None`: all cores), then
+    build `Frame` objects only for those the slice keeps — so an unbounded
+    forward slice that drops a prefix or steps (`"1000:"`, `"::2"`) does not
+    pay to wrap the frames it discards.
+    """
     _require_schema_for_mode(schema, mode)
     plan = spec = None
     if schema is not None:
@@ -457,8 +553,11 @@ def _iter_all(
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
 ) -> Iterator[Frame]:
-    """Stream every frame in constant memory (the whole-file primitive behind
-    `read`/`iread`); the file closes when the iterator is dropped."""
+    """Stream every frame, peak memory bounded by the largest frame.
+
+    The whole-file primitive behind `read`/`iread`; the file closes when the
+    iterator is dropped.
+    """
     _require_schema_for_mode(schema, mode)
     plan = spec = None
     if schema is not None:

@@ -33,9 +33,34 @@ KIND_TO_LETTER: dict[Kind, str] = {
 
 @dataclass(frozen=True, slots=True)
 class ColumnRule:
-    """One expected per-atom column. `name` is a literal, a glob (`descriptor_*`),
-    or a regex (`re:...`). `count`/`min`/`max` bound how many columns a pattern
-    matches; they are ignored for a literal name (which matches 0 or 1)."""
+    """One expected per-atom column.
+
+    Attributes
+    ----------
+    name
+        Literal name, a glob (`descriptor_*`), or a regex (`re:...`).
+    kind
+        Expected value kind.
+    width
+        Expected number of components per atom (1 for a scalar column).
+    required
+        For a literal `name`, whether it must be present. For a pattern
+        rule, the default lower bound (1 if `required` else 0) used when
+        `min` is unset.
+    count
+        Exact number of columns a pattern must match, overriding `min`/`max`.
+        Ignored for a literal name (which matches 0 or 1).
+    min
+        Lower bound on how many columns a pattern must match. Ignored for a
+        literal name.
+    max
+        Upper bound on how many columns a pattern must match, or unbounded if
+        unset. Ignored for a literal name.
+    fill
+        Value projection fills this column with when it is absent. Only used
+        under project mode; REAL defaults to NaN there, so a fill is required
+        only for an optional INT/BOOL/STR column (which has no natural null).
+    """
 
     name: str
     kind: Kind
@@ -44,18 +69,33 @@ class ColumnRule:
     count: int | None = None
     min: int | None = None
     max: int | None = None
-    # The value projection fills this column with when it is absent. Only used
-    # under project mode; REAL defaults to NaN there, so a fill is required only
-    # for an optional INT/BOOL/STR column (which has no natural null).
     fill: float | int | bool | str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class MetadataRule:
-    """One expected comment-line entry. `key` is a literal, a glob, or a regex,
-    as `ColumnRule.name` is (the metadata identifier is `key`, matching
-    `MetadataSchema.key`). `shape` is `()` for a scalar, `(n,)` for an array of
-    length n. Pattern cardinality works as for `ColumnRule`."""
+    """One expected comment-line entry.
+
+    Attributes
+    ----------
+    key
+        Literal, glob, or regex, as `ColumnRule.name` is (the metadata
+        identifier is `key`, matching `MetadataSchema.key`).
+    kind
+        Expected value kind.
+    shape
+        `()` for a scalar, `(n,)` for an array of length n.
+    required
+        See `ColumnRule.required`.
+    count
+        See `ColumnRule.count`.
+    min
+        See `ColumnRule.min`.
+    max
+        See `ColumnRule.max`.
+    fill
+        See `ColumnRule.fill`.
+    """
 
     key: str
     kind: Kind
@@ -64,13 +104,22 @@ class MetadataRule:
     count: int | None = None
     min: int | None = None
     max: int | None = None
-    # See ColumnRule.fill.
     fill: float | int | bool | str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class FrameRule:
-    """Opt-in structural constraints. Any field left unset is not enforced."""
+    """Opt-in structural constraints on a frame. Any field left unset is not enforced.
+
+    Attributes
+    ----------
+    n_atoms_min
+        Minimum atom count.
+    n_atoms_max
+        Maximum atom count.
+    lattice_required
+        Whether a `Lattice` metadata entry must be present.
+    """
 
     n_atoms_min: int | None = None
     n_atoms_max: int | None = None
@@ -130,6 +179,18 @@ class SchemaSpec:
     stable order and comment support), and `from_file`/`to_file` (dispatching on
     `.json`/`.yaml`/`.yml`, with `from_file` also reading `.toml`). Or build one
     directly.
+
+    Attributes
+    ----------
+    columns
+        Expected per-atom columns.
+    metadata
+        Expected comment-line entries.
+    frame
+        Structural constraints, or `None` if none apply.
+    mode
+        Whether the spec validates (report only) or projects (reshape each
+        frame to the declared field set).
     """
 
     columns: tuple[ColumnRule, ...] = ()
@@ -139,6 +200,25 @@ class SchemaSpec:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> SchemaSpec:
+        """Build a spec from a parsed mapping, as produced by JSON/YAML/TOML.
+
+        Parameters
+        ----------
+        data
+            Mapping with optional `columns`, `metadata`, `frame`, and `mode`
+            keys, in the schema file format.
+
+        Returns
+        -------
+        SchemaSpec
+            The parsed spec.
+
+        Raises
+        ------
+        ValueError
+            If `mode` is set to anything other than `"validate"` or
+            `"project"`.
+        """
         columns = tuple(
             _column_rule(name, attrs) for name, attrs in data.get("columns", {}).items()
         )
@@ -156,14 +236,56 @@ class SchemaSpec:
 
     @classmethod
     def from_json(cls, text: str) -> SchemaSpec:
+        """Parse a spec from JSON text.
+
+        Parameters
+        ----------
+        text
+            JSON document; see `from_dict` for the expected shape.
+
+        Returns
+        -------
+        SchemaSpec
+            The parsed spec.
+        """
         return cls.from_dict(json.loads(text))
 
     @classmethod
     def from_yaml(cls, text: str) -> SchemaSpec:
+        """Parse a spec from YAML text.
+
+        Parameters
+        ----------
+        text
+            YAML document; see `from_dict` for the expected shape. An empty
+            document parses to an all-default spec.
+
+        Returns
+        -------
+        SchemaSpec
+            The parsed spec.
+        """
         return cls.from_dict(yaml.safe_load(text) or {})
 
     @classmethod
     def from_file(cls, path: str | Path) -> SchemaSpec:
+        """Load a spec from a file, dispatching on its extension.
+
+        Parameters
+        ----------
+        path
+            Path to a `.json`, `.yaml`/`.yml`, or `.toml` schema file.
+
+        Returns
+        -------
+        SchemaSpec
+            The parsed spec.
+
+        Raises
+        ------
+        ValueError
+            If `path`'s extension is not one of the supported formats.
+        """
         path = Path(path)
         suffix = path.suffix.lower()
         text = path.read_text()
@@ -178,6 +300,14 @@ class SchemaSpec:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        """Render this spec as a plain mapping, the inverse of `from_dict`.
+
+        Returns
+        -------
+        dict[str, Any]
+            Only non-default fields are present, so a `mode="validate"` spec
+            with no columns/metadata/frame renders as `{}`.
+        """
         out: dict[str, Any] = {}
         # Emitted first, and only when non-default, so validate-mode specs
         # round-trip byte-identically to before projection existed.
@@ -194,15 +324,41 @@ class SchemaSpec:
         return out
 
     def to_json(self) -> str:
+        """Render this spec as indented JSON text, the inverse of `from_json`.
+
+        Returns
+        -------
+        str
+            JSON document, 2-space indented.
+        """
         return json.dumps(self.to_dict(), indent=2)
 
     def to_yaml(self) -> str:
+        """Render this spec as YAML text, the inverse of `from_yaml`.
+
+        Returns
+        -------
+        str
+            YAML document with a hand-templated, stable key order.
+        """
         return render_yaml(self)
 
     def to_file(self, path: str | Path) -> None:
-        """Write to `path`, dispatching on the extension (`.json`/`.yaml`/`.yml`).
-        TOML output is rejected — there is no TOML serialiser, and writing YAML
-        under a `.toml` name produces a file that will not re-read."""
+        """Write this spec to `path`, dispatching on its extension.
+
+        TOML output is rejected — there is no TOML serialiser, and writing
+        YAML under a `.toml` name would produce a file that will not re-read.
+
+        Parameters
+        ----------
+        path
+            Destination path; must end `.json`, `.yaml`, or `.yml`.
+
+        Raises
+        ------
+        ValueError
+            If `path`'s extension is `.toml` or otherwise unsupported.
+        """
         path = Path(path)
         suffix = path.suffix.lower()
         if suffix == ".json":
@@ -223,13 +379,35 @@ class SchemaSpec:
         member: str | None = None,
         storage_options: StorageOptions | None = None,
     ) -> SchemaSpec:
-        """Expand this schema's pattern rules against `path` into a literal,
-        project-ready schema (`mode='project'`).
+        """Expand pattern rules against `path` into a literal, project-ready schema.
 
-        Columns matching in every frame become required; those in only some
-        become optional, so projection fills them. Raises `SchemaError` on a
-        matched field whose kind conflicts across frames. Literal rules pass
-        through unchanged. Returns a new spec; `self` is untouched.
+        The result has `mode='project'`. Columns matching in every frame
+        become required; those in only some become optional, so projection
+        fills them. Literal rules pass through unchanged.
+
+        Parameters
+        ----------
+        path
+            File to scan for matching fields.
+        compression
+            Forces a codec instead of inferring it from `path`.
+        member
+            Selects one entry from a `.zip`/`.tar`/`.tar.gz` holding more
+            than one.
+        storage_options
+            Endpoint/credentials for a remote store, falling back to `AWS_*`
+            env vars.
+
+        Returns
+        -------
+        SchemaSpec
+            A new spec with patterns expanded to literals; `self` is
+            untouched.
+
+        Raises
+        ------
+        SchemaError
+            On a matched field whose kind conflicts across frames.
         """
         from oxyz._project import freeze_spec
 
@@ -312,10 +490,12 @@ def _flow(attrs: Mapping[str, Any]) -> str:
 
 
 def render_yaml(spec: SchemaSpec, notes: Mapping[str, str] | None = None) -> str:
-    """Render `spec` as schema YAML. `notes` maps an entry name to a trailing
-    `# comment` (used by emission to flag drift); comments are dropped on reload,
-    so the text always parses back to `spec`."""
+    """Render `spec` as schema YAML.
 
+    `notes` maps an entry name to a trailing `# comment` (used by emission to
+    flag drift); comments are dropped on reload, so the text always parses
+    back to `spec`.
+    """
     notes = notes or {}
     lines: list[str] = []
     # Non-default mode renders first, matching to_dict's key order.

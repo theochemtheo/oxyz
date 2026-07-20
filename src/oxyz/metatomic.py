@@ -144,15 +144,61 @@ def read(  # noqa: PLR0913  keyword options mirror the System data model
     """Read frames into `System`s; default `index=":"` reads the whole file.
 
     An int selects one frame (returned bare); a slice or slice-string returns a
-    list. `dtype=None` follows `torch.get_default_dtype()`, as `systems_to_torch`
-    does. `threads` sets the parallel parse for the whole-file read (`None`: all
-    cores); it has no effect on bounded or reverse selections, which stream or
-    seek.
+    list. Compressed paths are read too; a remote URL (``s3://``, ``gs://``,
+    ``az://``) is read through the same parser.
 
-    Compressed paths are read too; `compression` and `member` are as in
-    `oxyz.read`. A remote URL (``s3://``, ``gs://``, ``az://``) is read through
-    the same parser; ``storage_options`` passes endpoint/credentials to the
-    store (needs the ``oxyz[s3]`` extra).
+    Parameters
+    ----------
+    path
+        File path or an S3-compatible URL.
+    index
+        `":"` (default) reads every frame; an `int` returns one `System`; a
+        slice or slice-string returns a list.
+    dtype
+        Float dtype for positions/cell. `None` follows
+        `torch.get_default_dtype()`, as `systems_to_torch` does.
+    device
+        Target device for the returned tensors.
+    positions_requires_grad
+        Whether the returned `positions` tensor requires grad.
+    cell_requires_grad
+        Accepted for signature parity with `systems_to_torch`; not applied.
+    threads
+        Parallel parse for the whole-file read (`None`: all cores). No effect
+        on bounded or reverse selections, which stream or seek.
+    schema
+        A `SchemaSpec`, or a path to a schema file, applied to the frames
+        actually read. See `oxyz.SchemaSpec`.
+    conformance
+        How a schema deviation is handled: `"strict"`, `"required"`
+        (default), or `"warn"`.
+    mode
+        Overrides the schema's own `mode`.
+    compression
+        Forces a codec instead of inferring it from `path`; as in `oxyz.read`.
+    member
+        Selects one entry from an archive holding more than one.
+    storage_options
+        Endpoint/credentials for a remote store (needs the ``oxyz[s3]``
+        extra).
+
+    Returns
+    -------
+    System or list[System]
+        A single `System` for an integer index, otherwise a list.
+
+    Raises
+    ------
+    ToSystemError
+        If a frame has no faithful `System` representation.
+
+    Examples
+    --------
+    >>> import torch
+    >>> import oxyz.metatomic
+    >>> systems = oxyz.metatomic.read(DATA / "water.extxyz", dtype=torch.float64)
+    >>> len(systems)
+    3
     """
     _require_schema_for_mode(schema, mode)
     options = (dtype, device, positions_requires_grad, cell_requires_grad)
@@ -200,7 +246,45 @@ def iread(  # noqa: PLR0913  keyword options mirror the System data model
     member: str | None = None,
     storage_options: StorageOptions | None = None,
 ) -> Iterator[System]:
-    """Stream `System`s one at a time, in constant memory (serial parse)."""
+    """Stream `System`s one at a time, in bounded memory (serial parse).
+
+    Parameters
+    ----------
+    path
+        File path or an S3-compatible URL.
+    index
+        `":"` (default) yields every frame; see `read`.
+    dtype
+        Float dtype for positions/cell; see `read`.
+    device
+        Target device for the returned tensors.
+    positions_requires_grad
+        Whether each `positions` tensor requires grad.
+    cell_requires_grad
+        Accepted for signature parity; not applied.
+    schema
+        A `SchemaSpec`, or a path to a schema file; see `read`.
+    conformance
+        How a schema deviation is handled; see `read`.
+    mode
+        Overrides the schema's own `mode`; see `read`.
+    compression
+        Forces a codec instead of inferring it from `path`; see `read`.
+    member
+        Selects one entry from an archive holding more than one; see `read`.
+    storage_options
+        Endpoint/credentials for a remote store.
+
+    Returns
+    -------
+    Iterator[System]
+        Systems in file order.
+
+    Raises
+    ------
+    ToSystemError
+        If a frame has no faithful `System` representation.
+    """
     _require_schema_for_mode(schema, mode)
     options = (dtype, device, positions_requires_grad, cell_requires_grad)
     selection = parse_index(index)
@@ -237,6 +321,19 @@ class SystemSource:
     Built for the case where a caller needs both the structures and several
     target arrays from one file (e.g. energy, forces, stress): one parse backs
     every accessor, so the file is never re-read.
+
+    Parameters
+    ----------
+    path
+        File path or an S3-compatible URL.
+    threads
+        Parallel parse (`None`: all cores).
+    compression
+        Forces a codec instead of inferring it from `path`.
+    member
+        Selects one entry from an archive holding more than one.
+    storage_options
+        Endpoint/credentials for a remote store.
     """
 
     def __init__(
@@ -257,6 +354,7 @@ class SystemSource:
         )
 
     def __len__(self) -> int:
+        """Return the number of frames in the source."""
         return len(self._frames)
 
     def systems(
@@ -267,7 +365,30 @@ class SystemSource:
         positions_requires_grad: bool = False,
         cell_requires_grad: bool = False,
     ) -> list[System]:
-        """Convert every frame to a `System`."""
+        """Convert every frame to a `System`.
+
+        Parameters
+        ----------
+        dtype
+            Float dtype for positions/cell. `None` follows
+            `torch.get_default_dtype()`.
+        device
+            Target device for the returned tensors.
+        positions_requires_grad
+            Whether each `positions` tensor requires grad.
+        cell_requires_grad
+            Accepted for signature parity; not applied.
+
+        Returns
+        -------
+        list[System]
+            One `System` per frame, in file order.
+
+        Raises
+        ------
+        ToSystemError
+            If a frame has no faithful `System` representation.
+        """
         return [
             _to_system(
                 frame, dtype, device, positions_requires_grad, cell_requires_grad
@@ -284,9 +405,27 @@ class SystemSource:
     ) -> torch.Tensor:
         """Stack one metadata value across frames: `(n_frames, *value_shape)`.
 
-        Scalars give a 1-D tensor; arrays keep their width. Raises if the source
-        has no frames, the key is absent from any frame, or its shape drifts
-        between frames.
+        Scalars give a 1-D tensor; arrays keep their width.
+
+        Parameters
+        ----------
+        key
+            The metadata key to extract.
+        dtype
+            Target tensor dtype. `None` resolves via `oxyz._torch.resolve_dtype`.
+        device
+            Target device.
+
+        Returns
+        -------
+        torch.Tensor
+            Shape `(n_frames, *value_shape)`.
+
+        Raises
+        ------
+        ValueError
+            If the source has no frames, the key is absent from any frame, or
+            its shape drifts between frames.
         """
         self._require_frames(key)
         values = [
@@ -314,10 +453,27 @@ class SystemSource:
     ) -> tuple[torch.Tensor, np.ndarray]:
         """Concatenate one per-atom column across frames, with frame offsets.
 
-        Returns `(values, offsets)` where `values` is `(total_atoms, *width)` and
-        `offsets` (length `n_frames + 1`) marks each frame's rows, so frame `i`
-        is `values[offsets[i]:offsets[i + 1]]`. Raises if the source has no
-        frames or the key is absent from any frame.
+        Parameters
+        ----------
+        key
+            The column key to extract.
+        dtype
+            Target tensor dtype. `None` resolves via `oxyz._torch.resolve_dtype`.
+        device
+            Target device.
+
+        Returns
+        -------
+        values : torch.Tensor
+            Shape `(total_atoms, *width)`.
+        offsets : numpy.ndarray
+            Length `n_frames + 1`; frame `i` is
+            `values[offsets[i]:offsets[i + 1]]`.
+
+        Raises
+        ------
+        ValueError
+            If the source has no frames or the key is absent from any frame.
         """
         self._require_frames(key)
         columns = [
@@ -330,11 +486,13 @@ class SystemSource:
         return to_tensor(values, key, resolve_dtype(dtype), device), offsets
 
     def _require_frames(self, key: str) -> None:
+        """Raise if the source has no frames to extract `key` from."""
         if not self._frames:
             raise ValueError(f"cannot extract {key!r}: the source has no frames")
 
 
 def _require(mapping: dict, key: str, kind: str, frame_index: int) -> object:
+    """Look up `key` in `mapping`, raising with `kind`/`frame_index` context."""
     if key not in mapping:
         raise ValueError(f"{kind} {key!r} missing from frame {frame_index}")
     return mapping[key]
@@ -387,8 +545,11 @@ def _numbers(frame: Frame) -> np.ndarray:
 
 
 def _cell_and_pbc(frame: Frame) -> tuple[np.ndarray, np.ndarray]:
-    """Reconstruct ASE's `(cell, pbc)`: Fortran-order `Lattice`, pbc inferred
-    from `Lattice` presence when not given explicitly."""
+    """Reconstruct ASE's `(cell, pbc)`.
+
+    A Fortran-order `Lattice`; pbc inferred from `Lattice` presence when not
+    given explicitly.
+    """
     pbc = frame.metadata.get("pbc")
     lattice = frame.metadata.get("Lattice")
     if lattice is not None:

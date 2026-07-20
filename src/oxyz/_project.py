@@ -1,6 +1,8 @@
-"""Schema projection: compile a `SchemaSpec` into a fixed-shape plan, freeze
-its patterns against a dataset, and translate the core's deviation report into
-raise / warn / drop policy.
+"""Schema projection: compile, freeze, and police a `SchemaSpec`.
+
+Compiles a `SchemaSpec` into a fixed-shape plan, freezes its patterns against
+a dataset, and translates the core's deviation report into raise / warn /
+drop policy.
 
 The Rust core reshapes each frame to the plan and reports what it saw; this
 module owns everything policy-shaped that the core deliberately does not — the
@@ -48,14 +50,14 @@ def freeze_spec(
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
 ) -> SchemaSpec:
-    """Expand pattern rules against a representative dataset into a literal,
-    project-ready spec (``mode='project'``).
+    """Expand pattern rules into a literal, project-ready spec (``mode='project'``).
 
-    Literal rules pass through untouched; each pattern rule becomes one literal
-    rule per matched inferred field — required when the field is present in
-    every frame, optional otherwise, so projection fills the sometimes-absent
-    ones. A matched field whose kind conflicts across frames cannot be frozen
-    and raises `SchemaError`.
+    Rules are expanded against a representative dataset. Literal rules pass
+    through untouched; each pattern rule becomes one literal rule per matched
+    inferred field — required when the field is present in every frame,
+    optional otherwise, so projection fills the sometimes-absent ones. A
+    matched field whose kind conflicts across frames cannot be frozen and
+    raises `SchemaError`.
     """
     from oxyz import infer_schema
 
@@ -111,10 +113,13 @@ def _freeze_columns(
 def _check_freezable_optional(
     name: str, pattern: str, kind: Kind, required: bool, fill: object, axis: str
 ) -> None:
-    """A pattern that matches a field present in only *some* frames freezes it to
-    an optional rule; if that field is INT/BOOL/STR with no fill, projection
-    could never materialise it, so refuse here rather than emit a spec that
-    raises at read time."""
+    """Refuse to freeze an optional, un-fillable field.
+
+    A pattern that matches a field present in only *some* frames freezes it
+    to an optional rule; if that field is INT/BOOL/STR with no fill,
+    projection could never materialise it, so refuse here rather than emit a
+    spec that raises at read time.
+    """
     if not required and kind in _NO_NATURAL_NULL and fill is None:
         raise SchemaError(
             f"{axis} {name!r} (matched by pattern {pattern!r}) is present in only "
@@ -161,8 +166,10 @@ def _freeze_metadata(
 
 
 def effective_mode(spec: SchemaSpec, override: Mode | None) -> Mode:
-    """The mode a read runs under: an explicit `override` wins, else the spec's
-    own `mode`."""
+    """Return the mode a read runs under.
+
+    An explicit `override` wins, else the spec's own `mode`.
+    """
     return override if override is not None else spec.mode
 
 
@@ -210,10 +217,10 @@ def _plan_entry(rule: ColumnRule | MetadataRule, *, is_metadata: bool) -> tuple:
 
 
 def compile_projection(spec: SchemaSpec, mode: Mode) -> ProjectionPlan | None:
-    """Compile `spec` under `mode` into the crossing plan `(columns, metadata)`,
-    or `None` for validate mode (nothing to project).
+    """Compile `spec` under `mode` into a crossing plan, or `None` for validate mode.
 
-    Raises `SchemaError` before any read for a pattern rule (project needs a
+    Returns `(columns, metadata)`; `None` means nothing to project. Raises
+    `SchemaError` before any read for a pattern rule (project needs a
     fixed shape — point at `freeze`) or an optional INT/BOOL/STR field with no
     fill (no null to materialise it with).
     """
@@ -249,10 +256,10 @@ def enforce_projection(
     frame_index: int,
     dropped: bool,
 ) -> bool:
-    """Apply conformance policy to one projected frame's report; return whether
-    to keep the frame.
+    """Apply conformance policy to one projected frame's report.
 
-    Under `strict`/`required`, raise `SchemaError` on the first deviation. Under
+    Returns whether to keep the frame. Under `strict`/`required`, raise
+    `SchemaError` on the first deviation. Under
     `warn`, emit a `SchemaWarning` per deviation and keep the frame unless it was
     dropped (an unfillable required/wrong field). A clean, kept frame is silent.
     """

@@ -69,7 +69,24 @@ class FromAtomsError(OxyzError):
 
 
 def to_atoms(frame: Frame) -> Atoms:  # noqa: C901  flat field-by-field mapping to ase.Atoms
-    """Convert one `Frame` to `ase.Atoms`, mirroring `ase.io.read`'s mapping."""
+    """Convert one `Frame` to `ase.Atoms`, mirroring `ase.io.read`'s mapping.
+
+    Parameters
+    ----------
+    frame
+        The frame to convert.
+
+    Returns
+    -------
+    ase.Atoms
+        The converted structure.
+
+    Raises
+    ------
+    ToAseError
+        If `frame` has no faithful `Atoms` representation: no `pos` column, an
+        unmapped species, a malformed `Lattice`, or a malformed `move_mask`.
+    """
     info: dict = dict(frame.metadata)
 
     for key in SPECIAL_3_3_KEYS:
@@ -155,6 +172,21 @@ def from_atoms(atoms: Atoms) -> Frame:
 
     `FixAtoms` constraints become a `move_mask` column; other constraint types
     have no column form and raise.
+
+    Parameters
+    ----------
+    atoms
+        The structure to convert.
+
+    Returns
+    -------
+    Frame
+        The converted frame.
+
+    Raises
+    ------
+    FromAtomsError
+        If `atoms` carries a constraint other than `FixAtoms`.
     """
     # Copy before folding calculator results, which mutates arrays and info.
     # `Atoms.copy()` drops the calculator, so pass the original's explicitly.
@@ -193,9 +225,11 @@ def from_atoms(atoms: Atoms) -> Frame:
 
 
 def _move_mask_column(atoms: Atoms) -> np.ndarray | None:
-    """Per-atom `move_mask` from `FixAtoms` constraints (True where free), the
-    inverse of `to_atoms`'s `FixAtoms(mask=~move_mask)`. Other constraint types
-    have no faithful column form."""
+    """Per-atom `move_mask` from `FixAtoms` constraints (True where free).
+
+    The inverse of `to_atoms`'s `FixAtoms(mask=~move_mask)`; other constraint
+    types have no faithful column form.
+    """
     if not atoms.constraints:
         return None
     mask = np.ones(len(atoms), dtype=bool)
@@ -275,24 +309,65 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
 
     Like ASE, the default index is -1: the last frame. Forward selections
     stream; negative or reverse ones resolve via a structural scan and seek,
-    never a full parse. `threads` sets the parallel parse for an eager
-    whole-file/forward read (`None`: all cores, `1`: serial); it has no effect on
-    a single-frame or bounded selection, which streams or seeks. Per-frame
-    projection/validation (`schema`, `mode`,
+    never a full parse. Per-frame projection/validation (`schema`, `mode`,
     `conformance`) is applied to the frames actually read; whole-file inference
     is `oxyz.infer_schema`'s job. A negative or reverse index with a `schema`
     reads the whole file (forgoing the seek shortcut) so the sought frames are
     projected before conversion.
 
-    Compressed paths (`.gz`, `.zst`, `.zip`, `.tar.gz`, `.tar`) are read too;
-    `compression` and `member` are as in `oxyz.read`. A compressed source
-    cannot seek, so a negative or reverse index reads the whole file and indexes
-    in memory (as ASE does), forgoing the partial-read shortcut.
+    Compressed paths (`.gz`, `.zst`, `.zip`, `.tar.gz`, `.tar`) are read too. A
+    compressed source cannot seek, so a negative or reverse index reads the
+    whole file and indexes in memory (as ASE does), forgoing the partial-read
+    shortcut.
 
     Remote URLs (``s3://``, ``gs://``, ``az://``) are supported; pass
     ``storage_options`` to supply endpoint/credentials. Remote sources are
-    non-seekable, so negative or reverse indices read the whole stream in memory,
-    the same as compressed local files.
+    non-seekable, so negative or reverse indices read the whole stream in
+    memory, the same as compressed local files.
+
+    Parameters
+    ----------
+    path
+        File path or an S3-compatible URL.
+    index
+        ASE index grammar. `None` defaults to -1 (the last frame); an `int`
+        returns one `Atoms`; a slice or slice-string (`"1:10:2"`) returns a
+        list.
+    format
+        Accepted for `ase.io.read` compatibility; only `None`, `"extxyz"`, and
+        `"xyz"` are valid.
+    threads
+        Parallel parse for an eager whole-file/forward read (`None`: all
+        cores, `1`: serial). No effect on a single-frame or bounded selection,
+        which streams or seeks.
+    schema
+        A `SchemaSpec`, or a path to a `.json`/`.yaml`/`.toml` schema file,
+        applied to the frames actually read. See `oxyz.SchemaSpec`.
+    conformance
+        How a schema deviation is handled: `"strict"`, `"required"`
+        (default), or `"warn"`.
+    mode
+        Overrides the schema's own `mode`.
+    compression
+        Forces a codec (`"infer"`, `"none"`, `"gzip"`, `"zstd"`, `"zip"`)
+        instead of inferring it from `path`; as in `oxyz.read`.
+    member
+        Selects one entry from a `.zip`/`.tar`/`.tar.gz` holding more than
+        one.
+    storage_options
+        Endpoint/credentials for a remote store.
+
+    Returns
+    -------
+    Atoms or list[Atoms]
+        A single `Atoms` for an integer (or default) index, otherwise a list.
+
+    Examples
+    --------
+    >>> import oxyz.ase
+    >>> images = oxyz.ase.read(DATA / "water.extxyz", ":")
+    >>> len(images)
+    3
     """
     _check_format(format)
     _require_schema_for_mode(schema, mode)
@@ -338,7 +413,34 @@ def iread(  # noqa: PLR0913  the index/schema/projection/source options are the 
     member: str | None = None,
     storage_options: StorageOptions | None = None,
 ) -> Iterator[Atoms]:
-    """Drop-in for `ase.io.iread` on extxyz files: yields one Atoms at a time."""
+    """Drop-in for `ase.io.iread` on extxyz files: yields one Atoms at a time.
+
+    Parameters
+    ----------
+    path
+        File path or an S3-compatible URL.
+    index
+        ASE index grammar; see `read`. Default `":"` yields every frame.
+    format
+        Accepted for `ase.io.iread` compatibility; see `read`.
+    schema
+        A `SchemaSpec`, or a path to a schema file; see `read`.
+    conformance
+        How a schema deviation is handled; see `read`.
+    mode
+        Overrides the schema's own `mode`; see `read`.
+    compression
+        Forces a codec instead of inferring it from `path`; see `read`.
+    member
+        Selects one entry from an archive holding more than one; see `read`.
+    storage_options
+        Endpoint/credentials for a remote store.
+
+    Returns
+    -------
+    Iterator[Atoms]
+        Frames in file order.
+    """
     _check_format(format)
     _require_schema_for_mode(schema, mode)
     index = parse_index(index)
@@ -375,5 +477,6 @@ def iread(  # noqa: PLR0913  the index/schema/projection/source options are the 
 
 
 def _check_format(format: str | None) -> None:
+    """Reject a `format` other than the ones `oxyz.ase` reads."""
     if format not in (None, "extxyz", "xyz"):
         raise ValueError(f"oxyz.ase only reads extxyz, got format={format!r}")
