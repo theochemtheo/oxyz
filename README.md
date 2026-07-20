@@ -255,7 +255,7 @@ import torch
 import oxyz.metatomic
 
 systems = oxyz.metatomic.read("train.extxyz", dtype=torch.float64)   # list[System]
-for system in oxyz.metatomic.iread("train.extxyz"):                  # constant memory
+for system in oxyz.metatomic.iread("train.extxyz"):                  # streaming, bounded memory
     ...
 ```
 
@@ -432,7 +432,7 @@ oxyz.write("out.extxyz", frames)         # a Frame or list of Frames
 oxyz.write("out.extxyz.gz", atoms)       # an ase.Atoms, gzipped by extension
 oxyz.write("-", frames)                  # "-" writes to stdout
 
-with oxyz.Writer("traj.extxyz") as w:    # incremental, constant memory
+with oxyz.Writer("traj.extxyz") as w:    # incremental, streams one frame at a time
     for frame in produce():
         w.write(frame)
 ```
@@ -445,8 +445,9 @@ both a `species` and a `pos` column is rejected.
 
 As with the readers, `threads` is a knob: `oxyz.write` serialises across cores
 by default and the output bytes are identical at any thread count (only
-serialisation parallelises; the output stream stays serial). `Writer` streams in
-constant memory; `Writer(path, batch=n)` keeps the incremental form but
+serialisation parallelises; the output stream stays serial). `Writer` streams
+frame-by-frame, so peak memory is bounded by the largest frame rather than the
+file; `Writer(path, batch=n)` keeps the incremental form but
 serialises `n` frames at a time in parallel, trading one batch of memory for
 throughput.
 
@@ -509,7 +510,7 @@ copy — see [Compressed files](#compressed-files).
 
 ```python
 oxyz.read(path, index=":", *, threads=None)  -> Frame | list[Frame]  # int index: one Frame
-oxyz.iread(path, index=":")                   -> Iterator[Frame]   # constant memory
+oxyz.iread(path, index=":")                   -> Iterator[Frame]   # streaming, bounded memory
 oxyz.read_batch(path, index=":", *, threads=None) -> Batch    # ":" (default): whole file
 oxyz.iread_batch(path, *, frames_per_batch=None, atoms_per_batch=None,
                   shuffle=False, seed=None, threads=None) -> Iterator[Batch]

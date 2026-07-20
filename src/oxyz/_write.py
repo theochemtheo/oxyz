@@ -84,7 +84,7 @@ def write(
 
 
 class Writer:
-    """Write frames incrementally, in constant memory for the streaming codecs.
+    """Write frames incrementally, in bounded memory for the streaming codecs.
 
     A context manager: entering opens the encoder, `write` accepts frames as
     they are produced, and exiting (or calling `close`) finalises and closes
@@ -130,7 +130,7 @@ class Writer:
         batch : int, optional
             Buffer `batch` frames and serialise each full batch in parallel,
             trading a little memory for throughput. `None` (the default)
-            streams each frame out in constant memory instead. The output is
+            streams each frame out one at a time instead. The output is
             identical either way; peak extra memory is one batch.
         """
         self._inner = _rust.FrameWriter(str(path), compression, level, append, batch)

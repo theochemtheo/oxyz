@@ -130,7 +130,7 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
     temporary file; a remote URL streams the object through the same parser. A
     remote or compressed source cannot seek, so a negative or reverse selection
     there reads the whole file and indexes in memory (as ASE does). For
-    constant memory over a large file, stream with `iread` instead.
+    bounded memory over a large file, stream with `iread` instead.
 
     Parameters
     ----------
@@ -239,10 +239,11 @@ def iread(
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
 ) -> Iterator[Frame]:
-    """Iterate frames one at a time, in constant memory.
+    """Iterate frames one at a time, streaming in bounded memory.
 
     Parameters and `index` semantics match `read`; frames are yielded lazily
-    rather than materialised into a list, and an int index yields exactly one
+    rather than materialised into a list, so peak memory is bounded by the
+    largest frame rather than the file length. An int index yields exactly one
     frame. The file stays open while iterating and closes when the iterator is
     dropped. After a parse error the stream position is untrustworthy, so
     iteration ends: the error is raised once, then `StopIteration`. Selecting
@@ -552,7 +553,7 @@ def _iter_all(
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
 ) -> Iterator[Frame]:
-    """Stream every frame in constant memory.
+    """Stream every frame, peak memory bounded by the largest frame.
 
     The whole-file primitive behind `read`/`iread`; the file closes when the
     iterator is dropped.

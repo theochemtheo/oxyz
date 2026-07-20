@@ -355,7 +355,8 @@ def iread_batch(  # noqa: C901, PLR0913  the keyword options are the batching co
 
     A compressed source (`.gz`, `.zst`, `.zip`, `.tar.gz`, `.tar`) cannot be
     randomly accessed, so only `frames_per_batch` without `shuffle` is
-    supported there — it streams in constant memory. `shuffle`, `atoms_per_batch`
+    supported there — it streams batch-by-batch, peak memory bounded by the
+    batch, not the file. `shuffle`, `atoms_per_batch`
     and `memory_scales_with` all need the byte-offset index and raise on a
     compressed source; decompress the file first. `compression` and `member`
     are as in `read`.
@@ -515,7 +516,7 @@ def _sequential_batches(
     conformance: Conformance = "required",
     spec: SchemaSpec | None = None,
 ) -> Iterator[Batch]:
-    """Streamed file-order batches: constant memory, no scan."""
+    """Streamed file-order batches: memory bounded by the batch, no scan."""
     remote = _remote.is_remote(path)
     src = (
         _remote.open_source(

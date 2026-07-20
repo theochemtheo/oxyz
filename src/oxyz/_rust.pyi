@@ -425,7 +425,7 @@ class FrameWriter:
     """Incremental writer: construct it, `write` frames as they come, then
     `close`. Backs `oxyz.Writer`.
 
-    `batch=None` streams each frame straight to the sink in constant memory;
+    `batch=None` streams each frame straight to the sink one at a time;
     `batch=n` buffers up to `n` frames and serialises each full batch in
     parallel before writing it — bounded extra memory (one batch), output
     bytes unchanged.

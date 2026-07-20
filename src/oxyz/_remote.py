@@ -62,7 +62,7 @@ SUPPORTED_SCHEMES = frozenset({"s3", "gs", "az", "azure", "abfs", "abfss"})
 # How many leading bytes to sniff when the URL extension is uninformative.
 _SNIFF_BYTES = 8
 # Minimum streamed chunk size: balances request count against memory held while
-# iterating. 1 MiB keeps `iread` near-constant memory.
+# iterating. 1 MiB keeps `iread`'s memory bounded.
 _CHUNK = 1024 * 1024
 
 

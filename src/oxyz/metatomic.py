@@ -246,7 +246,7 @@ def iread(  # noqa: PLR0913  keyword options mirror the System data model
     member: str | None = None,
     storage_options: StorageOptions | None = None,
 ) -> Iterator[System]:
-    """Stream `System`s one at a time, in constant memory (serial parse).
+    """Stream `System`s one at a time, in bounded memory (serial parse).
 
     Parameters
     ----------
