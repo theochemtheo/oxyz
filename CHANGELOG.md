@@ -114,6 +114,13 @@ recorded here.
   (install → first read → schema check), the beyond-ASE differences promoted
   ahead of the compatibility detail, and the PyTorch targets grouped. Content
   is reorganised, not removed.
+- Docstrings across the public surface completed to the numpy convention and
+  enforced going forward: `ruff` (pydocstyle `D`) checks formatting on every
+  docstring in `src/oxyz` and presence on the public-path modules; a new
+  `tests/test_public_docstrings.py` checks presence on the rest of the
+  re-exported `oxyz.__all__` surface and the `oxyz.ase`/`oxyz.metatomic`/
+  `oxyz.torch_sim` entry points, which ruff cannot see (their definitions
+  live in underscore-prefixed modules).
 
 ### Removed
 
@@ -134,13 +141,6 @@ recorded here.
   `persist-credentials: false`, a `zizmor` gate audits the workflows, and the
   PyPI publish environment now requires approval.
 - Widened the `ruff` lint selection.
-- Docstrings across the public surface completed to the numpy convention and
-  enforced going forward: `ruff` (pydocstyle `D`) checks formatting on every
-  docstring in `src/oxyz` and presence on the public-path modules; a new
-  `tests/test_public_docstrings.py` checks presence on the rest of the
-  re-exported `oxyz.__all__` surface and the `oxyz.ase`/`oxyz.metatomic`/
-  `oxyz.torch_sim` entry points, which ruff cannot see (their definitions
-  live in underscore-prefixed modules).
 - Refreshed the locked Python dependencies (numpy 2.5, ASE 3.29, and the dev
   and CI toolchain); a `tolist` call was reordered to satisfy numpy 2.5's
   stricter array stubs, with no change in behaviour.
