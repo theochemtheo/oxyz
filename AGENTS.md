@@ -1,9 +1,8 @@
 # AGENTS.md
 
-Onboarding for coding agents working in this repo. It is a distillation, not
-a manual — for fuller guidance see `.claude/skills/develop-oxyz/SKILL.md`
-(conventions, the loop, the gates) and `.claude/skills/run-oxyz/SKILL.md`
-(build/run/test mechanics, repo tour, troubleshooting).
+Onboarding for coding agents working in this repo: what oxyz is, how it is
+laid out, and the loop and gates a change goes through. A concise guide, not
+an exhaustive manual.
 
 ## What oxyz is
 
