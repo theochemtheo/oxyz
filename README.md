@@ -631,28 +631,6 @@ equal to `systems_to_torch(ase.io.read(...))` frame-by-frame; and
 malformed-file tests asserting the frame index in the error message, not
 just that an error occurred.
 
-## Roadmap
-
-In rough order of intent, shaped by what removes the most reasons to fall
-back to other tools:
-
-- **Field selection and a missing-key batching policy** — request only
-  the columns and metadata you need; NaN-fill or error on absent keys, so
-  mixed-schema training files batch directly.
-- **Normalisation accessors** — `positions`, `cell`, `numbers`, `pbc`,
-  `forces`, `energy` as conventional views over the untouched raw data,
-  for training loops that want neither ASE nor the raw spelling.
-- **More write targets** — zstd (`.zst`) output (awaiting an encoder), and
-  a native HDF5 store for `Frame`s.
-- **Write-back from the conversion targets** — `oxyz.metatomic.from_system`
-  and `oxyz.torch_sim.from_simstate`, turning a `System`/`SimState` back
-  into a `Frame`, and `oxyz.ase.write`, mirroring `oxyz.ase.read`; a round
-  trip through any target would then not need the generic
-  `oxyz.write(Writable)` path.
-- **Additional inputs** — `torch.Tensor` output, `.xz` decompression
-  (awaiting a streaming pure-Rust decoder), and a public lazy dataset object
-  (`len`, indexing, slicing over an open file).
-
 ## Licence
 
 MIT or Apache-2.0, at your option.

@@ -185,6 +185,12 @@ convention = "numpy"
 "examples/**" = ["T20", "INP", "D"]
 
 [tool.pytest.ini_options]
+# `--doctest-modules` collects the doctests in `src/oxyz`. The output-target
+# doctests (oxyz.metatomic, oxyz.torch_sim) import torch, so they need the `dev`
+# group's torch stack installed — the default `uv sync` provides it; a run under
+# `uv sync --no-default-groups` would error on those imports rather than skip.
+# The doctests also read `examples/data/` by a repo-root-relative path, so run
+# pytest from the repository root (as CI does).
 testpaths = ["tests", "src/oxyz"]
 addopts = "--doctest-modules"
 doctest_optionflags = ["NORMALIZE_WHITESPACE", "ELLIPSIS"]

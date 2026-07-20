@@ -115,7 +115,8 @@ recorded here.
 - Restructured the README into an onboarding arc — a quickstart front door
   (install → first read → schema check), the beyond-ASE differences promoted
   ahead of the compatibility detail, and the PyTorch targets grouped. Content
-  is reorganised, not removed.
+  is reorganised rather than removed, bar the out-of-date Roadmap section, which
+  is dropped.
 - Docstrings across the public surface completed to the numpy convention and
   enforced going forward: `ruff` (pydocstyle `D`) checks formatting on every
   docstring in `src/oxyz` and presence on the public-path modules; a new
