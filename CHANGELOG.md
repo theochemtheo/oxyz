@@ -52,6 +52,8 @@ recorded here.
   scanning and schema inference, reading to numpy, atom-budgeted batching,
   schema projection, the ASE drop-in, the PyTorch targets, and a write
   round-trip — each executed in CI against a committed sample.
+- `AGENTS.md`: a tool-agnostic onboarding guide for coding agents — repo map,
+  the `uv` build/test commands, the TDD loop, and the pre-PR gates.
 
 ### Performance
 
