@@ -119,6 +119,15 @@ fn zstd_write_is_refused() {
     ));
     let by_request = FrameSink::create(&temp_path("x.xyz"), Compression::Zstd, None, false);
     assert!(matches!(by_request, Err(ExtxyzError::ZstdWriteUnsupported)));
+
+    // A tar wrapper does not make the zstd layer writable, even forced by
+    // codec rather than by the `.tar.zst` extension (covered separately by
+    // `tar_zstd_write_is_refused_not_unreachable`).
+    let tar_zstd_forced = FrameSink::create(&temp_path("x.bin"), Compression::TarZstd, None, false);
+    assert!(matches!(
+        tar_zstd_forced,
+        Err(ExtxyzError::ZstdWriteUnsupported)
+    ));
 }
 
 #[test]

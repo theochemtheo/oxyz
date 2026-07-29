@@ -361,6 +361,23 @@ fn compression_can_be_forced_for_a_misnamed_file() {
     );
 }
 
+/// A tar has no magic bytes, so a tar under an unrecognised name is
+/// unreadable by inference alone. Forcing the codec is the remedy.
+#[test]
+fn tar_codecs_can_be_forced_regardless_of_name() {
+    for (name, compression) in [
+        ("compressed/two_frame.tar", Compression::Tar),
+        ("compressed/two_frame.tar.gz", Compression::TarGzip),
+        ("compressed/two_frame.tar.zst", Compression::TarZstd),
+    ] {
+        assert_eq!(
+            decoded_string(name, compression, None),
+            plain(),
+            "mismatch forcing {name}"
+        );
+    }
+}
+
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Write `bytes` to a uniquely-named temp file with the given extension and

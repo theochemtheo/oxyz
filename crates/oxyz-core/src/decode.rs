@@ -46,6 +46,9 @@ pub enum Compression {
     Gzip,
     Zstd,
     Zip,
+    Tar,
+    TarGzip,
+    TarZstd,
 }
 
 /// The concrete codec, after inference. Archive codecs (`Zip`, `Tar`,
@@ -101,16 +104,19 @@ pub(crate) fn detect_for_write(path: &Path, compression: Compression) -> Codec {
         Compression::Gzip => Codec::Gzip,
         Compression::Zstd => Codec::Zstd,
         Compression::Zip => Codec::Zip,
+        Compression::Tar => Codec::Tar,
+        Compression::TarGzip => Codec::TarGzip,
+        Compression::TarZstd => Codec::TarZstd,
         Compression::Infer => detect_by_extension(path).unwrap_or(Codec::Plain),
     }
 }
 
 /// Open `path` as a streaming reader, decompressing per `compression`.
 ///
-/// `member` names one entry inside an archive (`.zip`, `.tar`, `.tar.gz`); it is
-/// rejected for single-stream sources. With no `member`, an archive must hold
-/// exactly one extxyz-looking member (`.xyz`/`.extxyz`), else the call errors
-/// and lists what it found.
+/// `member` names one entry inside an archive (`.zip`, `.tar`, `.tar.gz`,
+/// `.tar.zst`); it is rejected for single-stream sources. With no `member`, an
+/// archive must hold exactly one extxyz-looking member (`.xyz`/`.extxyz`),
+/// else the call errors and lists what it found.
 pub fn open_decoded(
     path: &Path,
     compression: Compression,
@@ -155,8 +161,8 @@ pub fn open_decoded(
 }
 
 /// Wrap an already-opened raw byte source in a single-stream codec. Archive
-/// codecs (`Zip`/`Tar`/`TarGzip`) are not streams and are rejected — use
-/// [`wrap_zip`] / [`wrap_tar`].
+/// codecs (`Zip`/`Tar`/`TarGzip`/`TarZstd`) are not streams and are rejected —
+/// use [`wrap_zip`] / [`wrap_tar`].
 pub fn wrap_stream(source: ByteSource, codec: Codec) -> Result<DecodedReader> {
     match codec {
         Codec::Plain => Ok(Box::new(BufReader::new(source))),
@@ -185,6 +191,9 @@ fn detect(path: &Path, compression: Compression) -> Result<Codec> {
         Compression::Gzip => Ok(Codec::Gzip),
         Compression::Zstd => Ok(Codec::Zstd),
         Compression::Zip => Ok(Codec::Zip),
+        Compression::Tar => Ok(Codec::Tar),
+        Compression::TarGzip => Ok(Codec::TarGzip),
+        Compression::TarZstd => Ok(Codec::TarZstd),
         Compression::Infer => Ok(detect_by_extension(path).map_or_else(|| sniff(path), Ok)?),
     }
 }
