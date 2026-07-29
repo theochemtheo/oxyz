@@ -50,3 +50,6 @@ benchmarks/.cache/
 # fixtures and used as benchmark targets. Never committed. Anchored to the repo
 # root so it does not also ignore the committed tests/data fixtures.
 /data/
+
+# Internal working notes (decision records, scratch). Not shipped.
+.NOTES/

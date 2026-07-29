@@ -506,6 +506,42 @@ compressed local files, a remote stream cannot seek, so random-access batch
 strategies (`shuffle`, `atoms_per_batch`, `memory_scales_with`) need a local
 copy; see [Compressed files](#compressed-files).
 
+### HuggingFace Hub
+
+Files in Hub repos are read with the same entry points, via `hf://`:
+
+```python
+frames = oxyz.read("hf://datasets/owner/repo/data/train.extxyz")
+```
+
+The path is `hf://[datasets|spaces|models/]owner/repo[@revision]/path`, matching
+the `hf://` convention used elsewhere in the ecosystem. Without a repo-kind
+prefix the repo is taken to be a model; without `@revision` the default branch
+is used. A URL copied from the browser works too — the `blob` page is rewritten
+to the raw-bytes endpoint, so both of these read the same file:
+
+```python
+oxyz.read("https://huggingface.co/datasets/owner/repo/blob/main/train.extxyz")
+oxyz.read("hf://datasets/owner/repo/train.extxyz")
+```
+
+Only `huggingface.co` and `hf.co` URLs are claimed; oxyz does not read arbitrary
+`http(s)` URLs. Gated and private repos need a token, taken from `HF_TOKEN` (or
+`HUGGING_FACE_HUB_TOKEN`), or passed explicitly, which wins over the
+environment:
+
+```python
+oxyz.read(
+    "hf://datasets/owner/private/train.extxyz",
+    storage_options={"default_headers": {"authorization": "Bearer hf_..."}},
+)
+```
+
+Hub Storage Buckets are a separate product with an S3-compatible API, so they
+need no `hf://` handling: read them as any other S3 store, by pointing
+`storage_options` at `https://s3.hf.co/<namespace>` with S3 credentials
+generated from a Hub token.
+
 ## API
 
 ```python
