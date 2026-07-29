@@ -92,8 +92,8 @@ class RemoteSource:
     """A streaming source for the `_rust.*_reader` entries.
 
     `obj` is a bytes-iterator (plain/gzip/zstd), a 0-arg callable returning a
-    fresh bytes-iterator (tar/tar.gz), or a seekable file-like (zip); `codec`
-    says which.
+    fresh bytes-iterator (tar/tar.gz/tar.zst), or a seekable file-like (zip);
+    `codec` says which.
     """
 
     obj: Any
@@ -233,7 +233,7 @@ def open_source(
         # Wrap so that read() returns plain bytes; obstore.ReadableFile.read()
         # returns obstore.Bytes, which the Rust binding cannot extract.
         obj: Any = _ReadableBytesAdapter(obstore.open_reader(store, key))
-    elif codec in ("tar", "tar.gz"):
+    elif codec in ("tar", "tar.gz", "tar.zst"):
         obj = lambda: iter(obstore.get(store, key).stream(min_chunk_size=_CHUNK))  # noqa: E731
     else:
         obj = iter(obstore.get(store, key).stream(min_chunk_size=_CHUNK))

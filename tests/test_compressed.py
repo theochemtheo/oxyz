@@ -118,14 +118,15 @@ def test_reads_tar_zstd(tmp_path: Path) -> None:
 
 def test_tar_codecs_are_forceable(tmp_path: Path) -> None:
     plain = oxyz.read(DATA_DIR / "two_frame_same_schema.xyz")
-    for name, compression in [
+    cases: list[tuple[str, oxyz.Compression]] = [
         ("two_frame.tar", "tar"),
         ("two_frame.tar.gz", "tar.gz"),
         ("two_frame.tar.zst", "tar.zst"),
-    ]:
+    ]
+    for name, compression in cases:
         got = oxyz.read(
             DATA_DIR / f"compressed/{name}",
-            compression=compression,  # ty: ignore[invalid-argument-type]
+            compression=compression,
         )
         assert len(got) == len(plain), f"mismatch forcing {compression}"
 

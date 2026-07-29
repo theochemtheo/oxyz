@@ -81,7 +81,7 @@ def _add_scan_parser(subparsers: argparse._SubParsersAction) -> None:
     scan_parser.add_argument(
         "--member",
         default=None,
-        help="entry to read from a multi-member archive (.zip/.tar/.tar.gz)",
+        help="entry to read from a multi-member archive (.zip/.tar/.tar.gz/.tar.zst)",
     )
     scan_parser.add_argument(
         "--storage-option",

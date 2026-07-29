@@ -62,7 +62,7 @@ def _reject_member_on_plain(member: str | None) -> None:
     """
     if member is not None:
         raise ValueError(
-            "member= is only valid for an archive (.zip/.tar/.tar.gz) source"
+            "member= is only valid for an archive (.zip/.tar/.tar.gz/.tar.zst) source"
         )
 
 
