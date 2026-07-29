@@ -4,6 +4,19 @@ All notable changes to oxyz are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Internal
+
+- Bumped the developer toolchain: uv 0.12.0, ruff 0.16, ty 0.0.64, rumdl 0.2.45,
+  prek 0.4.11. uv is now pinned exactly, in both `pyproject.toml` and every
+  `setup-uv` step, so CI cannot float off the version the lockfile was written
+  by.
+- The `ruff` selection is `select = ["ALL"]` with documented opt-outs, in place
+  of a hand-picked list: each exclusion now carries its reason, and a new
+  release's rules arrive evaluated rather than unnoticed. No change to the
+  shipped behaviour.
+
 ## [1.0.0] - 2026-07-20
 
 ### Added
@@ -319,6 +332,7 @@ for reading atomistic-simulation datasets into numpy or ASE.
 - abi3 wheels for CPython 3.11 and newer on Linux (x86_64, aarch64), macOS
   (arm64, x86_64), and Windows (x64).
 
+[unreleased]: https://github.com/theochemtheo/oxyz/compare/v1.0.0...HEAD
 [1.0.0]: https://github.com/theochemtheo/oxyz/releases/tag/v1.0.0
 [0.5.0]: https://github.com/theochemtheo/oxyz/releases/tag/v0.5.0
 [0.4.0]: https://github.com/theochemtheo/oxyz/releases/tag/v0.4.0
