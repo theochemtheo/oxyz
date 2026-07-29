@@ -49,8 +49,8 @@ pub enum Compression {
 }
 
 /// The concrete codec, after inference. Archive codecs (`Zip`, `Tar`,
-/// `TarGzip`) carry members and accept a `member` selector; the rest are single
-/// streams and reject one.
+/// `TarGzip`, `TarZstd`) carry members and accept a `member` selector; the
+/// rest are single streams and reject one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Codec {
     Plain,
@@ -59,11 +59,15 @@ pub enum Codec {
     Zip,
     Tar,
     TarGzip,
+    TarZstd,
 }
 
 impl Codec {
     pub(crate) fn is_archive(self) -> bool {
-        matches!(self, Codec::Zip | Codec::Tar | Codec::TarGzip)
+        matches!(
+            self,
+            Codec::Zip | Codec::Tar | Codec::TarGzip | Codec::TarZstd
+        )
     }
 
     pub fn name(self) -> &'static str {
@@ -74,6 +78,7 @@ impl Codec {
             Codec::Zip => "zip",
             Codec::Tar => "tar",
             Codec::TarGzip => "tar.gz",
+            Codec::TarZstd => "tar.zst",
         }
     }
 }
@@ -138,6 +143,14 @@ pub fn open_decoded(
                 TarInner::Gzip,
             )
         }
+        Codec::TarZstd => {
+            let path = path.to_owned();
+            wrap_tar(
+                move || File::open(&path).map(|f| Box::new(f) as ByteSource),
+                member,
+                TarInner::Zstd,
+            )
+        }
     }
 }
 
@@ -151,7 +164,9 @@ pub fn wrap_stream(source: ByteSource, codec: Codec) -> Result<DecodedReader> {
         Codec::Zstd => Ok(Box::new(BufReader::new(MultiFrameZstd::from_source(
             source,
         )?))),
-        Codec::Zip | Codec::Tar | Codec::TarGzip => Err(ExtxyzError::MemberOnNonArchive),
+        Codec::Zip | Codec::Tar | Codec::TarGzip | Codec::TarZstd => {
+            Err(ExtxyzError::MemberOnNonArchive)
+        }
     }
 }
 
@@ -178,6 +193,8 @@ pub(crate) fn detect_by_extension(path: &Path) -> Option<Codec> {
     let name = path.file_name()?.to_str()?.to_ascii_lowercase();
     Some(if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
         Codec::TarGzip
+    } else if name.ends_with(".tar.zst") || name.ends_with(".tzst") {
+        Codec::TarZstd
     } else if name.ends_with(".tar") {
         Codec::Tar
     } else if name.ends_with(".gz") {

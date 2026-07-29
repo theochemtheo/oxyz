@@ -10,7 +10,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use oxyz_core::{Compression, ExtxyzError, open_decoded, read_frames};
+use oxyz_core::{Compression, ExtxyzError, detect_codec_name, open_decoded, read_frames};
 use proptest::prelude::*;
 
 fn fixture(name: &str) -> PathBuf {
@@ -38,10 +38,28 @@ fn read_frames_autodetects_every_codec() {
         "compressed/two_frame.xyz.zst",
         "compressed/two_frame.xyz.zip",
         "compressed/two_frame.tar.gz",
+        "compressed/two_frame.tar.zst",
         "compressed/two_frame.tar",
     ] {
         let got = read_frames(fixture(name)).unwrap();
         assert_eq!(got, expected, "mismatch reading {name}");
+    }
+}
+
+/// `.tar.zst` ends in `.zst` too, so the tar arm must be tested first. A
+/// regression here decodes the zstd layer and then feeds tar headers to the
+/// parser, which is exactly the bug this codec was added to fix.
+#[test]
+fn tar_zstd_extensions_beat_the_bare_zstd_arm() {
+    for (name, expected) in [
+        ("run.tar.zst", "tar.zst"),
+        ("run.tzst", "tar.zst"),
+        ("run.xyz.zst", "zstd"),
+        ("run.tar.gz", "tar.gz"),
+        ("run.tgz", "tar.gz"),
+        ("run.tar", "tar"),
+    ] {
+        assert_eq!(detect_codec_name(name, None), expected, "codec for {name}");
     }
 }
 

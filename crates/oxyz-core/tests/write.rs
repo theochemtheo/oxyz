@@ -122,6 +122,21 @@ fn zstd_write_is_refused() {
 }
 
 #[test]
+fn tar_zstd_write_is_refused_not_unreachable() {
+    // `.tar.zst`/`.tzst` extension-detect to an archive codec same as `.tar.gz`,
+    // but there is no zstd encoder in the tree (see the crate's dependency
+    // policy), so this must fail cleanly rather than reach `write_archive`'s
+    // archive-only match and panic.
+    for name in ["x.tar.zst", "x.tzst"] {
+        let result = FrameSink::create(&temp_path(name), Compression::Infer, None, false);
+        assert!(
+            matches!(result, Err(ExtxyzError::ZstdWriteUnsupported)),
+            "expected refusal for {name}"
+        );
+    }
+}
+
+#[test]
 fn out_of_range_level_is_refused() {
     let result = FrameSink::create(&temp_path("x.xyz.gz"), Compression::Infer, Some(12), false);
     assert!(matches!(
