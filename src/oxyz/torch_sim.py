@@ -89,7 +89,7 @@ def read(  # noqa: PLR0913  keyword options mirror the SimState data model
     An int selects one frame (a state with `n_systems == 1`); a slice or
     slice-string selects several, batched into a single state. Compressed
     paths are read too (any index: the scan and the selecting read both
-    stream); a remote URL (``s3://``, ``gs://``, ``az://``) is read through
+    stream); a remote URL (``s3://``, ``gs://``, ``az://``, ``hf://``) is read through
     the same parser.
 
     Parameters

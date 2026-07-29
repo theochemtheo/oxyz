@@ -242,8 +242,6 @@ def test_writer_rejects_zero_batch(tmp_path: Path) -> None:
         oxyz.Writer(tmp_path / "x.extxyz", batch=0)
 
 
-# --- ASE equivalence -------------------------------------------------------
-
 ase_only = pytest.mark.skipif(not has_ase, reason="ase not installed")
 
 

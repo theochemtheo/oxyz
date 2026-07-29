@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import gzip
 import io
+import os
 import tarfile
 import zipfile
 from pathlib import Path
@@ -202,3 +203,48 @@ def test_ase_read_projected_remote(s3_store):
     assert len(last) == 1  # one-atom frame, projected then converted
     both = oxyz.ase.read(url, index=":", schema=spec, storage_options=options)
     assert len(both) == 2
+
+
+# The Hub is a live third-party service, so this test is opt-in: CI stays
+# offline and deterministic, while `OXYZ_TEST_HF=1 uv run pytest` checks that
+# the URL translation still matches what the Hub actually serves.
+hf_live = pytest.mark.skipif(
+    not os.environ.get("OXYZ_TEST_HF"),
+    reason="set OXYZ_TEST_HF=1 to exercise the live HuggingFace Hub",
+)
+
+# A small, public, non-gated extxyz file on the Hub.
+HF_REPO = "datasets/cparidaAI/LMX_dataset"
+HF_FILE = "data/idd_test_2k.extxyz"
+
+
+@hf_live
+@pytest.mark.parametrize(
+    "url",
+    [
+        f"hf://{HF_REPO}/{HF_FILE}",
+        f"hf://{HF_REPO}@main/{HF_FILE}",
+        # exactly what the browser address bar holds for that file
+        f"https://huggingface.co/{HF_REPO}/blob/main/{HF_FILE}",
+        f"https://huggingface.co/{HF_REPO}/resolve/main/{HF_FILE}",
+    ],
+)
+def test_hf_url_forms_read_the_same_file(url):
+    pytest.importorskip("obstore")
+    frame = oxyz.read(url, index=0)
+    assert frame.n_atoms == 80
+    assert "Lattice" in frame.metadata
+
+
+@hf_live
+def test_hf_streaming_and_scan_agree():
+    pytest.importorskip("obstore")
+    url = f"hf://{HF_REPO}/{HF_FILE}"
+    assert oxyz.scan(url).n_frames == sum(1 for _ in oxyz.iread(url))
+
+
+@hf_live
+def test_hf_missing_file_raises():
+    pytest.importorskip("obstore")
+    with pytest.raises(FileNotFoundError):
+        oxyz.read(f"hf://{HF_REPO}/data/does_not_exist.extxyz")

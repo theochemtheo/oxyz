@@ -323,7 +323,7 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
     reads the whole file and indexes in memory (as ASE does), forgoing the
     partial-read shortcut.
 
-    Remote URLs (``s3://``, ``gs://``, ``az://``) are supported; pass
+    Remote URLs (``s3://``, ``gs://``, ``az://``, ``hf://``) are supported; pass
     ``storage_options`` to supply endpoint/credentials. Remote sources are
     non-seekable, so negative or reverse indices read the whole stream in
     memory, the same as compressed local files.

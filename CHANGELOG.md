@@ -8,6 +8,18 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Read straight from the HuggingFace Hub with `hf://` URLs, on every entry point
+  that already took a remote URL — `read`, `iread`, `scan`, `infer_schema`, the
+  batch readers, and the `oxyz.ase`/`oxyz.metatomic`/`oxyz.torch_sim` targets:
+  `oxyz.read("hf://datasets/owner/repo/data/train.extxyz")`. The path grammar is
+  `hf://[datasets|spaces|models/]owner/repo[@revision]/path`, defaulting to a
+  model repo on the default branch. A URL copied from the browser is accepted as
+  well: the `blob` page it names is rewritten to the raw-bytes endpoint, so it
+  yields the file rather than markup. Only `huggingface.co` and `hf.co` URLs are
+  claimed — `http(s)` in general is still not a supported scheme. Gated and
+  private repos authenticate with `HF_TOKEN` (or `HUGGING_FACE_HUB_TOKEN`), or
+  an explicit `storage_options` header, which takes precedence. Needs the
+  existing `oxyz[s3]` extra; no new dependency.
 - Read zstd-compressed tars (`.tar.zst`, `.tzst`), locally and from object
   storage. Datasets shipped this way — the ELEMENTA release among them — were
   previously unreadable: the extension matched the plain `.zst` rule, so the

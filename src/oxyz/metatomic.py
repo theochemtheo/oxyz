@@ -146,7 +146,7 @@ def read(  # noqa: PLR0913  keyword options mirror the System data model
 
     An int selects one frame (returned bare); a slice or slice-string returns a
     list. Compressed paths are read too; a remote URL (``s3://``, ``gs://``,
-    ``az://``) is read through the same parser.
+    ``az://``, ``hf://``) is read through the same parser.
 
     Parameters
     ----------

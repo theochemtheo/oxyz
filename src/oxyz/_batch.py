@@ -177,9 +177,9 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
     Works on a compressed source (the selection still streams in one pass);
     `compression` and `member` are as in `read`.
 
-    A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through
-    the same reader (needs the ``oxyz[s3]`` extra); ``storage_options`` passes
-    endpoint/credentials to the store.
+    A remote URL (``s3://``, ``gs://``, ``az://``, ``hf://``) streams the
+    object through the same reader (needs the ``oxyz[s3]`` extra);
+    ``storage_options`` passes endpoint/credentials to the store.
 
     `schema` (a `SchemaSpec` or a path) with effective `mode="project"` reshapes
     every frame to the schema before concatenation — the way to batch a
@@ -196,8 +196,8 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
     Parameters
     ----------
     path
-        File path, or an S3-compatible URL (``s3://``, ``gs://``, ``az://`` —
-        needs the ``oxyz[s3]`` extra).
+        File path, or a remote URL (``s3://``, ``gs://``, ``az://``,
+        ``hf://`` — needs the ``oxyz[s3]`` extra).
     index
         Which frames to gather; see above.
     threads

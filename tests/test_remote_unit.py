@@ -24,6 +24,236 @@ def test_is_remote(path, expected):
     assert _remote.is_remote(path) is expected
 
 
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("hf://datasets/owner/repo/data/train.extxyz", True),
+        ("https://huggingface.co/datasets/owner/repo/blob/main/a.extxyz", True),
+        ("https://hf.co/datasets/owner/repo/resolve/main/a.extxyz", True),
+        # only the Hub's own hosts are claimed; http(s) in general is not
+        ("https://example.com/train.extxyz", False),
+        ("http://localhost:9000/bucket/train.extxyz", False),
+    ],
+)
+def test_is_remote_huggingface(path, expected):
+    assert _remote.is_remote(path) is expected
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        # a repo kind prefix selects the repo type; the revision defaults to main
+        (
+            "hf://datasets/o/r/data/a.extxyz",
+            "https://huggingface.co/datasets/o/r/resolve/main/data/a.extxyz",
+        ),
+        (
+            "hf://datasets/o/r@v1.0/data/a.extxyz",
+            "https://huggingface.co/datasets/o/r/resolve/v1.0/data/a.extxyz",
+        ),
+        (
+            "hf://spaces/o/r@abc123/a.extxyz",
+            "https://huggingface.co/spaces/o/r/resolve/abc123/a.extxyz",
+        ),
+        # no prefix (and the explicit `models` prefix) means a model repo, which
+        # the Hub serves straight off the root
+        ("hf://o/r/a.extxyz", "https://huggingface.co/o/r/resolve/main/a.extxyz"),
+        (
+            "hf://models/o/r@dev/a.extxyz",
+            "https://huggingface.co/o/r/resolve/dev/a.extxyz",
+        ),
+        # a URL pasted from the browser points at the HTML page, not the bytes
+        (
+            "https://huggingface.co/datasets/o/r/blob/main/a.extxyz",
+            "https://huggingface.co/datasets/o/r/resolve/main/a.extxyz",
+        ),
+        # hf.co is the short host for the same Hub; /resolve/ is already correct
+        (
+            "https://hf.co/datasets/o/r/resolve/main/a.extxyz",
+            "https://huggingface.co/datasets/o/r/resolve/main/a.extxyz",
+        ),
+    ],
+)
+def test_normalise_hf_url(url, expected):
+    assert _remote._normalise_hf_url(url) == expected
+
+
+def test_normalise_hf_url_passes_other_urls_through():
+    assert _remote._normalise_hf_url("s3://bucket/a.xyz") == "s3://bucket/a.xyz"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "hf://datasets/owner",  # no repo name
+        "hf://datasets/owner/repo",  # repo but no file within it
+        "hf://owner",
+        "hf://",
+    ],
+)
+def test_normalise_hf_url_rejects_incomplete(url):
+    with pytest.raises(ValueError, match="hf:// URL"):
+        _remote._normalise_hf_url(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://huggingface.co/datasets/o/r",  # the repo page, not a file
+        "https://huggingface.co/datasets/o/r/tree/main/data",  # a directory page
+        "https://huggingface.co/",
+        "https://huggingface.co/datasets/o/r/resolve/main",  # revision, no file
+        "https://huggingface.co/datasets/o/r/blob",  # endpoint, nothing after
+        "https://huggingface.co/datasets/o/resolve/main/a.xyz",  # no repo name
+    ],
+)
+def test_normalise_hf_url_rejects_http_urls_naming_no_file(url):
+    # These serve HTML, so fetching them would hand the parser markup.
+    with pytest.raises(ValueError, match="does not name a file"):
+        _remote._normalise_hf_url(url)
+
+
+def test_normalise_hf_url_keeps_raw_endpoint():
+    # /raw/ is a deliberate Hub endpoint; unlike /blob/ it is not rewritten.
+    assert (
+        _remote._normalise_hf_url("https://huggingface.co/datasets/o/r/raw/main/a.xyz")
+        == "https://huggingface.co/datasets/o/r/raw/main/a.xyz"
+    )
+
+
+def test_parse_hf_scheme_url_fields():
+    ref = _remote._parse_hf_scheme_url("hf://datasets/o/r@v1.0/data/a.extxyz")
+    assert ref.kind is _remote._HfRepoKind.DATASET
+    assert ref.owner == "o"
+    assert ref.repo == "r"
+    assert ref.revision == "v1.0"
+    assert ref.path == "data/a.extxyz"
+    assert ref.endpoint == "resolve"
+
+
+def test_parse_hf_scheme_url_defaults_to_a_model_on_main():
+    ref = _remote._parse_hf_scheme_url("hf://o/r/a.extxyz")
+    assert ref.kind is _remote._HfRepoKind.MODEL
+    assert ref.revision == "main"
+    assert ref.kind.prefix == ""  # models are served off the Hub root
+
+
+def test_parse_hf_http_url_fields():
+    ref = _remote._parse_hf_http_url("https://hf.co/o/r/raw/dev/data/a.xyz")
+    assert ref.kind is _remote._HfRepoKind.MODEL
+    assert ref.owner == "o"
+    assert ref.repo == "r"
+    assert ref.revision == "dev"
+    assert ref.path == "data/a.xyz"
+    assert ref.endpoint == "raw"  # preserved; only blob is redirected
+
+
+def test_hf_file_renders_its_canonical_url():
+    ref = _remote._HfFile(
+        kind=_remote._HfRepoKind.SPACE,
+        owner="o",
+        repo="r",
+        revision="main",
+        path="data/a.xyz",
+    )
+    assert ref.url == "https://huggingface.co/spaces/o/r/resolve/main/data/a.xyz"
+
+
+class _FakeObstore:
+    """Just enough of obstore for open_source's plain-codec path."""
+
+    class _Get:
+        @staticmethod
+        def stream(min_chunk_size=0):
+            return iter([b""])
+
+    @classmethod
+    def get(cls, store, key):
+        return cls._Get
+
+
+def _capture_open_source(monkeypatch, url, storage_options=None):
+    """Run `open_source` against fakes; return what reached the store layer.
+
+    Asserting on the captured `(bucket_url, key, storage_options)` tests the
+    promise that matters — what oxyz actually asks obstore for — rather than
+    the shape of a helper's return value.
+    """
+    seen = {}
+
+    def fake_build_store(bucket_url, options):
+        seen["bucket_url"] = bucket_url
+        seen["storage_options"] = options
+        return object()
+
+    def fake_resolve_codec(obstore, store, key, compression):
+        seen["key"] = key
+        return "plain"
+
+    monkeypatch.setattr(_remote, "_build_store", fake_build_store)
+    monkeypatch.setattr(_remote, "_resolve_codec", fake_resolve_codec)
+    monkeypatch.setattr(_remote, "_import_obstore", lambda: _FakeObstore)
+
+    _remote.open_source(
+        url, compression="none", member=None, storage_options=storage_options
+    )
+    return seen
+
+
+HF_URL = "hf://datasets/o/r@main/data/a.extxyz"
+
+
+def test_hf_token_from_env_becomes_bearer_header(monkeypatch):
+    monkeypatch.setenv("HF_TOKEN", "hf_secret")
+    seen = _capture_open_source(monkeypatch, HF_URL)
+    assert seen["storage_options"]["default_headers"] == {
+        "authorization": "Bearer hf_secret"
+    }
+
+
+def test_hf_token_legacy_env_var(monkeypatch):
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.setenv("HUGGING_FACE_HUB_TOKEN", "hf_legacy")
+    seen = _capture_open_source(monkeypatch, HF_URL)
+    assert seen["storage_options"]["default_headers"] == {
+        "authorization": "Bearer hf_legacy"
+    }
+
+
+def test_hf_explicit_authorization_wins_over_env(monkeypatch):
+    monkeypatch.setenv("HF_TOKEN", "hf_secret")
+    given = {"default_headers": {"authorization": "Bearer explicit"}}
+    seen = _capture_open_source(monkeypatch, HF_URL, given)
+    assert seen["storage_options"]["default_headers"] == {
+        "authorization": "Bearer explicit"
+    }
+    assert given == {"default_headers": {"authorization": "Bearer explicit"}}
+
+
+def test_hf_no_token_leaves_options_untouched(monkeypatch):
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.delenv("HUGGING_FACE_HUB_TOKEN", raising=False)
+    seen = _capture_open_source(monkeypatch, HF_URL, {"timeout": "30s"})
+    assert seen["storage_options"] == {"timeout": "30s"}
+
+
+def test_hf_token_not_applied_to_other_stores(monkeypatch):
+    # The Hub token must never be attached to an unrelated store's requests.
+    monkeypatch.setenv("HF_TOKEN", "hf_secret")
+    seen = _capture_open_source(
+        monkeypatch, "s3://bucket/train.xyz", {"region": "us-east-1"}
+    )
+    assert seen["storage_options"] == {"region": "us-east-1"}
+
+
+def test_open_source_normalises_hf_url(monkeypatch):
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.delenv("HUGGING_FACE_HUB_TOKEN", raising=False)
+    seen = _capture_open_source(monkeypatch, HF_URL)
+    assert seen["bucket_url"] == "https://huggingface.co"
+    assert seen["key"] == "datasets/o/r/resolve/main/data/a.extxyz"
+
+
 def test_missing_obstore_raises_helpful_error(monkeypatch):
     monkeypatch.setattr(_remote, "_import_obstore", _remote._raise_missing)
     with pytest.raises(ImportError, match=r"oxyz\[s3\]"):

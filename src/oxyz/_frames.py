@@ -138,8 +138,8 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
     Parameters
     ----------
     path
-        File path, an S3-compatible URL (``s3://``, ``gs://``, ``az://`` —
-        needs the ``oxyz[s3]`` extra), or `"-"` for stdin.
+        File path, a remote URL (``s3://``, ``gs://``, ``az://``, ``hf://``
+        — needs the ``oxyz[s3]`` extra), or `"-"` for stdin.
     index
         Which frames to return: `":"` (default) reads all; an `int` returns a
         single `Frame`; a slice or slice-string (`"1:10:2"`) or a sequence of
