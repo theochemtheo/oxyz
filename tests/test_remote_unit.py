@@ -200,10 +200,55 @@ def test_split_url_parses_and_requires_key():
         _remote._split_url("s3://bucket/")
 
 
+def test_read_frames_routes_remote_tar_zstd(monkeypatch):
+    blob = Path("tests/data/compressed/two_frame.tar.zst").read_bytes()
+
+    def fake_open_source(p, *, compression, member, storage_options):
+        from oxyz._remote import RemoteSource
+
+        return RemoteSource(obj=lambda: iter([blob]), codec="tar.zst", member=None)
+
+    monkeypatch.setattr(oxyz._remote, "is_remote", lambda p: True)
+    monkeypatch.setattr(oxyz._remote, "open_source", fake_open_source)
+
+    remote = oxyz.read("s3://bucket/two_frame.tar.zst")
+    local = oxyz.read("tests/data/two_frame_same_schema.xyz")
+    assert len(remote) == len(local)
+
+
+def test_open_source_dispatches_tar_zst_to_callable_factory(monkeypatch):
+    # A tar has no central directory, so the tar codecs need a 0-arg callable
+    # that produces a fresh bytes-iterator per call (one pass to enumerate
+    # members, another to stream them) rather than a plain, single-use one.
+    class FakeGetResult:
+        @staticmethod
+        def stream(*, min_chunk_size):
+            return iter([b"blob"])
+
+    class FakeObstore:
+        @staticmethod
+        def get(store, key):
+            return FakeGetResult()
+
+    monkeypatch.setattr(_remote, "_import_obstore", lambda: FakeObstore)
+    monkeypatch.setattr(_remote, "_build_store", lambda *_a, **_k: object())
+
+    src = _remote.open_source(
+        "s3://bucket/train.tar.zst",
+        compression="tar.zst",
+        member=None,
+        storage_options=None,
+    )
+    assert callable(src.obj)
+    assert list(src.obj()) == [b"blob"]
+    assert list(src.obj()) == [b"blob"]  # a second call yields a fresh iterator
+
+
 def test_resolve_codec_explicit_compression_skips_sniff():
     # Explicit compression returns without touching the store (obstore is None).
     assert _remote._resolve_codec(None, None, "train.xyz", "none") == "plain"
     assert _remote._resolve_codec(None, None, "train.xyz", "gzip") == "gzip"
+    assert _remote._resolve_codec(None, None, "train.tar.zst", "tar.zst") == "tar.zst"
 
 
 def test_resolve_codec_infers_from_magic_bytes():

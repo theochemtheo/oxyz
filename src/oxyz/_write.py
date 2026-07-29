@@ -60,8 +60,8 @@ def write(
         Add to an existing file, for the formats that allow it (plain,
         gzip). Rejected for the archive codecs and for stdout.
     compression : Compression, optional
-        Codec, overriding the one inferred from `path`. Writing `.zst` is
-        not yet supported.
+        Codec, overriding the one inferred from `path`. Writing `.zst` and
+        `.tar.zst` is not yet supported.
     level : int, optional
         Deflate level, `0..=9`, for the compressed codecs.
     threads : int, optional

@@ -9,6 +9,20 @@ from typing import TYPE_CHECKING
 
 from oxyz import infer_schema, scan
 
+# Shared by the scan/check/freeze --compression options; every codec that can
+# be forced by name must appear here or argparse rejects it before it reaches
+# the library.
+_COMPRESSION_CHOICES = (
+    "infer",
+    "none",
+    "gzip",
+    "zstd",
+    "zip",
+    "tar",
+    "tar.gz",
+    "tar.zst",
+)
+
 if TYPE_CHECKING:
     from oxyz._scan import FrameIndex
     from oxyz._schema import Schema
@@ -74,14 +88,14 @@ def _add_scan_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     scan_parser.add_argument(
         "--compression",
-        choices=("infer", "none", "gzip", "zstd", "zip"),
+        choices=_COMPRESSION_CHOICES,
         default="infer",
         help="codec to read PATH as (default: infer from the name)",
     )
     scan_parser.add_argument(
         "--member",
         default=None,
-        help="entry to read from a multi-member archive (.zip/.tar/.tar.gz)",
+        help="entry to read from a multi-member archive (.zip/.tar/.tar.gz/.tar.zst)",
     )
     scan_parser.add_argument(
         "--storage-option",
@@ -139,7 +153,7 @@ def _add_check_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     check_parser.add_argument(
         "--compression",
-        choices=("infer", "none", "gzip", "zstd", "zip"),
+        choices=_COMPRESSION_CHOICES,
         default="infer",
     )
     check_parser.add_argument("--member", default=None)
@@ -175,7 +189,7 @@ def _add_freeze_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     freeze_parser.add_argument(
         "--compression",
-        choices=("infer", "none", "gzip", "zstd", "zip"),
+        choices=_COMPRESSION_CHOICES,
         default="infer",
     )
     freeze_parser.add_argument("--member", default=None)

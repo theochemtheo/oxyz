@@ -10,7 +10,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use oxyz_core::{Compression, ExtxyzError, open_decoded, read_frames};
+use oxyz_core::{Compression, ExtxyzError, detect_codec_name, open_decoded, read_frames};
 use proptest::prelude::*;
 
 fn fixture(name: &str) -> PathBuf {
@@ -38,10 +38,28 @@ fn read_frames_autodetects_every_codec() {
         "compressed/two_frame.xyz.zst",
         "compressed/two_frame.xyz.zip",
         "compressed/two_frame.tar.gz",
+        "compressed/two_frame.tar.zst",
         "compressed/two_frame.tar",
     ] {
         let got = read_frames(fixture(name)).unwrap();
         assert_eq!(got, expected, "mismatch reading {name}");
+    }
+}
+
+/// `.tar.zst` ends in `.zst` too, so the tar arm must be tested first. A
+/// regression here decodes the zstd layer and then feeds tar headers to the
+/// parser, which is exactly the bug this codec was added to fix.
+#[test]
+fn tar_zstd_extensions_beat_the_bare_zstd_arm() {
+    for (name, expected) in [
+        ("run.tar.zst", "tar.zst"),
+        ("run.tzst", "tar.zst"),
+        ("run.xyz.zst", "zstd"),
+        ("run.tar.gz", "tar.gz"),
+        ("run.tgz", "tar.gz"),
+        ("run.tar", "tar"),
+    ] {
+        assert_eq!(detect_codec_name(name, None), expected, "codec for {name}");
     }
 }
 
@@ -341,6 +359,43 @@ fn compression_can_be_forced_for_a_misnamed_file() {
         decoded_string("compressed/two_frame.xyz.gz", Compression::Gzip, None),
         plain()
     );
+}
+
+/// A tar has no magic bytes, so a tar under an unrecognised name is
+/// unreadable by inference alone. Each fixture is copied to a `.bin` name
+/// first — `detect_by_extension` returns `None` for it, so a version of this
+/// test that kept the original `.tar`/`.tar.gz`/`.tar.zst` names would pass
+/// even with the forcing arms in `detect` deleted, since extension inference
+/// alone resolves those. Only the blind name isolates what forcing adds.
+#[test]
+fn tar_codecs_can_be_forced_regardless_of_name() {
+    for (name, compression) in [
+        ("compressed/two_frame.tar", Compression::Tar),
+        ("compressed/two_frame.tar.gz", Compression::TarGzip),
+        ("compressed/two_frame.tar.zst", Compression::TarZstd),
+    ] {
+        let bytes = std::fs::read(fixture(name)).unwrap();
+        let path = temp_file(&bytes, "bin");
+
+        let mut reader = open_decoded(&path, compression, None)
+            .unwrap_or_else(|e| panic!("failed forcing {name}: {e}"));
+        let mut text = String::new();
+        reader
+            .read_to_string(&mut text)
+            .unwrap_or_else(|e| panic!("failed forcing {name}: {e}"));
+        assert_eq!(text, plain(), "mismatch forcing {name}");
+
+        // Same blind bytes, but without the forced codec: no tar magic
+        // exists to sniff, so Infer lands on gzip, zstd, or plain, decodes
+        // that outer layer (if any), and hands the parser raw tar headers
+        // instead of extxyz text.
+        assert!(
+            read_frames(&path).is_err(),
+            "expected Infer to fail reading {name} without forcing"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
 }
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);

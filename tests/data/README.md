@@ -33,8 +33,8 @@
 | `mad_r2scan_sample.extxyz` | MAD-1.5 r²SCAN slice: real, chemically diverse data — 98 elements across molecules, clusters, bulk, surfaces and low-dimensional structures, from a 102-element dataset in one standardised DFT workflow. See the source and attribution below. |
 
 Compressed twins of `two_frame_same_schema.xyz` (gzip, zstd, zip, tar, tar.gz,
-plus concat-gzip and multi-member archives) live in `compressed/`; see its
-README.
+tar.zst, plus concat-gzip and multi-member archives) live in `compressed/`; see
+its README.
 
 ## `invalid/` — malformed fixtures
 

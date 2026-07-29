@@ -318,10 +318,10 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
     reads the whole file (forgoing the seek shortcut) so the sought frames are
     projected before conversion.
 
-    Compressed paths (`.gz`, `.zst`, `.zip`, `.tar.gz`, `.tar`) are read too. A
-    compressed source cannot seek, so a negative or reverse index reads the
-    whole file and indexes in memory (as ASE does), forgoing the partial-read
-    shortcut.
+    Compressed paths (`.gz`, `.zst`, `.zip`, `.tar.gz`, `.tar.zst`, `.tar`) are
+    read too. A compressed source cannot seek, so a negative or reverse index
+    reads the whole file and indexes in memory (as ASE does), forgoing the
+    partial-read shortcut.
 
     Remote URLs (``s3://``, ``gs://``, ``az://``) are supported; pass
     ``storage_options`` to supply endpoint/credentials. Remote sources are
@@ -352,11 +352,12 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
     mode
         Overrides the schema's own `mode`.
     compression
-        Forces a codec (`"infer"`, `"none"`, `"gzip"`, `"zstd"`, `"zip"`)
-        instead of inferring it from `path`; as in `oxyz.read`.
+        Forces a codec (`"infer"`, `"none"`, `"gzip"`, `"zstd"`, `"zip"`,
+        `"tar"`, `"tar.gz"`, `"tar.zst"`) instead of inferring it from `path`;
+        as in `oxyz.read`.
     member
-        Selects one entry from a `.zip`/`.tar`/`.tar.gz` holding more than
-        one.
+        Selects one entry from a `.zip`/`.tar`/`.tar.gz`/`.tar.zst` holding
+        more than one.
     storage_options
         Endpoint/credentials for a remote store.
 

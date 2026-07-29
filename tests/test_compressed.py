@@ -25,6 +25,7 @@ CODECS = [
     "compressed/two_frame.xyz.zip",
     "compressed/two_frame.tar.gz",
     "compressed/two_frame.tar",
+    "compressed/two_frame.tar.zst",
 ]
 
 
@@ -107,6 +108,28 @@ def test_compression_override_forces_and_disables() -> None:
 def test_unknown_compression_raises() -> None:
     with pytest.raises(ValueError, match="unknown compression"):
         oxyz.read(PLAIN, compression="lz4")  # ty: ignore[invalid-argument-type]
+
+
+def test_tar_codecs_are_forceable(tmp_path: Path) -> None:
+    # Copy each fixture to an unrecognised name first: detect_by_extension
+    # cannot rescue a ".bin" file, so a passing result proves the forced
+    # codec did the decoding, not extension inference.
+    plain = oxyz.read(DATA_DIR / "two_frame_same_schema.xyz")
+    cases: list[tuple[str, oxyz.Compression]] = [
+        ("two_frame.tar", "tar"),
+        ("two_frame.tar.gz", "tar.gz"),
+        ("two_frame.tar.zst", "tar.zst"),
+    ]
+    for name, compression in cases:
+        blob = tmp_path / "blob.bin"
+        blob.write_bytes((DATA_DIR / f"compressed/{name}").read_bytes())
+        got = oxyz.read(blob, compression=compression)
+        assert len(got) == len(plain), f"mismatch forcing {compression}"
+
+
+def test_unknown_compression_lists_the_tar_codecs() -> None:
+    with pytest.raises(ValueError, match=r"tar\.zst"):
+        oxyz.read(DATA_DIR / "simple.extxyz", compression="brotli")  # ty: ignore[invalid-argument-type]
 
 
 class TestBatching:

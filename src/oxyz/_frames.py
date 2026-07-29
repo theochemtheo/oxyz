@@ -27,9 +27,13 @@ MetadataValue = float | int | bool | str | np.ndarray | list[str] | list[list[st
 """A comment-line metadata value: a scalar, an array, or (for 2-D string
 metadata) `list[list[str]]`."""
 
-Compression = Literal["infer", "none", "gzip", "zstd", "zip"]
+Compression = Literal[
+    "infer", "none", "gzip", "zstd", "zip", "tar", "tar.gz", "tar.zst"
+]
 """How to read a possibly-compressed file. `"infer"` detects the codec from the
-extension, falling back to the leading magic bytes; the rest force a codec."""
+extension, falling back to the leading magic bytes; the rest force a codec. A
+tar has no magic bytes, so forcing is the only way to read one whose name does
+not say `.tar`, `.tar.gz` or `.tar.zst`."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,10 +158,11 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
         the schema (extras dropped, optionals filled); an unfillable frame is
         dropped under `conformance="warn"`.
     compression
-        Forces a codec (`"infer"`, `"none"`, `"gzip"`, `"zstd"`, `"zip"`)
-        instead of inferring it from `path`.
+        Forces a codec (`"infer"`, `"none"`, `"gzip"`, `"zstd"`, `"zip"`,
+        `"tar"`, `"tar.gz"`, `"tar.zst"`) instead of inferring it from `path`.
     member
-        Selects one entry from a `.zip`/`.tar`/`.tar.gz` holding more than one.
+        Selects one entry from a `.zip`/`.tar`/`.tar.gz`/`.tar.zst` holding
+        more than one.
     storage_options
         Endpoint/credentials for a remote store, falling back to `AWS_*` env
         vars.

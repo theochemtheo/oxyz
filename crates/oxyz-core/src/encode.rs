@@ -431,7 +431,7 @@ impl FrameSink {
         let codec = detect_for_write(path, compression);
         let stdout = path == Path::new("-");
 
-        if codec == Codec::Zstd {
+        if matches!(codec, Codec::Zstd | Codec::TarZstd) {
             return Err(ExtxyzError::ZstdWriteUnsupported);
         }
         if append && (codec.is_archive() || stdout) {

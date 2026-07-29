@@ -1,7 +1,7 @@
 use std::io::{Cursor, Read};
 
 use flate2::{Compression, write::GzEncoder};
-use oxyz_core::decode::{ByteSource, Codec, detect_codec_name, wrap_stream};
+use oxyz_core::decode::{ByteSource, Codec, TarInner, detect_codec_name, wrap_stream};
 
 fn gzip(bytes: &[u8]) -> Vec<u8> {
     use std::io::Write;
@@ -48,8 +48,8 @@ fn tar_two_members() -> Vec<u8> {
 #[test]
 fn wrap_tar_selects_named_member() {
     let bytes = tar_two_members();
-    let factory = move || Ok(Box::new(Cursor::new(bytes.clone())) as Box<dyn std::io::Read + Send>);
-    let mut reader = oxyz_core::decode::wrap_tar(factory, Some("b.xyz"), false).unwrap();
+    let factory = move || Ok(Box::new(Cursor::new(bytes.clone())) as ByteSource);
+    let mut reader = oxyz_core::decode::wrap_tar(factory, Some("b.xyz"), TarInner::Plain).unwrap();
     let mut out = String::new();
     std::io::Read::read_to_string(&mut reader, &mut out).unwrap();
     assert_eq!(out, "beta");
@@ -100,8 +100,8 @@ fn detect_codec_name_handles_bare_tar() {
 #[test]
 fn wrap_tar_member_not_found_is_an_error() {
     let bytes = tar_two_members();
-    let factory = move || Ok(Box::new(Cursor::new(bytes.clone())) as Box<dyn std::io::Read + Send>);
-    assert!(oxyz_core::decode::wrap_tar(factory, Some("missing.xyz"), false).is_err());
+    let factory = move || Ok(Box::new(Cursor::new(bytes.clone())) as ByteSource);
+    assert!(oxyz_core::decode::wrap_tar(factory, Some("missing.xyz"), TarInner::Plain).is_err());
 }
 
 #[test]

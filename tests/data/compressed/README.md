@@ -13,6 +13,7 @@ zstd -q -c   "$base"      > compressed/two_frame.xyz.zst
 zip  -q -j compressed/two_frame.xyz.zip "$base"
 COPYFILE_DISABLE=1 tar -czf compressed/two_frame.tar.gz "$base"
 COPYFILE_DISABLE=1 tar -cf  compressed/two_frame.tar    "$base"
+COPYFILE_DISABLE=1 tar -cf - "$base" | zstd -q -c > compressed/two_frame.tar.zst
 cat compressed/two_frame.xyz.gz  compressed/two_frame.xyz.gz  > compressed/concat.xyz.gz
 cat compressed/two_frame.xyz.zst compressed/two_frame.xyz.zst > compressed/concat.xyz.zst
 cp "$base" a.xyz; cp varying_atom_counts.xyz b.xyz
@@ -28,6 +29,7 @@ rm -f a.xyz b.xyz
 | `two_frame.xyz.zip` | zip with one member. |
 | `two_frame.tar.gz` | gzip-compressed tar with one member. |
 | `two_frame.tar` | uncompressed tar with one member. |
+| `two_frame.tar.zst` | zstd-compressed tar with one member. |
 | `concat.xyz.gz` | Two concatenated gzip members — `MultiGzDecoder` must read both (4 frames). |
 | `concat.xyz.zst` | Two concatenated zstd frames — the multi-frame wrapper must read both (4 frames). |
 | `multi_member.zip` | Two `.xyz` members (`a.xyz`, `b.xyz`) — ambiguous without `member=`. |

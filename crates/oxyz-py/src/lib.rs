@@ -17,11 +17,13 @@ use oxyz_core::project::{
 use oxyz_core::schema::{ColumnSchema, MetadataSchema, Schema, ValueType};
 use oxyz_core::{
     Batch, ByteSource, Codec, Column, ColumnData, ColumnKind, Compression, DecodedReader,
-    ExtxyzError, Frame, FrameSink, Value, detect_codec_name, open_decoded, wrap_stream, wrap_tar,
-    wrap_zip, write_frames, write_frames_parallel,
+    ExtxyzError, Frame, FrameSink, TarInner, Value, detect_codec_name, open_decoded, wrap_stream,
+    wrap_tar, wrap_zip, write_frames, write_frames_parallel,
 };
 
-/// Map the Python `compression` string to the core selector.
+/// Map the Python `compression` string to the core selector. The tar spellings
+/// match `Codec::name()`, so a value a caller passes here is the value oxyz
+/// prints when it reports a detected codec.
 fn parse_compression(name: &str) -> PyResult<Compression> {
     Ok(match name {
         "infer" => Compression::Infer,
@@ -29,9 +31,13 @@ fn parse_compression(name: &str) -> PyResult<Compression> {
         "gzip" => Compression::Gzip,
         "zstd" => Compression::Zstd,
         "zip" => Compression::Zip,
+        "tar" => Compression::Tar,
+        "tar.gz" => Compression::TarGzip,
+        "tar.zst" => Compression::TarZstd,
         other => {
             return Err(PyValueError::new_err(format!(
-                "unknown compression {other:?}; expected one of: infer, none, gzip, zstd, zip"
+                "unknown compression {other:?}; expected one of: infer, none, gzip, \
+                 zstd, zip, tar, tar.gz, tar.zst"
             )));
         }
     })
@@ -1559,7 +1565,8 @@ impl Seek for PySeekReader {
 
 /// Assemble a `DecodedReader` from a Python source object and a resolved codec.
 /// `"plain"/"gzip"/"zstd"` → `source` is a bytes-iterator.
-/// `"tar"/"tar.gz"` → `source` is a 0-arg callable returning a fresh bytes-iterator.
+/// `"tar"/"tar.gz"/"tar.zst"` → `source` is a 0-arg callable returning a fresh
+/// bytes-iterator.
 /// `"zip"` → `source` is a seekable file-like.
 fn build_decoded(
     source: &Bound<'_, PyAny>,
@@ -1570,7 +1577,7 @@ fn build_decoded(
         "plain" | "gzip" | "zstd" => {
             if member.is_some() {
                 return Err(PyValueError::new_err(
-                    "member= is only valid for an archive (.zip/.tar/.tar.gz) source",
+                    "member= is only valid for an archive (.zip/.tar/.tar.gz/.tar.zst) source",
                 ));
             }
             let codec = match codec {
@@ -1582,21 +1589,23 @@ fn build_decoded(
             let reader: ByteSource = Box::new(PyChunkReader::new(source.clone().unbind()));
             wrap_stream(reader, codec).map_err(extxyz_error_to_py)
         }
-        "tar" | "tar.gz" => {
-            let gzip = codec == "tar.gz";
+        "tar" | "tar.gz" | "tar.zst" => {
+            let inner = match codec {
+                "tar" => TarInner::Plain,
+                "tar.gz" => TarInner::Gzip,
+                _ => TarInner::Zstd,
+            };
             let callable = source.clone().unbind();
             let factory = move || {
                 Python::attach(|py| {
                     callable
                         .bind(py)
                         .call0()
-                        .map(|iter| {
-                            Box::new(PyChunkReader::new(iter.unbind())) as Box<dyn Read + Send>
-                        })
+                        .map(|iter| Box::new(PyChunkReader::new(iter.unbind())) as ByteSource)
                         .map_err(|e| std::io::Error::other(e.to_string()))
                 })
             };
-            wrap_tar(factory, member, gzip).map_err(extxyz_error_to_py)
+            wrap_tar(factory, member, inner).map_err(extxyz_error_to_py)
         }
         "zip" => {
             let reader = PySeekReader {
@@ -1663,7 +1672,7 @@ fn read_first_frame_reader<'py>(
 
 /// Infer the codec name from a filename and optional header bytes.
 ///
-/// Returns one of `"plain"`, `"gzip"`, `"zstd"`, `"tar"`, `"tar.gz"`, `"zip"`.
+/// Returns one of `"plain"`, `"gzip"`, `"zstd"`, `"tar"`, `"tar.gz"`, `"tar.zst"`, `"zip"`.
 #[pyfunction]
 #[pyo3(signature = (name, head=None))]
 fn detect_codec(name: &str, head: Option<&[u8]>) -> String {

@@ -113,7 +113,7 @@ pub enum ExtxyzError {
     #[error("append mode is not supported for {codec} output")]
     AppendUnsupported { codec: &'static str },
 
-    #[error("writing zstd (.zst) output is not yet supported")]
+    #[error("writing zstd output (.zst, .tar.zst) is not yet supported")]
     ZstdWriteUnsupported,
 
     #[error("compression level {level} is out of range; expected 0..=9")]

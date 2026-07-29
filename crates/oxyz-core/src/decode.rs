@@ -46,11 +46,14 @@ pub enum Compression {
     Gzip,
     Zstd,
     Zip,
+    Tar,
+    TarGzip,
+    TarZstd,
 }
 
 /// The concrete codec, after inference. Archive codecs (`Zip`, `Tar`,
-/// `TarGzip`) carry members and accept a `member` selector; the rest are single
-/// streams and reject one.
+/// `TarGzip`, `TarZstd`) carry members and accept a `member` selector; the
+/// rest are single streams and reject one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Codec {
     Plain,
@@ -59,11 +62,15 @@ pub enum Codec {
     Zip,
     Tar,
     TarGzip,
+    TarZstd,
 }
 
 impl Codec {
     pub(crate) fn is_archive(self) -> bool {
-        matches!(self, Codec::Zip | Codec::Tar | Codec::TarGzip)
+        matches!(
+            self,
+            Codec::Zip | Codec::Tar | Codec::TarGzip | Codec::TarZstd
+        )
     }
 
     pub fn name(self) -> &'static str {
@@ -74,8 +81,18 @@ impl Codec {
             Codec::Zip => "zip",
             Codec::Tar => "tar",
             Codec::TarGzip => "tar.gz",
+            Codec::TarZstd => "tar.zst",
         }
     }
+}
+
+/// The decompressor applied to a tar's byte stream. `Codec::Tar`/`TarGzip`/
+/// `TarZstd` are the only sources of these; nothing else is representable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TarInner {
+    Plain,
+    Gzip,
+    Zstd,
 }
 
 /// Resolve the codec for *writing*. Unlike [`detect`], there are no bytes to
@@ -87,16 +104,19 @@ pub(crate) fn detect_for_write(path: &Path, compression: Compression) -> Codec {
         Compression::Gzip => Codec::Gzip,
         Compression::Zstd => Codec::Zstd,
         Compression::Zip => Codec::Zip,
+        Compression::Tar => Codec::Tar,
+        Compression::TarGzip => Codec::TarGzip,
+        Compression::TarZstd => Codec::TarZstd,
         Compression::Infer => detect_by_extension(path).unwrap_or(Codec::Plain),
     }
 }
 
 /// Open `path` as a streaming reader, decompressing per `compression`.
 ///
-/// `member` names one entry inside an archive (`.zip`, `.tar`, `.tar.gz`); it is
-/// rejected for single-stream sources. With no `member`, an archive must hold
-/// exactly one extxyz-looking member (`.xyz`/`.extxyz`), else the call errors
-/// and lists what it found.
+/// `member` names one entry inside an archive (`.zip`, `.tar`, `.tar.gz`,
+/// `.tar.zst`); it is rejected for single-stream sources. With no `member`, an
+/// archive must hold exactly one extxyz-looking member (`.xyz`/`.extxyz`),
+/// else the call errors and lists what it found.
 pub fn open_decoded(
     path: &Path,
     compression: Compression,
@@ -116,25 +136,33 @@ pub fn open_decoded(
         Codec::Tar => {
             let path = path.to_owned();
             wrap_tar(
-                move || File::open(&path).map(|f| Box::new(f) as Box<dyn Read + Send>),
+                move || File::open(&path).map(|f| Box::new(f) as ByteSource),
                 member,
-                false,
+                TarInner::Plain,
             )
         }
         Codec::TarGzip => {
             let path = path.to_owned();
             wrap_tar(
-                move || File::open(&path).map(|f| Box::new(f) as Box<dyn Read + Send>),
+                move || File::open(&path).map(|f| Box::new(f) as ByteSource),
                 member,
-                true,
+                TarInner::Gzip,
+            )
+        }
+        Codec::TarZstd => {
+            let path = path.to_owned();
+            wrap_tar(
+                move || File::open(&path).map(|f| Box::new(f) as ByteSource),
+                member,
+                TarInner::Zstd,
             )
         }
     }
 }
 
 /// Wrap an already-opened raw byte source in a single-stream codec. Archive
-/// codecs (`Zip`/`Tar`/`TarGzip`) are not streams and are rejected — use
-/// [`wrap_zip`] / [`wrap_tar`].
+/// codecs (`Zip`/`Tar`/`TarGzip`/`TarZstd`) are not streams and are rejected —
+/// use [`wrap_zip`] / [`wrap_tar`].
 pub fn wrap_stream(source: ByteSource, codec: Codec) -> Result<DecodedReader> {
     match codec {
         Codec::Plain => Ok(Box::new(BufReader::new(source))),
@@ -142,7 +170,9 @@ pub fn wrap_stream(source: ByteSource, codec: Codec) -> Result<DecodedReader> {
         Codec::Zstd => Ok(Box::new(BufReader::new(MultiFrameZstd::from_source(
             source,
         )?))),
-        Codec::Zip | Codec::Tar | Codec::TarGzip => Err(ExtxyzError::MemberOnNonArchive),
+        Codec::Zip | Codec::Tar | Codec::TarGzip | Codec::TarZstd => {
+            Err(ExtxyzError::MemberOnNonArchive)
+        }
     }
 }
 
@@ -161,6 +191,9 @@ fn detect(path: &Path, compression: Compression) -> Result<Codec> {
         Compression::Gzip => Ok(Codec::Gzip),
         Compression::Zstd => Ok(Codec::Zstd),
         Compression::Zip => Ok(Codec::Zip),
+        Compression::Tar => Ok(Codec::Tar),
+        Compression::TarGzip => Ok(Codec::TarGzip),
+        Compression::TarZstd => Ok(Codec::TarZstd),
         Compression::Infer => Ok(detect_by_extension(path).map_or_else(|| sniff(path), Ok)?),
     }
 }
@@ -169,6 +202,8 @@ pub(crate) fn detect_by_extension(path: &Path) -> Option<Codec> {
     let name = path.file_name()?.to_str()?.to_ascii_lowercase();
     Some(if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
         Codec::TarGzip
+    } else if name.ends_with(".tar.zst") || name.ends_with(".tzst") {
+        Codec::TarZstd
     } else if name.ends_with(".tar") {
         Codec::Tar
     } else if name.ends_with(".gz") {
@@ -230,6 +265,12 @@ struct MultiFrameZstd {
 
 impl MultiFrameZstd {
     fn from_source(source: ZstdSource) -> Result<Self> {
+        Ok(Self::from_source_io(source)?)
+    }
+
+    /// The `io::Error` variant, for callers inside the tar pipe whose errors
+    /// travel down an `io::Result` channel.
+    fn from_source_io(source: ZstdSource) -> io::Result<Self> {
         Ok(MultiFrameZstd {
             decoder: Some(zstd_decoder(source)?),
         })
@@ -329,18 +370,19 @@ where
     }))
 }
 
-/// Stream one member of a tar (optionally gzip-compressed). `factory` yields a
-/// fresh *raw* tar byte stream on each call; enumeration and streaming each open
-/// one (two passes — a tar has no central directory).
-pub fn wrap_tar<F>(factory: F, member: Option<&str>, gzip: bool) -> Result<DecodedReader>
+/// Stream one member of a tar, decompressing `inner` first if the tar itself
+/// is wrapped (gzip or zstd). `factory` yields a fresh *raw* tar byte stream on
+/// each call; enumeration and streaming each open one (two passes — a tar has
+/// no central directory).
+pub fn wrap_tar<F>(factory: F, member: Option<&str>, inner: TarInner) -> Result<DecodedReader>
 where
-    F: Fn() -> io::Result<Box<dyn Read + Send>> + Send + 'static,
+    F: Fn() -> io::Result<ByteSource> + Send + 'static,
 {
-    let names = tar_member_names(&factory, gzip)?;
+    let names = tar_member_names(&factory, inner)?;
     let target = resolve_member(&names, member)?;
 
     Ok(spawn_pipe(move |tx| {
-        let stream = match tar_stream_from(&factory, gzip) {
+        let stream = match tar_stream_from(&factory, inner) {
             Ok(stream) => stream,
             Err(error) => {
                 let _ = tx.send(Err(error));
@@ -372,11 +414,11 @@ where
     }))
 }
 
-fn tar_member_names<F>(factory: &F, gzip: bool) -> Result<Vec<String>>
+fn tar_member_names<F>(factory: &F, inner: TarInner) -> Result<Vec<String>>
 where
-    F: Fn() -> io::Result<Box<dyn Read + Send>>,
+    F: Fn() -> io::Result<ByteSource>,
 {
-    let mut archive = tar::Archive::new(tar_stream_from(factory, gzip)?);
+    let mut archive = tar::Archive::new(tar_stream_from(factory, inner)?);
     let mut names = Vec::new();
     for entry in archive.entries()? {
         let entry = entry?;
@@ -390,15 +432,15 @@ where
     Ok(names)
 }
 
-fn tar_stream_from<F>(factory: &F, gzip: bool) -> io::Result<Box<dyn Read + Send>>
+fn tar_stream_from<F>(factory: &F, inner: TarInner) -> io::Result<ByteSource>
 where
-    F: Fn() -> io::Result<Box<dyn Read + Send>>,
+    F: Fn() -> io::Result<ByteSource>,
 {
     let raw = factory()?;
-    Ok(if gzip {
-        Box::new(MultiGzDecoder::new(raw))
-    } else {
-        raw
+    Ok(match inner {
+        TarInner::Plain => raw,
+        TarInner::Gzip => Box::new(MultiGzDecoder::new(raw)),
+        TarInner::Zstd => Box::new(MultiFrameZstd::from_source_io(raw)?),
     })
 }
 

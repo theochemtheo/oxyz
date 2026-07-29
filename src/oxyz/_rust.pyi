@@ -132,8 +132,9 @@ class SchemaData(TypedDict):
     is_consistent: bool
     report: str
 
-# `compression` is one of "infer", "none", "gzip", "zstd", "zip"; `member`
-# names an entry inside an archive (.zip/.tar/.tar.gz).
+# `compression` is one of "infer", "none", "gzip", "zstd", "zip", "tar",
+# "tar.gz", "tar.zst"; `member` names an entry inside an archive
+# (.zip/.tar/.tar.gz/.tar.zst).
 @final
 class FrameIter:
     """Streaming iterator: one frame parsed and converted per `__next__`.
@@ -376,7 +377,7 @@ def detect_codec(name: str, head: bytes | None = None) -> str:
     """Infer the codec name from a filename and optional header bytes."""
 
 # Reader entries: source is any iterator yielding bytes (e.g. obstore's stream).
-# codec is one of "plain", "gzip", "zstd", "tar", "tar.gz", "zip".
+# codec is one of "plain", "gzip", "zstd", "tar", "tar.gz", "tar.zst", "zip".
 def read_frames_reader(
     source: object,
     codec: str,

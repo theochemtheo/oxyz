@@ -352,7 +352,7 @@ def iread_batch(  # noqa: C901, PLR0913, PLR0912  the keyword options are the ba
     (None: all cores; 1: serial, which for unshuffled `frames_per_batch`
     streams the file without scanning).
 
-    A compressed source (`.gz`, `.zst`, `.zip`, `.tar.gz`, `.tar`) cannot be
+    A compressed source (`.gz`, `.zst`, `.zip`, `.tar.gz`, `.tar.zst`, `.tar`) cannot be
     randomly accessed, so only `frames_per_batch` without `shuffle` is
     supported there — it streams batch-by-batch, peak memory bounded by the
     batch, not the file. `shuffle`, `atoms_per_batch`
@@ -462,7 +462,7 @@ def iread_batch(  # noqa: C901, PLR0913, PLR0912  the keyword options are the ba
     streaming_only = True if remote else _rust.is_compressed(str(path), compression)
     if member is not None and not remote and not streaming_only:
         raise ValueError(
-            "member= is only valid for an archive (.zip/.tar/.tar.gz) source"
+            "member= is only valid for an archive (.zip/.tar/.tar.gz/.tar.zst) source"
         )
     if streaming_only and (
         shuffle or atoms_per_batch is not None or memory_scales_with is not None
