@@ -205,8 +205,6 @@ def test_ase_read_projected_remote(s3_store):
     assert len(both) == 2
 
 
-# --- HuggingFace Hub ---------------------------------------------------------
-
 # The Hub is a live third-party service, so this test is opt-in: CI stays
 # offline and deterministic, while `OXYZ_TEST_HF=1 uv run pytest` checks that
 # the URL translation still matches what the Hub actually serves.
