@@ -370,9 +370,10 @@ where
     }))
 }
 
-/// Stream one member of a tar (optionally gzip-compressed). `factory` yields a
-/// fresh *raw* tar byte stream on each call; enumeration and streaming each open
-/// one (two passes — a tar has no central directory).
+/// Stream one member of a tar, decompressing `inner` first if the tar itself
+/// is wrapped (gzip or zstd). `factory` yields a fresh *raw* tar byte stream on
+/// each call; enumeration and streaming each open one (two passes — a tar has
+/// no central directory).
 pub fn wrap_tar<F>(factory: F, member: Option<&str>, inner: TarInner) -> Result<DecodedReader>
 where
     F: Fn() -> io::Result<ByteSource> + Send + 'static,

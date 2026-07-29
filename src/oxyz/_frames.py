@@ -158,8 +158,8 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
         the schema (extras dropped, optionals filled); an unfillable frame is
         dropped under `conformance="warn"`.
     compression
-        Forces a codec (`"infer"`, `"none"`, `"gzip"`, `"zstd"`, `"zip"`)
-        instead of inferring it from `path`.
+        Forces a codec (`"infer"`, `"none"`, `"gzip"`, `"zstd"`, `"zip"`,
+        `"tar"`, `"tar.gz"`, `"tar.zst"`) instead of inferring it from `path`.
     member
         Selects one entry from a `.zip`/`.tar`/`.tar.gz`/`.tar.zst` holding
         more than one.
