@@ -216,10 +216,6 @@ def test_read_frames_routes_remote_tar_zstd(monkeypatch):
     assert len(remote) == len(local)
 
 
-def test_resolve_codec_passes_tar_zstd_through():
-    assert _remote._resolve_codec(None, None, "train.tar.zst", "tar.zst") == "tar.zst"
-
-
 def test_open_source_dispatches_tar_zst_to_callable_factory(monkeypatch):
     # A tar has no central directory, so the tar codecs need a 0-arg callable
     # that produces a fresh bytes-iterator per call (one pass to enumerate
@@ -252,6 +248,7 @@ def test_resolve_codec_explicit_compression_skips_sniff():
     # Explicit compression returns without touching the store (obstore is None).
     assert _remote._resolve_codec(None, None, "train.xyz", "none") == "plain"
     assert _remote._resolve_codec(None, None, "train.xyz", "gzip") == "gzip"
+    assert _remote._resolve_codec(None, None, "train.tar.zst", "tar.zst") == "tar.zst"
 
 
 def test_resolve_codec_infers_from_magic_bytes():

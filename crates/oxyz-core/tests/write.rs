@@ -6,13 +6,14 @@
 
 use std::{
     fs,
+    io::BufReader,
     path::PathBuf,
     sync::atomic::{AtomicU64, Ordering},
 };
 
 use oxyz_core::{
-    Column, ColumnData, Compression, ExtxyzError, Frame, FrameSink, Value, read_frames,
-    write_frames, write_frames_parallel,
+    Column, ColumnData, Compression, ExtxyzError, Frame, FrameSink, Value, iter_frames_from,
+    open_decoded, read_frames, write_frames, write_frames_parallel,
 };
 use proptest::prelude::*;
 
@@ -81,6 +82,30 @@ fn explicit_compression_overrides_a_plain_extension() {
     // Auto-detect falls back to the magic bytes and still reads it.
     assert_eq!(back, frames);
     fs::remove_file(&path).unwrap();
+}
+
+#[test]
+fn forcing_tar_codecs_on_write_produces_a_readable_archive() {
+    // Compression::Tar/TarGzip now reach detect_for_write, so forcing them is
+    // no longer extension-only; name the files unhelpfully to prove the codec
+    // came from the forced argument, not from ".tar"/".tar.gz" in the path.
+    let frames = sample_frames();
+    for (name, compression) in [
+        ("forced_tar.bin", Compression::Tar),
+        ("forced_tar_gz.bin", Compression::TarGzip),
+    ] {
+        let path = temp_path(name);
+        write_frames(&path, &frames, compression, None, false).unwrap();
+
+        let reader = open_decoded(&path, compression, None)
+            .unwrap_or_else(|e| panic!("failed reading back {name}: {e}"));
+        let back: Vec<Frame> = iter_frames_from(BufReader::new(reader))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap_or_else(|e| panic!("failed parsing {name}: {e}"));
+        assert_eq!(back, frames, "round trip mismatch forcing {name}");
+        fs::remove_file(&path).unwrap();
+    }
 }
 
 #[test]

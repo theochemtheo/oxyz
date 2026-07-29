@@ -25,6 +25,7 @@ CODECS = [
     "compressed/two_frame.xyz.zip",
     "compressed/two_frame.tar.gz",
     "compressed/two_frame.tar",
+    "compressed/two_frame.tar.zst",
 ]
 
 
@@ -109,14 +110,10 @@ def test_unknown_compression_raises() -> None:
         oxyz.read(PLAIN, compression="lz4")  # ty: ignore[invalid-argument-type]
 
 
-def test_reads_tar_zstd(tmp_path: Path) -> None:
-    plain = oxyz.read(DATA_DIR / "two_frame_same_schema.xyz")
-    got = oxyz.read(DATA_DIR / "compressed/two_frame.tar.zst")
-    assert len(got) == len(plain)
-    assert got[0].n_atoms == plain[0].n_atoms
-
-
 def test_tar_codecs_are_forceable(tmp_path: Path) -> None:
+    # Copy each fixture to an unrecognised name first: detect_by_extension
+    # cannot rescue a ".bin" file, so a passing result proves the forced
+    # codec did the decoding, not extension inference.
     plain = oxyz.read(DATA_DIR / "two_frame_same_schema.xyz")
     cases: list[tuple[str, oxyz.Compression]] = [
         ("two_frame.tar", "tar"),
@@ -124,10 +121,9 @@ def test_tar_codecs_are_forceable(tmp_path: Path) -> None:
         ("two_frame.tar.zst", "tar.zst"),
     ]
     for name, compression in cases:
-        got = oxyz.read(
-            DATA_DIR / f"compressed/{name}",
-            compression=compression,
-        )
+        blob = tmp_path / "blob.bin"
+        blob.write_bytes((DATA_DIR / f"compressed/{name}").read_bytes())
+        got = oxyz.read(blob, compression=compression)
         assert len(got) == len(plain), f"mismatch forcing {compression}"
 
 
