@@ -109,6 +109,32 @@ def test_unknown_compression_raises() -> None:
         oxyz.read(PLAIN, compression="lz4")  # ty: ignore[invalid-argument-type]
 
 
+def test_reads_tar_zstd(tmp_path: Path) -> None:
+    plain = oxyz.read(DATA_DIR / "two_frame_same_schema.xyz")
+    got = oxyz.read(DATA_DIR / "compressed/two_frame.tar.zst")
+    assert len(got) == len(plain)
+    assert got[0].n_atoms == plain[0].n_atoms
+
+
+def test_tar_codecs_are_forceable(tmp_path: Path) -> None:
+    plain = oxyz.read(DATA_DIR / "two_frame_same_schema.xyz")
+    for name, compression in [
+        ("two_frame.tar", "tar"),
+        ("two_frame.tar.gz", "tar.gz"),
+        ("two_frame.tar.zst", "tar.zst"),
+    ]:
+        got = oxyz.read(
+            DATA_DIR / f"compressed/{name}",
+            compression=compression,  # ty: ignore[invalid-argument-type]
+        )
+        assert len(got) == len(plain), f"mismatch forcing {compression}"
+
+
+def test_unknown_compression_lists_the_tar_codecs() -> None:
+    with pytest.raises(ValueError, match=r"tar\.zst"):
+        oxyz.read(DATA_DIR / "simple.extxyz", compression="brotli")  # ty: ignore[invalid-argument-type]
+
+
 class TestBatching:
     def test_frames_per_batch_streams_on_compressed(self) -> None:
         gz = DATA_DIR / "compressed/two_frame.xyz.gz"
