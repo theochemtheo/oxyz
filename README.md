@@ -594,9 +594,9 @@ and width; any species strings. Metadata values are typed by shape, and
 anything that fits no narrower type falls back to a string rather than
 rejecting the file. Compressed inputs (`.gz`, `.tar.gz`, `.tar.zst`, `.zip`,
 `.zst`, `.tar`) are decoded transparently; see [Compressed files](#compressed-files).
-Writing the same forms (bar `.zst`) is covered in [Writing](#writing). Not
-supported: comment lines that are not key=value metadata, single-quoted values,
-and writing zstd (`.zst`) output.
+Writing the same forms (bar `.zst` and `.tar.zst`) is covered in
+[Writing](#writing). Not supported: comment lines that are not key=value
+metadata, single-quoted values, and writing zstd output (`.zst`, `.tar.zst`).
 
 ## How it is put together
 
