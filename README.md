@@ -451,7 +451,8 @@ throughput.
 The writable codecs are plain, `.gz`, `.zip`, `.tar`, and `.tar.gz`; `level`
 (`0..=9`) tunes the deflate-based ones. `append=True` adds to an existing file
 for the formats that allow a concatenated stream (plain, gzip) and is rejected
-for the archive codecs and for stdout. Writing `.zst` is not yet supported.
+for the archive codecs and for stdout. Writing `.zst` or `.tar.zst` is not yet
+supported.
 
 ## Compressed files
 
@@ -460,7 +461,7 @@ Any reader takes a compressed path and decodes it while streaming, so
 decompressing to a temporary file:
 
 ```python
-oxyz.read("run.xyz.gz")                    # .gz, .tar.gz, .zip, .zst, .tar
+oxyz.read("run.xyz.gz")                    # .gz, .tar.gz, .tar.zst, .zip, .zst, .tar
 oxyz.read("runs.zip", member="run2.xyz")   # pick one archive entry
 oxyz.read("run.bin", compression="gzip")   # force a codec by hand
 ```
@@ -497,8 +498,8 @@ oxyz.read(
 
 `gs://` and `az://` are routed through the same obstore mechanism; they are
 supported in principle but are not covered by oxyz's own integration tests, so
-treat them as best-effort. Compression (`.gz`, `.zst`, `.tar.gz`,
-`.zip`) and archive `member=` selection apply as for local files. As with
+treat them as best-effort. Compression (`.gz`, `.zst`, `.tar.gz`, `.tar.zst`,
+`.tar`, `.zip`) and archive `member=` selection apply as for local files. As with
 compressed local files, a remote stream cannot seek, so random-access batch
 strategies (`shuffle`, `atoms_per_batch`, `memory_scales_with`) need a local
 copy; see [Compressed files](#compressed-files).
@@ -591,8 +592,8 @@ metadata, but is a boolean in an `L`-kind atom column, following the
 spec); a `Properties` descriptor with `S`/`R`/`I`/`L` columns of any name
 and width; any species strings. Metadata values are typed by shape, and
 anything that fits no narrower type falls back to a string rather than
-rejecting the file. Compressed inputs (`.gz`, `.tar.gz`, `.zip`, `.zst`,
-`.tar`) are decoded transparently; see [Compressed files](#compressed-files).
+rejecting the file. Compressed inputs (`.gz`, `.tar.gz`, `.tar.zst`, `.zip`,
+`.zst`, `.tar`) are decoded transparently; see [Compressed files](#compressed-files).
 Writing the same forms (bar `.zst`) is covered in [Writing](#writing). Not
 supported: comment lines that are not key=value metadata, single-quoted values,
 and writing zstd (`.zst`) output.

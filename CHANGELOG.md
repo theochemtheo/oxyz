@@ -6,6 +6,16 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Read zstd-compressed tars (`.tar.zst`, `.tzst`), locally and from object
+  storage. Datasets shipped this way — the ELEMENTA release among them — were
+  previously unreadable: the extension matched the plain `.zst` rule, so the
+  tar headers reached the parser and surfaced as an atom-count error.
+- All three tar codecs are now selectable through `compression=`
+  (`"tar"`, `"tar.gz"`, `"tar.zst"`). A tar carries no magic bytes, so one
+  under an unrecognised name previously could not be read at all.
+
 ### Internal
 
 - Bumped the developer toolchain: uv 0.12.0, ruff 0.16, ty 0.0.64, rumdl 0.2.45,
