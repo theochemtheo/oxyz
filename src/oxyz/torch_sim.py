@@ -169,7 +169,12 @@ def read(  # noqa: PLR0913  keyword options mirror the SimState data model
         storage_options=storage_options,
     )
     return _to_state(
-        batch, dtype, device, positions_requires_grad, system_extras, atom_extras
+        batch,
+        dtype,
+        device,
+        positions_requires_grad=positions_requires_grad,
+        system_extras=system_extras,
+        atom_extras=atom_extras,
     )
 
 
@@ -281,7 +286,12 @@ def iread(  # noqa: PLR0913  batching options plus the SimState data model
         storage_options=storage_options,
     ):
         yield _to_state(
-            batch, dtype, device, positions_requires_grad, system_extras, atom_extras
+            batch,
+            dtype,
+            device,
+            positions_requires_grad=positions_requires_grad,
+            system_extras=system_extras,
+            atom_extras=atom_extras,
         )
 
 
@@ -369,9 +379,9 @@ class SimStateSource:
             self._batch,
             dtype,
             device,
-            positions_requires_grad,
-            system_extras,
-            atom_extras,
+            positions_requires_grad=positions_requires_grad,
+            system_extras=system_extras,
+            atom_extras=atom_extras,
         )
 
     def per_config(
@@ -481,6 +491,7 @@ def _to_state(
     batch: Batch,
     dtype: torch.dtype | None,
     device: torch.device | None,
+    *,
     positions_requires_grad: bool,
     system_extras: ExtrasMap | None,
     atom_extras: ExtrasMap | None,

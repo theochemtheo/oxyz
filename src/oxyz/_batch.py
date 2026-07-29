@@ -496,12 +496,12 @@ def iread_batch(  # noqa: C901, PLR0913  the keyword options are the batching co
         atoms_per_batch,
         memory_scales_with,
         max_scaler,
-        shuffle,
-        seed,
-        threads,
-        projection,
-        conformance,
-        spec,
+        shuffle=shuffle,
+        seed=seed,
+        threads=threads,
+        projection=projection,
+        conformance=conformance,
+        spec=spec,
     )
 
 
@@ -588,6 +588,7 @@ def _planned_batches(  # noqa: PLR0913  the planning knobs plus projection
     atoms_per_batch: int | None,
     memory_scales_with: MemoryScaling | None,
     max_scaler: float | None,
+    *,
     shuffle: bool,
     seed: int | None,
     threads: int | None,
@@ -756,7 +757,7 @@ def _resolve_projected_batch(
     survived = set(survivors)
     for req_index, deviations in reports:
         dropped = req_index not in survived
-        enforce_projection(deviations, conformance, req_index, dropped)
+        enforce_projection(deviations, conformance, req_index, dropped=dropped)
     if not survivors:
         return None
     batch = _batch_from_data(data, survivors)
