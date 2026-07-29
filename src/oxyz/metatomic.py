@@ -521,7 +521,7 @@ def _to_system(
     device: torch.device | None,
     *,
     positions_requires_grad: bool,
-    cell_requires_grad: bool,
+    cell_requires_grad: bool,  # noqa: ARG001  accepted for systems_to_torch parity; see below
 ) -> System:
     """Convert one frame, reproducing `systems_to_torch`'s cell/pbc handling."""
     resolved = resolve_dtype(dtype)

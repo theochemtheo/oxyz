@@ -71,7 +71,7 @@ class FromAtomsError(OxyzError):
     """The `ase.Atoms` carries something a `Frame` cannot represent faithfully."""
 
 
-def to_atoms(frame: Frame) -> Atoms:  # noqa: C901  flat field-by-field mapping to ase.Atoms
+def to_atoms(frame: Frame) -> Atoms:  # noqa: C901, PLR0912  flat field-by-field mapping to ase.Atoms
     """Convert one `Frame` to `ase.Atoms`, mirroring `ase.io.read`'s mapping.
 
     Parameters

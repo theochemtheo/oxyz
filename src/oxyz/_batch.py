@@ -311,7 +311,7 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
     )
 
 
-def iread_batch(  # noqa: C901, PLR0913  the keyword options are the batching contract
+def iread_batch(  # noqa: C901, PLR0913, PLR0912  the keyword options are the batching contract
     path: str | Path,
     *,
     frames_per_batch: int | None = None,

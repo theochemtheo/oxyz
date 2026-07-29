@@ -123,38 +123,20 @@ src = ["src", "tests"]
 extend-exclude = ["./README.md"]
 
 [tool.ruff.lint]
-select = [
-    "E",
-    "F",
-    "I",
-    "UP",
-    "B",
-    "SIM",
-    "ANN",   # the public surface is a typed contract; keep it annotated
-    "RUF",
-    "TC",    # typing-only imports belong under TYPE_CHECKING
-    "PT",    # the tests encode the promises; hold them to pytest idioms
-    "PYI",   # the shipped .pyi stubs are linted too
-    "RET",
-    "PIE",
-    "FURB",
-    "SLOT",
-    "ICN",
-    "LOG",
-    "G",
-    "INP",
-    "TID",
-    "N",
-    "PTH",
-    "DTZ",
-    "PGH",
-    "FLY",
-    "ERA",
-    "C901",     # complexity; thresholds below flag only real outliers
-    "PLR0913",
-    "S",        # security; asserts (S101) allowed in tests below
-    "T20",      # no stray prints outside the CLI
-    "D",        # docstrings on the public surface; numpy convention below
+# Everything on, then opted out of deliberately. Each entry below is a decision
+# with a reason attached, which a hand-picked select list cannot express: a rule
+# absent from such a list might have been rejected, or might simply never have
+# been read. ruff is pinned in uv.lock, so a new release's rules arrive on a
+# deliberate bump rather than by surprise.
+select = ["ALL"]
+ignore = [
+    "COM812",  # trailing commas are the formatter's business, not the linter's
+    "ISC001",  # ditto: single-line implicit string concatenation
+    "CPY001",  # the licence lives in LICENSE-*, not atop every file
+    "PLC0415", # imports inside functions are how the optional targets stay optional
+    "TRY003",  # the message at the raise site is the error's documentation
+    "EM101",   # ditto: a literal there reads better than a name bound above it
+    "EM102",   # ditto, for f-strings
 ]
 
 [tool.ruff.lint.pylint]
@@ -172,20 +154,38 @@ convention = "numpy"
 # S: security lints target shipped code, not the test harness (fake creds, the
 # ty subprocess canary); PT011: these tests assert the error class deliberately.
 # D: docstring rules target the shipped public surface, not tests.
-"tests/**" = ["ANN", "S", "PLR2004", "SLF001", "ARG", "PT011", "D"]
+# FBT: the _rust extension's PyO3 signatures take their flags positionally.
+"tests/**" = ["ANN", "S", "PLR2004", "SLF001", "ARG", "PT011", "D", "FBT"]
 # print() is the CLI's output mechanism.
 "src/oxyz/_cli.py" = ["T201"]
 # the obstore adapter is the boundary to an optional, loosely-typed dependency;
 # Any is deliberate there rather than a missing annotation.
 "src/oxyz/_remote.py" = ["ANN401"]
+# `format` is ASE's own keyword argument; shadowing the builtin is what makes
+# oxyz.ase.read a drop-in for ase.io.read.
+"src/oxyz/ase.py" = ["A002"]
 # the .pyi stubs are the user-facing docs for the Rust extension's symbols, so
 # they carry docstrings by design; pydocstyle rules do not apply to stubs.
 "**/*.pyi" = ["PYI021", "D"]
 # benchmarks are PEP 723 measurement scripts, not shipped surface: they print
 # results, use pickle/random/subprocess to drive comparisons, and need no
 # annotations or docstrings. Keep the real checks (F/E/B/…); relax the
-# standards groups.
-"benchmarks/**" = ["ANN", "S", "T20", "INP", "PT", "TC", "RUF001", "D"]
+# standards groups. They also reach into private module state to report on it,
+# and carry the plotting flags and axis sizes of throwaway analysis code.
+"benchmarks/**" = [
+    "ANN",
+    "S",
+    "T20",
+    "INP",
+    "PT",
+    "TC",
+    "RUF001",
+    "D",
+    "ARG",
+    "SLF001",
+    "FBT",
+    "PLR2004",
+]
 # utility scripts print their results and are not an importable package.
 "scripts/**" = ["T20", "INP", "D"]
 # doc examples print their output for a reader to eyeball and are not an
