@@ -37,6 +37,10 @@ def _is_streaming_only(path: str | Path, compression: Compression) -> bool:
     return _rust.is_compressed(str(path), compression)
 
 
+# "start:stop:step" — a slice string has at most three colon-separated parts.
+_MAX_SLICE_PARTS = 3
+
+
 def parse_index(index: int | str | slice) -> int | slice:
     """ASE's index grammar: an int, an int string, or a slice string."""
     if not isinstance(index, str):
@@ -44,7 +48,7 @@ def parse_index(index: int | str | slice) -> int | slice:
     if ":" not in index:
         return int(index)
     parts = index.split(":")
-    if len(parts) > 3:
+    if len(parts) > _MAX_SLICE_PARTS:
         raise ValueError(f"invalid slice string: {index!r}")
     start, stop, step = (int(part) if part else None for part in (*parts, "", "")[:3])
     return slice(start, stop, step)
