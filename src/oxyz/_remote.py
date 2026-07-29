@@ -5,10 +5,15 @@ Recognises S3-and-friends URLs, builds an obstore store from the URL plus typed
 URL name (with a cheap magic-byte sniff), and hands the binding a streaming
 source. The only module that imports `obstore`; the import is lazy, so the base
 install stays numpy-only.
+
+HuggingFace Hub URLs are handled here too. The Hub serves a repo's files as raw
+bytes over plain HTTPS, so `hf://` URLs are rewritten onto that endpoint and read
+through obstore's HTTP store; see `_normalise_hf_url`.
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
@@ -55,9 +60,30 @@ if TYPE_CHECKING:
 else:
     StorageOptions = dict
 
-# obstore-backed schemes. `hf` is deliberately excluded until obstore ships a
-# HuggingFace backend (tracked separately).
-SUPPORTED_SCHEMES = frozenset({"s3", "gs", "az", "azure", "abfs", "abfss"})
+# obstore-backed schemes. `hf` is served over plain HTTPS against the Hub, so it
+# is rewritten before the store is built; see `_normalise_hf_url`.
+SUPPORTED_SCHEMES = frozenset({"s3", "gs", "az", "azure", "abfs", "abfss", "hf"})
+
+# Hub hosts oxyz claims when they appear in an http(s) URL. http(s) is *not*
+# supported in general — only these hosts, so pasting a browser URL works
+# without oxyz laying claim to every URL on the web.
+_HF_HOSTS = frozenset({"huggingface.co", "hf.co"})
+_HF_HOST = "huggingface.co"
+# Repo kinds the Hub serves under a path prefix. Models have no prefix: they sit
+# at the root, so `models` is accepted in an hf:// URL and then dropped.
+_HF_PREFIXED_KINDS = frozenset({"datasets", "spaces"})
+_HF_KINDS = _HF_PREFIXED_KINDS | {"models"}
+# The Hub's raw-bytes endpoint. `blob` is the HTML page for the same file, and
+# `raw` serves the file itself for small files, an LFS pointer for large ones.
+_HF_RESOLVE = "resolve"
+_HF_BLOB = "blob"
+# Segments that mark a Hub URL as naming a file rather than a page.
+_HF_FILE_ENDPOINTS = frozenset({_HF_RESOLVE, _HF_BLOB, "raw"})
+_HF_DEFAULT_REVISION = "main"
+# Checked in order; HF_TOKEN is current, HUGGING_FACE_HUB_TOKEN the older name.
+_HF_TOKEN_ENV = ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")
+# owner + repo, before any path within the repo.
+_HF_REPO_PARTS = 2
 
 # How many leading bytes to sniff when the URL extension is uninformative.
 _SNIFF_BYTES = 8
@@ -71,8 +97,16 @@ def _scheme(path: str | Path) -> str:
     return urlsplit(str(path)).scheme.lower()
 
 
+def _is_hf_http(path: str | Path) -> bool:
+    """Report whether `path` is an http(s) URL on one of the Hub's hosts."""
+    parts = urlsplit(str(path))
+    return parts.scheme.lower() in ("http", "https") and (
+        parts.netloc.lower() in _HF_HOSTS
+    )
+
+
 def is_remote(path: str | Path) -> bool:
-    """Report whether `path` is a URL in a supported remote scheme.
+    """Report whether `path` is a URL oxyz reads through obstore.
 
     Parameters
     ----------
@@ -82,9 +116,97 @@ def is_remote(path: str | Path) -> bool:
     Returns
     -------
     bool
-        `True` if `path`'s scheme is one of `SUPPORTED_SCHEMES`.
+        `True` if `path`'s scheme is one of `SUPPORTED_SCHEMES`, or if it is an
+        http(s) URL on a HuggingFace Hub host. Other http(s) URLs are not
+        claimed.
     """
-    return _scheme(path) in SUPPORTED_SCHEMES
+    return _scheme(path) in SUPPORTED_SCHEMES or _is_hf_http(path)
+
+
+def _split_hf_path(url: str) -> tuple[str, str, str, str]:
+    """Split an `hf://` path into `(kind_prefix, "owner/repo", revision, path)`."""
+    segments = [s for s in url[len("hf://") :].split("/") if s]
+    # A leading repo kind is optional; without one the repo is a model, which
+    # the Hub serves off the root. (A model repo owned by someone named
+    # `datasets` is unreachable this way — an ambiguity the wider `hf://`
+    # convention shares, so matching it beats inventing a divergence.)
+    kind = segments[0] if segments and segments[0] in _HF_KINDS else None
+    if kind is not None:
+        segments = segments[1:]
+    if len(segments) <= _HF_REPO_PARTS:
+        raise ValueError(
+            f"hf:// URL needs owner, repo and a file path within the repo: {url!r}"
+        )
+    owner, repo = segments[0], segments[1]
+    # The revision rides on the repo name (`repo@v1.0`), as `hf://` paths do
+    # elsewhere in the ecosystem; the Hub wants it as its own path segment.
+    repo, _, revision = repo.partition("@")
+    prefix = f"{kind}/" if kind in _HF_PREFIXED_KINDS else ""
+    return (
+        prefix,
+        f"{owner}/{repo}",
+        revision or _HF_DEFAULT_REVISION,
+        "/".join(segments[_HF_REPO_PARTS:]),
+    )
+
+
+def _normalise_hf_http_url(url: str) -> str:
+    """Canonicalise a Hub http(s) URL onto the raw-bytes endpoint.
+
+    The host is folded to `huggingface.co`, and a `blob` segment — the file's
+    HTML page, which is what the browser address bar holds — is redirected to
+    `resolve`, so the parser is handed the file rather than markup. `raw` is
+    left alone: it is a deliberate, documented endpoint, and rewriting it would
+    override an explicit choice.
+    """
+    segments = urlsplit(url).path.strip("/").split("/")
+    # Guard against a repo, directory or search page, all of which serve HTML.
+    # A file URL names its endpoint after the repo: <repo>/<endpoint>/<rev>/...
+    if not any(seg in _HF_FILE_ENDPOINTS for seg in segments[1:]):
+        raise ValueError(
+            f"HuggingFace URL does not name a file: {url!r} — expected a "
+            f"'/resolve/' or '/blob/' URL, or an hf:// path"
+        )
+    segments = [
+        _HF_RESOLVE if i > 0 and seg == _HF_BLOB else seg
+        for i, seg in enumerate(segments)
+    ]
+    return f"https://{_HF_HOST}/" + "/".join(segments)
+
+
+def _normalise_hf_url(url: str) -> str:
+    """Rewrite a HuggingFace URL to the Hub's raw-bytes (`resolve`) endpoint.
+
+    `hf://[datasets|spaces|models/]owner/repo[@revision]/path` becomes the
+    equivalent `https://huggingface.co/.../resolve/<revision>/path`; a Hub
+    http(s) URL is canonicalised by `_normalise_hf_http_url`. Any other URL is
+    returned unchanged.
+    """
+    if _is_hf_http(url):
+        return _normalise_hf_http_url(url)
+    if _scheme(url) != "hf":
+        return url
+    prefix, repo, revision, path = _split_hf_path(url)
+    return f"https://{_HF_HOST}/{prefix}{repo}/{_HF_RESOLVE}/{revision}/{path}"
+
+
+def _hf_storage_options(
+    storage_options: StorageOptions | None,
+) -> StorageOptions | None:
+    """Add a bearer header from `HF_TOKEN` unless the caller set one already.
+
+    Mirrors the `AWS_*` fallback the S3 path gets for free from obstore, which
+    has no notion of a Hub token. Gated and private repos need it; public ones
+    do not, so a missing token is not an error.
+    """
+    headers: dict[str, Any] = dict((storage_options or {}).get("default_headers") or {})
+    if any(k.lower() == "authorization" for k in headers):
+        return storage_options
+    token = next((t for t in map(os.environ.get, _HF_TOKEN_ENV) if t), None)
+    if token is None:
+        return storage_options
+    headers["authorization"] = f"Bearer {token}"
+    return {**(storage_options or {}), "default_headers": headers}
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,7 +332,7 @@ def open_source(
     Parameters
     ----------
     path
-        A URL in one of `SUPPORTED_SCHEMES`.
+        A URL `is_remote` accepts.
     compression
         Forces a codec, or `"infer"` to detect it from the key/magic bytes.
     member
@@ -225,7 +347,11 @@ def open_source(
         A streaming source ready for the `_rust.*_reader` entries.
     """
     obstore = _import_obstore()
-    _, bucket_url, key = _split_url(str(path))
+    url = str(path)
+    if _scheme(url) == "hf" or _is_hf_http(url):
+        url = _normalise_hf_url(url)
+        storage_options = _hf_storage_options(storage_options)
+    _, bucket_url, key = _split_url(url)
     store = _build_store(bucket_url, storage_options)
     codec = _resolve_codec(obstore, store, key, compression)
 

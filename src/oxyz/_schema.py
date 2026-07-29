@@ -244,9 +244,9 @@ def infer_schema(
     A compressed path is decoded while streaming; `compression` and `member`
     work as in `read`.
 
-    A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through
-    the same parser (needs the ``oxyz[s3]`` extra); ``storage_options`` passes
-    endpoint/credentials to the store.
+    A remote URL (``s3://``, ``gs://``, ``az://``, ``hf://``) streams the
+    object through the same parser (needs the ``oxyz[s3]`` extra);
+    ``storage_options`` passes endpoint/credentials to the store.
 
     Parameters
     ----------

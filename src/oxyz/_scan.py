@@ -88,9 +88,9 @@ def scan(
     speedup on a re-read (which decompresses afresh). `compression` and `member`
     work as in `read`.
 
-    A remote URL (``s3://``, ``gs://``, ``az://``) streams the object through
-    the same scanner (needs the ``oxyz[s3]`` extra); ``storage_options`` passes
-    endpoint/credentials to the store.
+    A remote URL (``s3://``, ``gs://``, ``az://``, ``hf://``) streams the
+    object through the same scanner (needs the ``oxyz[s3]`` extra);
+    ``storage_options`` passes endpoint/credentials to the store.
 
     Parameters
     ----------
