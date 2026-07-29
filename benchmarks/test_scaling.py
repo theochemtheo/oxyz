@@ -113,13 +113,11 @@ def _size_readers(size: int, cap: int):
 
 
 def _size_params(sizes, cap):
-    params = []
-    for size in sizes:
-        for p in _size_readers(size, cap):
-            params.append(
-                pytest.param(p.values[0], size, id=f"{p.id}-{size}", marks=p.marks)
-            )
-    return params
+    return [
+        pytest.param(p.values[0], size, id=f"{p.id}-{size}", marks=p.marks)
+        for size in sizes
+        for p in _size_readers(size, cap)
+    ]
 
 
 DATASET_PARAMS = _size_params(

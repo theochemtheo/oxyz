@@ -209,8 +209,10 @@ def environment(data: dict[str, Any]) -> str:
     lines = [
         "## Environment",
         "",
-        f"- {cpu}, {machine.get('system', '?')} {machine.get('release', '?')}"
-        f" ({machine.get('machine', '?')})",
+        (
+            f"- {cpu}, {machine.get('system', '?')} {machine.get('release', '?')}"
+            f" ({machine.get('machine', '?')})"
+        ),
         f"- CPython {machine.get('python_version', '?')}",
     ]
     if installed:

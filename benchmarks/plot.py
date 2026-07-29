@@ -274,8 +274,8 @@ def sweep_size_rows(
         # to the base reader so a reader's points across sizes form one curve.
         reader = r["reader"].removesuffix(f"-{size}")
         by_reader.setdefault(reader, []).append((size, r["mean"], r["n_atoms"]))
-    for reader in by_reader:
-        by_reader[reader].sort()
+    for points in by_reader.values():
+        points.sort()
     return by_reader
 
 
@@ -428,11 +428,14 @@ def main() -> None:
     for scaling in ("scaling_dataset", "scaling_system", "scaling_threads"):
         by_scenario.pop(scaling, None)
 
-    outputs = []
     shared = [s for s in SHARED_SCENARIOS if s in by_scenario]
     scan_rows = by_scenario.pop("scan", None)
-    for scenario in sorted(set(by_scenario) - set(shared)):
-        outputs.append(render_figure(scenario, by_scenario[scenario]))
+    # The curve figures below return None when their scenario is absent from the
+    # run; the None entries are filtered out once every figure is collected.
+    outputs: list[Path | None] = [
+        render_figure(scenario, by_scenario[scenario])
+        for scenario in sorted(set(by_scenario) - set(shared))
+    ]
     if shared:
         shared_rows = [r for s in shared for r in by_scenario[s]]
         shared_groups = [
@@ -451,9 +454,8 @@ def main() -> None:
         )
     )
     outputs.append(thread_curve_figure(rows))
-    outputs = [o for o in outputs if o is not None]
 
-    for out in outputs:
+    for out in [o for o in outputs if o is not None]:
         print(f"wrote {out.relative_to(REPO)} from {save.name}")
 
 
