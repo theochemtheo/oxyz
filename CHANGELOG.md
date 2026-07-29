@@ -4,7 +4,7 @@ All notable changes to oxyz are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.0] - 2026-07-29
 
 ### Added
 
@@ -25,9 +25,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   previously unreadable: the extension matched the plain `.zst` rule, so the
   tar headers reached the parser and surfaced as an atom-count error.
 - All three tar codecs are now selectable through `compression=` for reading
-  (`"tar"`, `"tar.gz"`, `"tar.zst"`); writing still accepts only `tar` and
-  `tar.gz`. A tar carries no magic bytes, so one under an unrecognised name
-  previously could not be read at all.
+  (`"tar"`, `"tar.gz"`, `"tar.zst"`), and through `--compression` on `oxyz scan`,
+  `check`, and `freeze`; writing still accepts only `tar` and `tar.gz`. A tar
+  carries no magic bytes, so one under an unrecognised name previously could not
+  be read at all.
 
 ### Internal
 
@@ -355,7 +356,7 @@ for reading atomistic-simulation datasets into numpy or ASE.
 - abi3 wheels for CPython 3.11 and newer on Linux (x86_64, aarch64), macOS
   (arm64, x86_64), and Windows (x64).
 
-[unreleased]: https://github.com/theochemtheo/oxyz/compare/v1.0.0...HEAD
+[1.1.0]: https://github.com/theochemtheo/oxyz/releases/tag/v1.1.0
 [1.0.0]: https://github.com/theochemtheo/oxyz/releases/tag/v1.0.0
 [0.5.0]: https://github.com/theochemtheo/oxyz/releases/tag/v0.5.0
 [0.4.0]: https://github.com/theochemtheo/oxyz/releases/tag/v0.4.0
