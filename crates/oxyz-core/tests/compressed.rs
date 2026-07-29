@@ -377,9 +377,12 @@ fn tar_codecs_can_be_forced_regardless_of_name() {
         let bytes = std::fs::read(fixture(name)).unwrap();
         let path = temp_file(&bytes, "bin");
 
-        let mut reader = open_decoded(&path, compression, None).unwrap();
+        let mut reader = open_decoded(&path, compression, None)
+            .unwrap_or_else(|e| panic!("failed forcing {name}: {e}"));
         let mut text = String::new();
-        reader.read_to_string(&mut text).unwrap();
+        reader
+            .read_to_string(&mut text)
+            .unwrap_or_else(|e| panic!("failed forcing {name}: {e}"));
         assert_eq!(text, plain(), "mismatch forcing {name}");
 
         // Same blind bytes, but without the forced codec: no tar magic
