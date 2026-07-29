@@ -102,6 +102,9 @@ def test_normalise_hf_url_rejects_incomplete(url):
         "https://huggingface.co/datasets/o/r",  # the repo page, not a file
         "https://huggingface.co/datasets/o/r/tree/main/data",  # a directory page
         "https://huggingface.co/",
+        "https://huggingface.co/datasets/o/r/resolve/main",  # revision, no file
+        "https://huggingface.co/datasets/o/r/blob",  # endpoint, nothing after
+        "https://huggingface.co/datasets/o/resolve/main/a.xyz",  # no repo name
     ],
 )
 def test_normalise_hf_url_rejects_http_urls_naming_no_file(url):
@@ -116,6 +119,44 @@ def test_normalise_hf_url_keeps_raw_endpoint():
         _remote._normalise_hf_url("https://huggingface.co/datasets/o/r/raw/main/a.xyz")
         == "https://huggingface.co/datasets/o/r/raw/main/a.xyz"
     )
+
+
+def test_parse_hf_scheme_url_fields():
+    ref = _remote._parse_hf_scheme_url("hf://datasets/o/r@v1.0/data/a.extxyz")
+    assert ref.kind is _remote._HfRepoKind.DATASET
+    assert ref.owner == "o"
+    assert ref.repo == "r"
+    assert ref.revision == "v1.0"
+    assert ref.path == "data/a.extxyz"
+    assert ref.endpoint == "resolve"
+
+
+def test_parse_hf_scheme_url_defaults_to_a_model_on_main():
+    ref = _remote._parse_hf_scheme_url("hf://o/r/a.extxyz")
+    assert ref.kind is _remote._HfRepoKind.MODEL
+    assert ref.revision == "main"
+    assert ref.kind.prefix == ""  # models are served off the Hub root
+
+
+def test_parse_hf_http_url_fields():
+    ref = _remote._parse_hf_http_url("https://hf.co/o/r/raw/dev/data/a.xyz")
+    assert ref.kind is _remote._HfRepoKind.MODEL
+    assert ref.owner == "o"
+    assert ref.repo == "r"
+    assert ref.revision == "dev"
+    assert ref.path == "data/a.xyz"
+    assert ref.endpoint == "raw"  # preserved; only blob is redirected
+
+
+def test_hf_file_renders_its_canonical_url():
+    ref = _remote._HfFile(
+        kind=_remote._HfRepoKind.SPACE,
+        owner="o",
+        repo="r",
+        revision="main",
+        path="data/a.xyz",
+    )
+    assert ref.url == "https://huggingface.co/spaces/o/r/resolve/main/data/a.xyz"
 
 
 class _FakeObstore:

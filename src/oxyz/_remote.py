@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
@@ -69,10 +70,6 @@ SUPPORTED_SCHEMES = frozenset({"s3", "gs", "az", "azure", "abfs", "abfss", "hf"}
 # without oxyz laying claim to every URL on the web.
 _HF_HOSTS = frozenset({"huggingface.co", "hf.co"})
 _HF_HOST = "huggingface.co"
-# Repo kinds the Hub serves under a path prefix. Models have no prefix: they sit
-# at the root, so `models` is accepted in an hf:// URL and then dropped.
-_HF_PREFIXED_KINDS = frozenset({"datasets", "spaces"})
-_HF_KINDS = _HF_PREFIXED_KINDS | {"models"}
 # The Hub's raw-bytes endpoint. `blob` is the HTML page for the same file, and
 # `raw` serves the file itself for small files, an LFS pointer for large ones.
 _HF_RESOLVE = "resolve"
@@ -84,6 +81,60 @@ _HF_DEFAULT_REVISION = "main"
 _HF_TOKEN_ENV = ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")
 # owner + repo, before any path within the repo.
 _HF_REPO_PARTS = 2
+# revision + at least one path segment, after the endpoint in an http(s) URL.
+_HF_REVISION_AND_PATH = 2
+
+
+class _HfRepoKind(StrEnum):
+    """A Hub repo type, valued as the segment naming it in a URL.
+
+    Attributes
+    ----------
+    MODEL
+        A model repo. The Hub serves these off the root, so unlike the other
+        two this kind contributes no path prefix.
+    DATASET
+        A dataset repo, under `datasets/`.
+    SPACE
+        A Space, under `spaces/`.
+    """
+
+    MODEL = "models"
+    DATASET = "datasets"
+    SPACE = "spaces"
+
+    @property
+    def prefix(self) -> str:
+        """Return the URL path prefix: empty for a model, `<kind>/` otherwise."""
+        return "" if self is _HfRepoKind.MODEL else f"{self}/"
+
+
+_HF_KIND_SEGMENTS = frozenset(kind.value for kind in _HfRepoKind)
+
+
+@dataclass(frozen=True, slots=True)
+class _HfFile:
+    """One file in a Hub repo, however it was named.
+
+    Both accepted URL forms parse to this, and `url` renders the one the Hub
+    serves bytes from, so the two forms cannot drift apart.
+    """
+
+    kind: _HfRepoKind
+    owner: str
+    repo: str
+    revision: str
+    path: str
+    endpoint: str = _HF_RESOLVE
+
+    @property
+    def url(self) -> str:
+        """The Hub URL these bytes are fetched from."""
+        return (
+            f"https://{_HF_HOST}/{self.kind.prefix}{self.owner}/{self.repo}"
+            f"/{self.endpoint}/{self.revision}/{self.path}"
+        )
+
 
 # How many leading bytes to sniff when the URL extension is uninformative.
 _SNIFF_BYTES = 8
@@ -123,71 +174,87 @@ def is_remote(path: str | Path) -> bool:
     return _scheme(path) in SUPPORTED_SCHEMES or _is_hf_http(path)
 
 
-def _split_hf_path(url: str) -> tuple[str, str, str, str]:
-    """Split an `hf://` path into `(kind_prefix, "owner/repo", revision, path)`."""
-    segments = [s for s in url[len("hf://") :].split("/") if s]
-    # A leading repo kind is optional; without one the repo is a model, which
-    # the Hub serves off the root. (A model repo owned by someone named
-    # `datasets` is unreachable this way — an ambiguity the wider `hf://`
-    # convention shares, so matching it beats inventing a divergence.)
-    kind = segments[0] if segments and segments[0] in _HF_KINDS else None
-    if kind is not None:
-        segments = segments[1:]
-    if len(segments) <= _HF_REPO_PARTS:
+def _take_repo_kind(segments: list[str]) -> tuple[_HfRepoKind, list[str]]:
+    """Split a leading repo-kind segment off `segments`, defaulting to a model.
+
+    A model repo whose owner is literally named `datasets` is unreachable this
+    way — an ambiguity the wider `hf://` convention shares, so matching it beats
+    inventing a divergence.
+    """
+    if segments and segments[0] in _HF_KIND_SEGMENTS:
+        return _HfRepoKind(segments[0]), segments[1:]
+    return _HfRepoKind.MODEL, segments
+
+
+def _parse_hf_scheme_url(url: str) -> _HfFile:
+    """Parse `hf://[datasets|spaces|models/]owner/repo[@revision]/path`."""
+    kind, rest = _take_repo_kind([s for s in url[len("hf://") :].split("/") if s])
+    if len(rest) <= _HF_REPO_PARTS:
         raise ValueError(
             f"hf:// URL needs owner, repo and a file path within the repo: {url!r}"
         )
-    owner, repo = segments[0], segments[1]
+    owner, repo = rest[0], rest[1]
     # The revision rides on the repo name (`repo@v1.0`), as `hf://` paths do
     # elsewhere in the ecosystem; the Hub wants it as its own path segment.
     repo, _, revision = repo.partition("@")
-    prefix = f"{kind}/" if kind in _HF_PREFIXED_KINDS else ""
-    return (
-        prefix,
-        f"{owner}/{repo}",
-        revision or _HF_DEFAULT_REVISION,
-        "/".join(segments[_HF_REPO_PARTS:]),
+    return _HfFile(
+        kind=kind,
+        owner=owner,
+        repo=repo,
+        revision=revision or _HF_DEFAULT_REVISION,
+        path="/".join(rest[_HF_REPO_PARTS:]),
     )
 
 
-def _normalise_hf_http_url(url: str) -> str:
-    """Canonicalise a Hub http(s) URL onto the raw-bytes endpoint.
+def _parse_hf_http_url(url: str) -> _HfFile:
+    """Parse a Hub http(s) URL: `[kind/]owner/repo/<endpoint>/<revision>/path`.
 
-    The host is folded to `huggingface.co`, and a `blob` segment — the file's
-    HTML page, which is what the browser address bar holds — is redirected to
-    `resolve`, so the parser is handed the file rather than markup. `raw` is
-    left alone: it is a deliberate, documented endpoint, and rewriting it would
-    override an explicit choice.
+    A `blob` endpoint is the file's HTML page — what the browser address bar
+    holds — so it is swapped for `resolve`, which serves the bytes. `raw` is
+    kept as given: it is a deliberate, documented endpoint, and rewriting it
+    would override an explicit choice.
     """
+    not_a_file = (
+        f"HuggingFace URL does not name a file: {url!r} — expected a "
+        f"'/resolve/' or '/blob/' URL, or an hf:// path"
+    )
     segments = urlsplit(url).path.strip("/").split("/")
-    # Guard against a repo, directory or search page, all of which serve HTML.
-    # A file URL names its endpoint after the repo: <repo>/<endpoint>/<rev>/...
-    if not any(seg in _HF_FILE_ENDPOINTS for seg in segments[1:]):
-        raise ValueError(
-            f"HuggingFace URL does not name a file: {url!r} — expected a "
-            f"'/resolve/' or '/blob/' URL, or an hf:// path"
-        )
-    segments = [
-        _HF_RESOLVE if i > 0 and seg == _HF_BLOB else seg
-        for i, seg in enumerate(segments)
-    ]
-    return f"https://{_HF_HOST}/" + "/".join(segments)
+    # The endpoint always follows the repo, so it never leads. Its absence marks
+    # a repo, directory or search page, all of which serve HTML rather than a
+    # file.
+    at = next(
+        (i for i, seg in enumerate(segments) if i > 0 and seg in _HF_FILE_ENDPOINTS),
+        None,
+    )
+    if at is None:
+        raise ValueError(not_a_file)
+    kind, repo = _take_repo_kind(segments[:at])
+    revision_and_path = segments[at + 1 :]
+    if len(repo) != _HF_REPO_PARTS or len(revision_and_path) < _HF_REVISION_AND_PATH:
+        raise ValueError(not_a_file)
+    endpoint = segments[at]
+    return _HfFile(
+        kind=kind,
+        owner=repo[0],
+        repo=repo[1],
+        revision=revision_and_path[0],
+        path="/".join(revision_and_path[1:]),
+        endpoint=_HF_RESOLVE if endpoint == _HF_BLOB else endpoint,
+    )
 
 
 def _normalise_hf_url(url: str) -> str:
-    """Rewrite a HuggingFace URL to the Hub's raw-bytes (`resolve`) endpoint.
+    """Rewrite a HuggingFace URL to the Hub endpoint that serves the bytes.
 
-    `hf://[datasets|spaces|models/]owner/repo[@revision]/path` becomes the
-    equivalent `https://huggingface.co/.../resolve/<revision>/path`; a Hub
-    http(s) URL is canonicalised by `_normalise_hf_http_url`. Any other URL is
-    returned unchanged.
+    Both accepted forms — an `hf://` path and a Hub http(s) URL — parse to the
+    same `_HfFile`, which renders the canonical URL, so the two cannot drift
+    apart. Any other URL is returned unchanged.
     """
     if _is_hf_http(url):
-        return _normalise_hf_http_url(url)
+        return _parse_hf_http_url(url).url
     if _scheme(url) != "hf":
         return url
-    prefix, repo, revision, path = _split_hf_path(url)
-    return f"https://{_HF_HOST}/{prefix}{repo}/{_HF_RESOLVE}/{revision}/{path}"
+    return _parse_hf_scheme_url(url).url
 
 
 def _hf_storage_options(
