@@ -66,6 +66,23 @@ def test_scan_json_no_schema(capsys: pytest.CaptureFixture[str]) -> None:
     assert payload["stats"]["n_frames"] == 1
 
 
+def test_scan_accepts_forced_tar_zst_compression(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    code = main(
+        [
+            "scan",
+            "--no-schema",
+            str(DATA / "compressed" / "two_frame.tar.zst"),
+            "--compression",
+            "tar.zst",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "frames:      2" in out
+
+
 def test_scan_missing_file_exits_one(capsys: pytest.CaptureFixture[str]) -> None:
     code = main(["scan", str(DATA / "does_not_exist.extxyz")])
     captured = capsys.readouterr()
