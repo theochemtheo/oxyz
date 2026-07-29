@@ -17,8 +17,8 @@ use oxyz_core::project::{
 use oxyz_core::schema::{ColumnSchema, MetadataSchema, Schema, ValueType};
 use oxyz_core::{
     Batch, ByteSource, Codec, Column, ColumnData, ColumnKind, Compression, DecodedReader,
-    ExtxyzError, Frame, FrameSink, Value, detect_codec_name, open_decoded, wrap_stream, wrap_tar,
-    wrap_zip, write_frames, write_frames_parallel,
+    ExtxyzError, Frame, FrameSink, TarInner, Value, detect_codec_name, open_decoded, wrap_stream,
+    wrap_tar, wrap_zip, write_frames, write_frames_parallel,
 };
 
 /// Map the Python `compression` string to the core selector.
@@ -1583,20 +1583,22 @@ fn build_decoded(
             wrap_stream(reader, codec).map_err(extxyz_error_to_py)
         }
         "tar" | "tar.gz" => {
-            let gzip = codec == "tar.gz";
+            let inner = if codec == "tar.gz" {
+                TarInner::Gzip
+            } else {
+                TarInner::Plain
+            };
             let callable = source.clone().unbind();
             let factory = move || {
                 Python::attach(|py| {
                     callable
                         .bind(py)
                         .call0()
-                        .map(|iter| {
-                            Box::new(PyChunkReader::new(iter.unbind())) as Box<dyn Read + Send>
-                        })
+                        .map(|iter| Box::new(PyChunkReader::new(iter.unbind())) as ByteSource)
                         .map_err(|e| std::io::Error::other(e.to_string()))
                 })
             };
-            wrap_tar(factory, member, gzip).map_err(extxyz_error_to_py)
+            wrap_tar(factory, member, inner).map_err(extxyz_error_to_py)
         }
         "zip" => {
             let reader = PySeekReader {

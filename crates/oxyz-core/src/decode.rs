@@ -78,6 +78,15 @@ impl Codec {
     }
 }
 
+/// The decompressor applied to a tar's byte stream. `Codec::Tar`/`TarGzip`/
+/// `TarZstd` are the only sources of these; nothing else is representable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TarInner {
+    Plain,
+    Gzip,
+    Zstd,
+}
+
 /// Resolve the codec for *writing*. Unlike [`detect`], there are no bytes to
 /// sniff (the file may not exist yet), so `Infer` reads the extension only and
 /// falls back to [`Codec::Plain`] — including for stdout (`-`), which has none.
@@ -116,17 +125,17 @@ pub fn open_decoded(
         Codec::Tar => {
             let path = path.to_owned();
             wrap_tar(
-                move || File::open(&path).map(|f| Box::new(f) as Box<dyn Read + Send>),
+                move || File::open(&path).map(|f| Box::new(f) as ByteSource),
                 member,
-                false,
+                TarInner::Plain,
             )
         }
         Codec::TarGzip => {
             let path = path.to_owned();
             wrap_tar(
-                move || File::open(&path).map(|f| Box::new(f) as Box<dyn Read + Send>),
+                move || File::open(&path).map(|f| Box::new(f) as ByteSource),
                 member,
-                true,
+                TarInner::Gzip,
             )
         }
     }
@@ -230,6 +239,12 @@ struct MultiFrameZstd {
 
 impl MultiFrameZstd {
     fn from_source(source: ZstdSource) -> Result<Self> {
+        Ok(Self::from_source_io(source)?)
+    }
+
+    /// The `io::Error` variant, for callers inside the tar pipe whose errors
+    /// travel down an `io::Result` channel.
+    fn from_source_io(source: ZstdSource) -> io::Result<Self> {
         Ok(MultiFrameZstd {
             decoder: Some(zstd_decoder(source)?),
         })
@@ -332,15 +347,15 @@ where
 /// Stream one member of a tar (optionally gzip-compressed). `factory` yields a
 /// fresh *raw* tar byte stream on each call; enumeration and streaming each open
 /// one (two passes — a tar has no central directory).
-pub fn wrap_tar<F>(factory: F, member: Option<&str>, gzip: bool) -> Result<DecodedReader>
+pub fn wrap_tar<F>(factory: F, member: Option<&str>, inner: TarInner) -> Result<DecodedReader>
 where
-    F: Fn() -> io::Result<Box<dyn Read + Send>> + Send + 'static,
+    F: Fn() -> io::Result<ByteSource> + Send + 'static,
 {
-    let names = tar_member_names(&factory, gzip)?;
+    let names = tar_member_names(&factory, inner)?;
     let target = resolve_member(&names, member)?;
 
     Ok(spawn_pipe(move |tx| {
-        let stream = match tar_stream_from(&factory, gzip) {
+        let stream = match tar_stream_from(&factory, inner) {
             Ok(stream) => stream,
             Err(error) => {
                 let _ = tx.send(Err(error));
@@ -372,11 +387,11 @@ where
     }))
 }
 
-fn tar_member_names<F>(factory: &F, gzip: bool) -> Result<Vec<String>>
+fn tar_member_names<F>(factory: &F, inner: TarInner) -> Result<Vec<String>>
 where
-    F: Fn() -> io::Result<Box<dyn Read + Send>>,
+    F: Fn() -> io::Result<ByteSource>,
 {
-    let mut archive = tar::Archive::new(tar_stream_from(factory, gzip)?);
+    let mut archive = tar::Archive::new(tar_stream_from(factory, inner)?);
     let mut names = Vec::new();
     for entry in archive.entries()? {
         let entry = entry?;
@@ -390,15 +405,15 @@ where
     Ok(names)
 }
 
-fn tar_stream_from<F>(factory: &F, gzip: bool) -> io::Result<Box<dyn Read + Send>>
+fn tar_stream_from<F>(factory: &F, inner: TarInner) -> io::Result<ByteSource>
 where
-    F: Fn() -> io::Result<Box<dyn Read + Send>>,
+    F: Fn() -> io::Result<ByteSource>,
 {
     let raw = factory()?;
-    Ok(if gzip {
-        Box::new(MultiGzDecoder::new(raw))
-    } else {
-        raw
+    Ok(match inner {
+        TarInner::Plain => raw,
+        TarInner::Gzip => Box::new(MultiGzDecoder::new(raw)),
+        TarInner::Zstd => Box::new(MultiFrameZstd::from_source_io(raw)?),
     })
 }
 
