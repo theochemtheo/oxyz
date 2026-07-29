@@ -467,8 +467,9 @@ oxyz.read("run.bin", compression="gzip")   # force a codec by hand
 ```
 
 The codec is inferred from the extension (then the magic bytes), or set with
-`compression=` (`"none"`/`"gzip"`/`"zstd"`/`"zip"`/`"tar"`/`"tar.gz"`/
-`"tar.zst"`). An archive holding more than one extxyz file needs `member=`;
+`compression=`
+(`"none"`/`"gzip"`/`"zstd"`/`"zip"`/`"tar"`/`"tar.gz"`/`"tar.zst"`).
+An archive holding more than one extxyz file needs `member=`;
 otherwise it errors and lists what it holds. A compressed stream cannot be
 seeked, so two kinds of random access are constrained: `iread_batch` with
 `shuffle`/`atoms_per_batch`/`memory_scales_with`, and reverse or negative ASE
