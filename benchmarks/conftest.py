@@ -34,7 +34,7 @@ def pytest_configure(config) -> None:
 def pytest_benchmark_update_machine_info(config, machine_info) -> None:
     """Record library versions in the saved JSON, so report.py describes
     the environment the numbers came from rather than the one it runs in."""
-    import importlib.metadata as metadata
+    from importlib import metadata
 
     versions = {}
     for dist in (

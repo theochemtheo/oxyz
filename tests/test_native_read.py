@@ -74,7 +74,7 @@ def test_read_threads_agree() -> None:
 def test_iread_streams_every_frame_by_default() -> None:
     stream = oxyz.iread(MULTI)
     assert isinstance(stream, Iterator)
-    assert len([f for f in stream]) == 3
+    assert len(list(stream)) == 3
 
 
 def test_iread_index_selects() -> None:

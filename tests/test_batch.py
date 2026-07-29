@@ -360,7 +360,7 @@ def test_schema_drift_within_a_batch_is_an_error(tmp_path: Path) -> None:
 
 
 def test_projected_batch_binding_entries_exist():
-    import oxyz._rust as _rust
+    from oxyz import _rust
 
     for name in (
         "read_batch_projected",
@@ -527,7 +527,7 @@ def test_projected_batch_parity_which_error_wins(tmp_path):
 
 
 def test_get_batch_projected_empty_indices_errors():
-    import oxyz._rust as _rust
+    from oxyz import _rust
 
     idx = _rust.IndexedFrames(str(DATA_DIR / "mixed_schema_optional_column.xyz"))
     plan = ([("pos", "R", 3, True, float("nan"))], [])
@@ -536,7 +536,7 @@ def test_get_batch_projected_empty_indices_errors():
 
 
 def test_build_plan_rejects_multidim_metadata_shape():
-    import oxyz._rust as _rust
+    from oxyz import _rust
 
     plan = ([], [("stress", "R", (2, 3), False, 0.0)])  # 2-D shape unsupported
     with pytest.raises(ValueError, match="dimension"):

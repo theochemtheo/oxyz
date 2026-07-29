@@ -5,8 +5,7 @@ from typing import TYPE_CHECKING, Literal, overload
 
 import numpy as np
 
-import oxyz._rust as _rust
-from oxyz import _remote
+from oxyz import _remote, _rust
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence

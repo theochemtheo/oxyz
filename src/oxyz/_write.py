@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Self, cast
 
 import numpy as np
 
-import oxyz._rust as _rust
+from oxyz import _rust
 from oxyz._frames import ColumnValues, Compression, Frame, MetadataValue
 
 if TYPE_CHECKING:

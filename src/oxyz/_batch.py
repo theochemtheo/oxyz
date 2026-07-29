@@ -5,8 +5,7 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
-import oxyz._rust as _rust
-from oxyz import _remote
+from oxyz import _remote, _rust
 from oxyz._frames import (
     ColumnValues,
     Compression,

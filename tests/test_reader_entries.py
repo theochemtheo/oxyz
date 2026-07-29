@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-import oxyz._rust as _rust
+from oxyz import _rust
 
 DATA = Path(__file__).parent / "data"
 
