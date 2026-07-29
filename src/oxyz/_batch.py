@@ -5,8 +5,7 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
-import oxyz._rust as _rust
-from oxyz import _remote
+from oxyz import _remote, _rust
 from oxyz._frames import (
     ColumnValues,
     Compression,
@@ -312,7 +311,7 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
     )
 
 
-def iread_batch(  # noqa: C901, PLR0913  the keyword options are the batching contract
+def iread_batch(  # noqa: C901, PLR0913, PLR0912  the keyword options are the batching contract
     path: str | Path,
     *,
     frames_per_batch: int | None = None,
@@ -497,12 +496,12 @@ def iread_batch(  # noqa: C901, PLR0913  the keyword options are the batching co
         atoms_per_batch,
         memory_scales_with,
         max_scaler,
-        shuffle,
-        seed,
-        threads,
-        projection,
-        conformance,
-        spec,
+        shuffle=shuffle,
+        seed=seed,
+        threads=threads,
+        projection=projection,
+        conformance=conformance,
+        spec=spec,
     )
 
 
@@ -589,6 +588,7 @@ def _planned_batches(  # noqa: PLR0913  the planning knobs plus projection
     atoms_per_batch: int | None,
     memory_scales_with: MemoryScaling | None,
     max_scaler: float | None,
+    *,
     shuffle: bool,
     seed: int | None,
     threads: int | None,
@@ -757,7 +757,7 @@ def _resolve_projected_batch(
     survived = set(survivors)
     for req_index, deviations in reports:
         dropped = req_index not in survived
-        enforce_projection(deviations, conformance, req_index, dropped)
+        enforce_projection(deviations, conformance, req_index, dropped=dropped)
     if not survivors:
         return None
     batch = _batch_from_data(data, survivors)

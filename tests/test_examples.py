@@ -35,5 +35,6 @@ def test_example_runs(name: str) -> None:
         capture_output=True,
         text=True,
         cwd=EXAMPLES_DIR.parent,
+        check=False,
     )
     assert result.returncode == 0, result.stderr

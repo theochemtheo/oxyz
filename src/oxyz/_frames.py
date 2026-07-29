@@ -5,8 +5,7 @@ from typing import TYPE_CHECKING, Literal, overload
 
 import numpy as np
 
-import oxyz._rust as _rust
-from oxyz import _remote
+from oxyz import _remote, _rust
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence
@@ -393,7 +392,7 @@ def _keep_projected(
     frame_compiled = _frame_rule_compiled(spec)
     out: list[Frame] = []
     for index, (data, deviations) in zip(indices, raw, strict=True):
-        keep = enforce_projection(deviations, conformance, index, data is None)
+        keep = enforce_projection(deviations, conformance, index, dropped=data is None)
         if keep and data is not None:
             frame = _frame_from_data(data)
             if frame_compiled is not None:
@@ -582,7 +581,9 @@ def _iter_all(
             projected = _rust.FrameIterProjected(str(path), plan, compression, member)
         frame_compiled = _frame_rule_compiled(spec)
         for index, (data, deviations) in enumerate(projected):
-            keep = enforce_projection(deviations, conformance, index, data is None)
+            keep = enforce_projection(
+                deviations, conformance, index, dropped=data is None
+            )
             if keep and data is not None:
                 frame = _frame_from_data(data)
                 if frame_compiled is not None:

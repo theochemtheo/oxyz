@@ -3,8 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import oxyz._rust as _rust
-from oxyz import _remote
+from oxyz import _remote, _rust
 from oxyz._stats import AtomCountStats
 
 if TYPE_CHECKING:

@@ -59,6 +59,9 @@ except ImportError as error:
 
 __all__ = ["FromAtomsError", "ToAseError", "from_atoms", "iread", "read", "to_atoms"]
 
+# A per-atom Cartesian mask is one row per atom, three columns.
+_N_CARTESIAN = 3
+
 
 class ToAseError(OxyzError):
     """The frame has no faithful `ase.Atoms` representation (strict: no repair)."""
@@ -68,7 +71,7 @@ class FromAtomsError(OxyzError):
     """The `ase.Atoms` carries something a `Frame` cannot represent faithfully."""
 
 
-def to_atoms(frame: Frame) -> Atoms:  # noqa: C901  flat field-by-field mapping to ase.Atoms
+def to_atoms(frame: Frame) -> Atoms:  # noqa: C901, PLR0912  flat field-by-field mapping to ase.Atoms
     """Convert one `Frame` to `ase.Atoms`, mirroring `ase.io.read`'s mapping.
 
     Parameters
@@ -146,7 +149,7 @@ def to_atoms(frame: Frame) -> Atoms:  # noqa: C901  flat field-by-field mapping 
 
     if "move_mask" in arrays:
         move_mask = np.asarray(arrays.pop("move_mask")).astype(bool)
-        if move_mask.ndim == 2 and move_mask.shape[1] == 3:
+        if move_mask.shape[1:] == (_N_CARTESIAN,):
             constraints = [
                 FixCartesian(a, mask=~move_mask[a]) for a in range(frame.n_atoms)
             ]

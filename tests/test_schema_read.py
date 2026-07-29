@@ -105,7 +105,7 @@ def test_read_slice_reports_original_index():
 
 
 def test_projected_binding_entries_exist():
-    import oxyz._rust as _rust
+    from oxyz import _rust
 
     for name in (
         "read_frames_projected",

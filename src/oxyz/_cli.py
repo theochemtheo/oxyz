@@ -318,23 +318,22 @@ def _cmd_check(args: argparse.Namespace) -> int:
             ],
         }
         print(json.dumps(payload, indent=2))
+    elif not groups:
+        print(
+            f"{args.path}: conformant ({n_frames} frames, "
+            f"conformance={args.conformance})"
+        )
     else:
-        if not groups:
+        print(
+            f"{args.path}: {len(groups)} schema violations "
+            f"(conformance={args.conformance})"
+        )
+        for count, first_frame, first_line, v in groups.values():
             print(
-                f"{args.path}: conformant ({n_frames} frames, "
-                f"conformance={args.conformance})"
+                f"  {v.axis} '{v.name}': {body(v)}"
+                f"   — {count}/{n_frames} frames, "
+                f"first at frame {first_frame} (L{first_line})"
             )
-        else:
-            print(
-                f"{args.path}: {len(groups)} schema violations "
-                f"(conformance={args.conformance})"
-            )
-            for count, first_frame, first_line, v in groups.values():
-                print(
-                    f"  {v.axis} '{v.name}': {body(v)}"
-                    f"   — {count}/{n_frames} frames, "
-                    f"first at frame {first_frame} (L{first_line})"
-                )
     return 1 if groups else 0
 
 

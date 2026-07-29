@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
-import oxyz._rust as _rust
+from oxyz import _rust
 
 # Keys belonging to obstore's ClientConfig TypedDict (HTTP transport layer).
 # Anything else in storage_options is treated as store config (S3Config etc.).

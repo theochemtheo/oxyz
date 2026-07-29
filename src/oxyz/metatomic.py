@@ -19,6 +19,7 @@ Optional dependencies `torch` and `metatomic-torch`, installed with
 from __future__ import annotations
 
 import warnings
+from functools import partial
 from typing import TYPE_CHECKING, overload
 
 import numpy as np
@@ -201,7 +202,13 @@ def read(  # noqa: PLR0913  keyword options mirror the System data model
     3
     """
     _require_schema_for_mode(schema, mode)
-    options = (dtype, device, positions_requires_grad, cell_requires_grad)
+    to_system = partial(
+        _to_system,
+        dtype=dtype,
+        device=device,
+        positions_requires_grad=positions_requires_grad,
+        cell_requires_grad=cell_requires_grad,
+    )
     selection = parse_index(index)
     if isinstance(selection, int):
         frame = nth_frame(
@@ -214,9 +221,9 @@ def read(  # noqa: PLR0913  keyword options mirror the System data model
             member=member,
             storage_options=storage_options,
         )
-        return _to_system(frame, *options)
+        return to_system(frame)
     return [
-        _to_system(frame, *options)
+        to_system(frame)
         for frame in frames_for_read(
             path,
             selection,
@@ -286,7 +293,13 @@ def iread(  # noqa: PLR0913  keyword options mirror the System data model
         If a frame has no faithful `System` representation.
     """
     _require_schema_for_mode(schema, mode)
-    options = (dtype, device, positions_requires_grad, cell_requires_grad)
+    to_system = partial(
+        _to_system,
+        dtype=dtype,
+        device=device,
+        positions_requires_grad=positions_requires_grad,
+        cell_requires_grad=cell_requires_grad,
+    )
     selection = parse_index(index)
     if isinstance(selection, int):
         frame = nth_frame(
@@ -299,9 +312,9 @@ def iread(  # noqa: PLR0913  keyword options mirror the System data model
             member=member,
             storage_options=storage_options,
         )
-        return iter((_to_system(frame, *options),))
+        return iter((to_system(frame),))
     return (
-        _to_system(frame, *options)
+        to_system(frame)
         for frame in sliced_frames(
             path,
             selection,
@@ -391,7 +404,11 @@ class SystemSource:
         """
         return [
             _to_system(
-                frame, dtype, device, positions_requires_grad, cell_requires_grad
+                frame,
+                dtype,
+                device,
+                positions_requires_grad=positions_requires_grad,
+                cell_requires_grad=cell_requires_grad,
             )
             for frame in self._frames
         ]
@@ -502,8 +519,9 @@ def _to_system(
     frame: Frame,
     dtype: torch.dtype | None,
     device: torch.device | None,
+    *,
     positions_requires_grad: bool,
-    cell_requires_grad: bool,
+    cell_requires_grad: bool,  # noqa: ARG001  accepted for systems_to_torch parity; see below
 ) -> System:
     """Convert one frame, reproducing `systems_to_torch`'s cell/pbc handling."""
     resolved = resolve_dtype(dtype)

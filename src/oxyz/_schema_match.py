@@ -45,6 +45,9 @@ _NUMPY_KIND: dict[str, Kind] = {
     "b": Kind.BOOL,
 }
 
+# A column array is either flat (width 1) or one row per atom (width n).
+_COLUMN_MATRIX_NDIM = 2
+
 
 @dataclass(frozen=True, slots=True)
 class Violation:
@@ -158,7 +161,7 @@ def column_signature(value: object) -> tuple[Kind, int]:
     """
     if isinstance(value, np.ndarray):
         kind = _NUMPY_KIND[value.dtype.kind]
-        width = value.shape[1] if value.ndim == 2 else 1
+        width = value.shape[1] if value.ndim == _COLUMN_MATRIX_NDIM else 1
         return kind, width
     # string column: list[str] (width 1) or list[list[str]] (width n)
     if isinstance(value, list) and value and isinstance(value[0], list):

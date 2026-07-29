@@ -100,7 +100,7 @@ def _freeze_columns(
             kind, width = entry.unified
             required = entry.frames_present == n_frames
             _check_freezable_optional(
-                name, rule.name, kind, required, rule.fill, "column"
+                name, rule.name, kind, required=required, fill=rule.fill, axis="column"
             )
             out.append(
                 ColumnRule(
@@ -111,7 +111,7 @@ def _freeze_columns(
 
 
 def _check_freezable_optional(
-    name: str, pattern: str, kind: Kind, required: bool, fill: object, axis: str
+    name: str, pattern: str, kind: Kind, *, required: bool, fill: object, axis: str
 ) -> None:
     """Refuse to freeze an optional, un-fillable field.
 
@@ -155,7 +155,7 @@ def _freeze_metadata(
             kind, shape = entry.unified
             required = entry.frames_present == n_frames
             _check_freezable_optional(
-                key, rule.key, kind, required, rule.fill, "metadata"
+                key, rule.key, kind, required=required, fill=rule.fill, axis="metadata"
             )
             out.append(
                 MetadataRule(
@@ -254,6 +254,7 @@ def enforce_projection(
     deviations: list[DeviationData],
     level: Conformance,
     frame_index: int,
+    *,
     dropped: bool,
 ) -> bool:
     """Apply conformance policy to one projected frame's report.
