@@ -253,8 +253,14 @@ jobs:
   # a new job must be added here to be gated at all. Skipped counts as passing
   # (that is what lets conditional jobs work), which means a job skipped by a
   # broken `if:` also passes — the same trade-off wheels-gate already accepts.
+  #
+  # That is also why `build-wheel` is listed even though nothing here inspects
+  # it directly: a job whose `needs` dependency fails is reported as *skipped*,
+  # not failed, so listing only `tiers` would let a broken wheel build through
+  # as a pass. Every job in this file belongs here, upstream ones included.
   test-gate:
-    needs: [zizmor, pre-push-suite, rust, python, tiers, coverage]
+    needs:
+      [zizmor, pre-push-suite, rust, python, build-wheel, tiers, coverage]
     if: always()
     runs-on: ubuntu-latest
     steps:
