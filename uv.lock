@@ -1751,6 +1751,14 @@ dev = [
     { name = "ty" },
     { name = "types-pyyaml" },
 ]
+s3-test = [
+    { name = "boto3" },
+    { name = "moto", extra = ["s3", "server"] },
+]
+test = [
+    { name = "pytest" },
+    { name = "pytest-cov" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1788,6 +1796,14 @@ dev = [
     { name = "torch-sim-atomistic" },
     { name = "ty", specifier = ">=0.0.64" },
     { name = "types-pyyaml" },
+]
+s3-test = [
+    { name = "boto3", specifier = ">=1.35" },
+    { name = "moto", extras = ["s3", "server"], specifier = ">=5" },
+]
+test = [
+    { name = "pytest", specifier = ">=9.0.3" },
+    { name = "pytest-cov", specifier = ">=6" },
 ]
 
 [[package]]

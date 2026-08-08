@@ -68,18 +68,30 @@ s3 = ["obstore>=0.11"]
 [dependency-groups]
 # Benchmark dependencies live in benchmarks/run.py (PEP 723), not here:
 # the comparison parsers need CPython <3.14, which that script pins.
+#
+# `test` and `s3-test` are split out of `dev` so CI can build a deliberately
+# incomplete environment — see the `tiers` job in test.yml. The optional-target
+# import guards, and the install hints their ImportErrors carry, are only
+# exercised when the optional dependency is genuinely missing, which never
+# happens in an environment that has everything. The optional dependencies
+# themselves need no group: they are already the `ase`/`s3`/`metatomic`/
+# `torch-sim` extras above, so a tier installs them the way a user would.
+#
+# `dev` includes both groups, so a plain `uv sync` — what humans run, and what
+# the coverage job needs — resolves to exactly what it did before the split.
+test = ["pytest>=9.0.3", "pytest-cov>=6"]
+# moto and boto3 drive the local S3 endpoint that tests/conftest.py stands up.
+# obstore is absent deliberately: it is the `s3` extra, the code under test
+# rather than a test dependency, so the s3 tier installs it as the extra.
+s3-test = ["boto3>=1.35", "moto[s3,server]>=5"]
 dev = [
     "ase>=3.28.0",
     "matplotlib>=3.10.9",
     "maturin>=1.13.3",
     "metatomic-torch",
-    "boto3>=1.35",
-    "moto[s3,server]>=5",
     "mypy>=1.13",
     "obstore>=0.11",
     "prek>=0.4.11",
-    "pytest>=9.0.3",
-    "pytest-cov>=6",
     "ruff>=0.16.0",
     "rumdl>=0.2.45",
     "seaborn>=0.13.2",
@@ -87,6 +99,8 @@ dev = [
     "torch-sim-atomistic",
     "types-pyyaml",
     "ty>=0.0.64",
+    { include-group = "test" },
+    { include-group = "s3-test" },
 ]
 
 [tool.uv]
@@ -195,8 +209,11 @@ convention = "numpy"
 [tool.pytest.ini_options]
 # `--doctest-modules` collects the doctests in `src/oxyz`. The output-target
 # doctests (oxyz.metatomic, oxyz.torch_sim) import torch, so they need the `dev`
-# group's torch stack installed — the default `uv sync` provides it; a run under
-# `uv sync --no-default-groups` would error on those imports rather than skip.
+# group's torch stack installed — the default `uv sync` provides it. A run in an
+# environment without it errors on those imports rather than skipping, so the
+# doctests are a full-dependency surface by design: the `tiers` job in test.yml
+# runs `pytest tests -o addopts=""` to stay off this path, and the full `python`
+# matrix is what covers the doctests.
 # They read `examples/data/` via the absolute `DATA` path injected by
 # src/oxyz/conftest.py, so they resolve regardless of the working directory.
 testpaths = ["tests", "src/oxyz"]

@@ -32,8 +32,12 @@ def test_ase_errors_subclass_oxyz_error() -> None:
     assert issubclass(oxyz.ase.FromAtomsError, oxyz.OxyzError)
 
 
+# Guarded on the top-level name, not "metatomic.torch": find_spec imports the
+# parent package, so a submodule path raises ModuleNotFoundError when the parent
+# is absent instead of returning None — which aborts collection of this module
+# rather than skipping the test.
 @pytest.mark.skipif(
-    importlib.util.find_spec("metatomic.torch") is None,
+    importlib.util.find_spec("metatomic") is None,
     reason="metatomic not installed",
 )
 def test_metatomic_error_subclasses_oxyz_error() -> None:

@@ -42,10 +42,10 @@ jobs:
       # the toolchain channels as force-pushed branches rather than tags, so
       # `stable` is a branch and each Rust release orphans whatever commit we
       # pinned — zizmor then fails every run with impostor-commit until all
-      # four uses below are re-pinned to the branch's new tip. Expect that
+      # five uses below are re-pinned to the branch's new tip. Expect that
       # roughly every six weeks; see
       # https://github.com/theochemtheo/oxyz/pull/32.
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
@@ -67,7 +67,7 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - run: cargo test --workspace
 
@@ -84,14 +84,116 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           version: "0.12.0"
           python-version: ${{ matrix.python }}
       - run: uv sync --extra ase
+      # OXYZ_TEST_TIER asserts this environment really is complete (see the
+      # tier canary in tests/test_optional_deps.py). Without it, an optional
+      # dependency silently failing to install turns golden tests into skips and
+      # the matrix stays green over less than it appears to cover.
       - run: uv run pytest
+        env:
+          OXYZ_TEST_TIER: full
+
+  # One wheel, built once, for every tier below. The tiers install this artifact
+  # instead of building their own, which is what lets them run with no Rust
+  # toolchain at all, and means they exercise the same abi3 wheel a user gets.
+  # The cp312-abi3 tag comes from the `abi3-py312` feature rather than from the
+  # interpreter that builds it, so this single file installs on every version in
+  # the tier matrix.
+  build-wheel:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.12.0"
+          python-version: "3.12"
+      - run: uv build --wheel --out-dir dist
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: tier-wheel
+          path: dist
+
+  # Deliberately incomplete dependency environments. The optional-target import
+  # guards, and the tests asserting the messages they raise, only mean anything
+  # where the optional dependency is genuinely absent — which never happens in
+  # the `python` matrix above, so those guards went years without being
+  # exercised in the state they exist for. Backed by the `test`/`s3-test` groups
+  # in pyproject.toml, with the optional dependencies themselves installed as
+  # the published extras, the way a user would get them.
+  #
+  # `include:` rather than a cross-product: a tier varies the dependency axis,
+  # and the OS/version axis is already covered above. Every tier sits on 3.12,
+  # the abi3 floor, so a red tier means a dependency-surface bug rather than a
+  # version bug. The last entry is the one exception — base on the newest
+  # supported interpreter, which is what tests that the single cp312-abi3 wheel
+  # really does load above its own floor.
+  tiers:
+    # Named explicitly: without this the `sync` matrix value is appended to the
+    # generated job name, so the status check reads
+    # `tiers (s3, 3.12, --group s3-test --extra s3)`.
+    name: tiers (${{ matrix.tier }}, ${{ matrix.python }})
+    needs: build-wheel
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - tier: base
+            python: "3.12"
+            sync: ""
+          - tier: ase
+            python: "3.12"
+            sync: "--extra ase"
+          - tier: s3
+            python: "3.12"
+            sync: "--group s3-test --extra s3"
+          - tier: base
+            python: "3.14"
+            sync: ""
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.12.0"
+          python-version: ${{ matrix.python }}
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: tier-wheel
+          path: dist
+      # --no-install-project leaves the extension unbuilt: uv's cache-keys watch
+      # the Rust sources and would rebuild it, making the artifact pointless.
+      # Dependency versions still come from uv.lock, so a tier cannot drift onto
+      # a different pytest than the rest of CI — which is exactly how pytest
+      # 9.1's importorskip change would have slipped in unnoticed.
+      - run: uv sync --no-default-groups --group test $SYNC_ARGS --no-install-project
+        env:
+          SYNC_ARGS: ${{ matrix.sync }}
+      # --no-deps: the wheel must not drag in the optional dependencies this
+      # tier omits on purpose.
+      - run: uv pip install --no-deps dist/*.whl
+      # --no-sync: `uv run` re-syncs by default, which would reinstall the
+      # project over the wheel just installed. The explicit path and empty
+      # addopts drop --doctest-modules and the src/oxyz testpath, which are a
+      # full-dependency surface (see [tool.pytest.ini_options]).
+      - run: uv run --no-sync pytest tests -o addopts=""
+        env:
+          OXYZ_TEST_TIER: ${{ matrix.tier }}
 
   coverage:
     needs: [rust, python]
@@ -103,7 +205,7 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
@@ -114,8 +216,17 @@ jobs:
         with:
           version: "0.12.0"
           python-version: "3.13"
+      # The full dependency set, deliberately, and load-bearing: the floors in
+      # scripts/coverage.sh are calibrated against a run where every optional
+      # target is importable. Trimming this to a leaner group selection would
+      # stop measuring those modules and drop the number, inviting the floors to
+      # be lowered to match. The tiers deliberately do not contribute here —
+      # they never pass --cov, because a partial run is not a coverage figure.
+      # OXYZ_TEST_TIER=full makes an incomplete environment fail loudly instead.
       - run: uv sync --extra ase
       - run: bash scripts/coverage.sh
+        env:
+          OXYZ_TEST_TIER: full
       - run: cat coverage/summary.md >> "$GITHUB_STEP_SUMMARY"
         if: always()
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -129,3 +240,40 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh pr comment "${{ github.event.pull_request.number }}" --edit-last --create-if-none --body-file coverage/summary.md
+
+  # Always-running fan-in: the single required status check for this workflow,
+  # mirroring `wheels-gate` in wheels.yml. A ruleset that names matrix contexts
+  # directly has to be hand-edited for every reshape, and gets it wrong in both
+  # directions — a renamed entry strands a required check that will never report
+  # again, and a new one arrives unprotected. Behind this gate the matrices are
+  # free to change shape, so adding a Python version or a tier stays a one-line
+  # change to this file.
+  #
+  # `needs` is now the one place where "is this job protected?" is answered, so
+  # a new job must be added here to be gated at all. Skipped counts as passing
+  # (that is what lets conditional jobs work), which means a job skipped by a
+  # broken `if:` also passes — the same trade-off wheels-gate already accepts.
+  #
+  # That is also why `build-wheel` is listed even though nothing here inspects
+  # it directly: a job whose `needs` dependency fails is reported as *skipped*,
+  # not failed, so listing only `tiers` would let a broken wheel build through
+  # as a pass. Every job in this file belongs here, upstream ones included.
+  test-gate:
+    needs:
+      [zizmor, pre-push-suite, rust, python, build-wheel, tiers, coverage]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every test job to pass or be skipped
+        run: |
+          results="${{ join(needs.*.result, ' ') }}"
+          echo "test job results: $results"
+          for result in $results; do
+            case "$result" in
+              success | skipped) ;;
+              *)
+                echo "::error::a test job did not pass ($result)"
+                exit 1
+                ;;
+            esac
+          done
