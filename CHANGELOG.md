@@ -4,6 +4,56 @@ All notable changes to oxyz are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Three skip guards did not guard. `tests/test_errors.py` tested
+  `find_spec("metatomic.torch")`, which imports the parent package and so raises
+  `ModuleNotFoundError` when `metatomic` is absent instead of returning `None` —
+  aborting collection of the module rather than skipping one test.
+  `tests/test_compressed.py` used `importorskip("oxyz.ase")`, which stopped
+  skipping when pytest 9.1 narrowed the default `exc_type` to
+  `ModuleNotFoundError`: `oxyz.ase` imports fine and raises a plain
+  `ImportError` carrying its install hint, so pytest now propagates it as a
+  failure. Both are within the project's declared `pytest>=9.0.3` range. The ty
+  canary asserted `ty` was on `PATH` rather than skipping without it. None of
+  these were visible in CI, because every job installed every dependency.
+
+### Added
+
+- Tests for the optional targets' import guards: that a missing dependency
+  raises `ImportError` naming both the module and the extra to install, and
+  chains the original cause. The imports are blocked in-process, so these run —
+  and are measured by coverage — whether or not the optional dependency is
+  installed, and the guard branches are no longer dead lines in the report.
+- CI runs the test suite on **deliberately incomplete dependency
+  environments**: `base` (no optional dependencies), `ase`, and `s3`, pinned to
+  3.12, the abi3 floor, plus `base` on the newest supported interpreter as a
+  forward-compatibility check on the single `cp312-abi3` wheel. A tier canary
+  keyed on `OXYZ_TEST_TIER` asserts the environment is the one CI declared, so a
+  tier that installs too much, or a guard that skips for the wrong reason, fails
+  instead of passing over nothing. The `python` and `coverage` jobs declare
+  `full` and are asserted the same way.
+
+### Internal
+
+- `pytest`/`pytest-cov` and `boto3`/`moto` move out of the `dev` group into new
+  `test` and `s3-test` groups, which `dev` includes. A plain `uv sync` resolves
+  to exactly what it did before; the split exists so CI can build a partial
+  environment. The optional dependencies themselves need no group — the tiers
+  install the published `ase`/`s3` extras, the way a user would.
+- The tier jobs install a single wheel built once by a new `build-wheel` job
+  rather than building their own, so they need no Rust toolchain and exercise the
+  same abi3 artifact a user installs.
+- A `test-gate` fan-in job, mirroring `wheels-gate`, is now the one status check
+  the branch ruleset needs from this workflow. With matrix contexts named
+  directly, every reshape had to be mirrored by hand in the ruleset — and got it
+  wrong in both directions, stranding required checks that would never report
+  again and adding new ones unprotected.
+- Coverage is unchanged and still measured only on the full dependency set; the
+  tiers never pass `--cov`, since a partial run is not a coverage figure.
+
 ## [1.1.0] - 2026-07-29
 
 ### Added

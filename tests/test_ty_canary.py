@@ -16,6 +16,8 @@ import subprocess
 import sys
 from typing import TYPE_CHECKING
 
+import pytest
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -31,8 +33,13 @@ def narrows_union(x: np.ndarray | list[str]) -> None:
 
 
 def test_ty_still_rejects_isinstance_narrowed_ndarray(tmp_path: Path) -> None:
+    # Skipped rather than failed when ty is absent: this is a type-checker
+    # canary, not a runtime contract, so it has no business failing a
+    # dependency tier that installs no lint tooling. The full `python` matrix
+    # runs under `uv sync`, which provides ty, so the canary still fires there.
     ty = shutil.which("ty")
-    assert ty is not None, "ty not on PATH; run via `uv run pytest`"
+    if ty is None:
+        pytest.skip("ty not on PATH; run via `uv run pytest`")
 
     repro = tmp_path / "repro.py"
     repro.write_text(REPRO)

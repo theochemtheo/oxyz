@@ -8,6 +8,7 @@ compressed source with a clear error.
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 
 import numpy as np
@@ -155,20 +156,30 @@ class TestBatching:
             list(oxyz.iread_batch(gz, **kwargs))  # ty: ignore[invalid-argument-type]
 
 
+# Guarded on `ase` itself rather than with importorskip("oxyz.ase"): pytest 9.1
+# narrowed importorskip's default exc_type to ModuleNotFoundError, and oxyz.ase
+# is importable — it raises a plain ImportError carrying the install hint — so
+# importorskip propagates that as a failure instead of skipping. Guarding on the
+# dependency also keeps a genuine ImportError from inside oxyz.ase a failure,
+# which is what `exc_type=ImportError` would have swallowed.
+@pytest.mark.skipif(importlib.util.find_spec("ase") is None, reason="ase not installed")
 class TestAse:
     def test_default_index_reads_last_frame(self) -> None:
-        ase = pytest.importorskip("oxyz.ase")
+        from oxyz import ase
+
         gz = DATA_DIR / "compressed/two_frame.xyz.gz"
         last = ase.read(gz)  # default index -1, needs the in-memory fallback
         assert last.get_global_number_of_atoms() == 2
 
     def test_slice_and_reverse_index(self) -> None:
-        ase = pytest.importorskip("oxyz.ase")
+        from oxyz import ase
+
         gz = DATA_DIR / "compressed/two_frame.xyz.gz"
         assert len(ase.read(gz, ":")) == 2
         assert len(ase.read(gz, "::-1")) == 2
 
     def test_archive_member(self) -> None:
-        ase = pytest.importorskip("oxyz.ase")
+        from oxyz import ase
+
         atoms = ase.read(DATA_DIR / "compressed/multi_member.zip", 0, member="a.xyz")
         assert atoms.get_global_number_of_atoms() == 2
