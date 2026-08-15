@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Literal, overload
 
 import numpy as np
 
-from oxyz import _remote, _rust
+from oxyz import _convert, _remote, _rust, _summary
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence
@@ -36,15 +36,18 @@ tar has no magic bytes, so forcing is the only way to read one whose name does
 not say `.tar`, `.tar.gz` or `.tar.zst`."""
 
 
-@dataclass(frozen=True, slots=True)
-class Frame:
+@dataclass(frozen=True, slots=True, eq=False)
+class Frame:  # noqa: PLW1641  a dict of arrays is unhashable by construction
     """One parsed extxyz frame: per-atom columns plus comment-line metadata.
 
     Both dicts preserve file order. Column names and metadata values are kept
     exactly as written in the file; aliasing (`force` vs `forces`) and
-    conversions (Fortran-order `Lattice` to a 3x3 cell) belong to a later
-    normalisation layer. `metadata` is a dict, so a repeated key keeps only its
-    last value.
+    conversions (Fortran-order `Lattice` to a 3x3 cell) are never applied to
+    them. `metadata` is a dict, so a repeated key keeps only its last value.
+
+    The derived accessors below are opt-in views over those same dicts: each
+    resolves the well-known field on every access, and none of them mutates,
+    caches, or rewrites what the frame stores.
 
     Attributes
     ----------
@@ -55,11 +58,102 @@ class Frame:
         `"forces"`, each shaped `(n_atoms, ...)`.
     metadata
         Comment-line key/value pairs, e.g. `"Lattice"`, `"energy"`, `"pbc"`.
+    positions
+        The `pos` column, derived on access.
+    numbers
+        Atomic numbers as int32, derived on access.
+    symbols
+        Chemical symbols, derived on access.
+    cell
+        The 3x3 cell in ASE's row-vector convention, derived on access.
+    pbc
+        Three periodic-boundary flags, derived on access.
     """
 
     n_atoms: int
     columns: dict[str, ColumnValues]
     metadata: dict[str, MetadataValue]
+
+    def __repr__(self) -> str:
+        """Summarise the frame's shape without printing any of its data."""
+        return (
+            f"Frame(n_atoms={self.n_atoms}, "
+            f"columns={_summary.mapping_repr(self.columns)}, "
+            f"metadata={_summary.mapping_repr(self.metadata)})"
+        )
+
+    def __eq__(self, other: object) -> bool:
+        """Compare atom counts and every stored value, pairwise.
+
+        Key order is ignored and NaN compares equal, so a written-then-read
+        frame equals the one it came from. `Frame` is unhashable, as a mutable
+        dict of arrays must be.
+        """
+        if not isinstance(other, Frame):
+            return NotImplemented
+        return (
+            self.n_atoms == other.n_atoms
+            and _summary.mappings_equal(self.columns, other.columns)
+            and _summary.mappings_equal(self.metadata, other.metadata)
+        )
+
+    def __len__(self) -> int:
+        """Return the number of atoms, so `len(frame)` matches `len(ase.Atoms)`."""
+        return self.n_atoms
+
+    @property
+    def positions(self) -> np.ndarray:
+        """The `pos` column, shaped `(n_atoms, 3)`.
+
+        The stored array itself, not a copy — mutating it mutates the frame's
+        `columns["pos"]`. Resolved on each access; raises `oxyz.FieldError`
+        when the frame has no `pos` column.
+        """
+        return _convert.positions(self.columns)
+
+    @property
+    def numbers(self) -> np.ndarray:
+        """Atomic numbers as int32, from `Z`, else `numbers`, else `species`.
+
+        Recomputed on each access; hoist it out of a hot loop. Raises
+        `oxyz.FieldError` when no such column is present, or when a species
+        token is not a chemical symbol.
+        """
+        return _convert.numbers(self.columns)
+
+    @property
+    def symbols(self) -> list[str]:
+        """Chemical symbols: the `species` column, else mapped from `numbers`.
+
+        A `species` column is returned as stored, not as a copy. Recomputed on
+        each access; raises `oxyz.FieldError` when neither a `species` nor an
+        atomic-number column is present.
+        """
+        return _convert.symbols(self.columns)
+
+    @property
+    def cell(self) -> np.ndarray:
+        """The 3x3 float64 cell in ASE's row-vector convention.
+
+        Reshaped and transposed from the flat, Fortran-order
+        `metadata["Lattice"]`, which is left as written; all-zero when
+        `Lattice` is absent. Recomputed on each access; raises
+        `oxyz.FieldError` when `Lattice` is present but not 9 values.
+        """
+        return _convert.cell(self.metadata)
+
+    @property
+    def pbc(self) -> np.ndarray:
+        """Three periodic-boundary flags, from `metadata["pbc"]`.
+
+        Defaults to all-true when `Lattice` is present and all-false when it
+        is not; a scalar `pbc` broadcasts to all three axes. Recomputed on
+        each access, but an already-boolean `metadata["pbc"]` needs no
+        conversion and is handed back as the stored array itself, so mutating
+        the result mutates the frame. Raises `oxyz.FieldError` for any other
+        shape.
+        """
+        return _convert.pbc(self.metadata)
 
     def to_atoms(self) -> Atoms:
         """Convert to `ase.Atoms` (requires the optional `ase` extra)."""

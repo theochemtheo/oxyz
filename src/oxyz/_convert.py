@@ -1,17 +1,27 @@
-"""ASE-independent chemistry helpers shared by the conversion layers.
+"""ASE-independent chemistry and well-known-field helpers.
 
 `oxyz.metatomic` must map species to atomic numbers without importing ASE — the
 whole point is to read into torch without an ASE round-trip. The element table
 here is the same construction ASE uses (symbol index = atomic number, with `"X"`
 the dummy at 0), so it agrees with `ase.data.atomic_numbers` by construction; a
 parity test pins the two equal.
+
+The well-known-field resolvers (`positions`, `numbers`, `symbols`, `cell`,
+`pbc`) take the plain `columns`/`metadata` dicts rather than a `Frame`, so a
+`Batch`'s concatenated columns resolve through the same functions.
 """
 
 from __future__ import annotations
 
 import functools
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
+
+from oxyz._rust import OxyzError
+
+if TYPE_CHECKING:
+    from oxyz._frames import ColumnValues, MetadataValue
 
 # Index = atomic number; `"X"` (0) is ASE's dummy atom. Element order is the
 # periodic table through Og (118).
@@ -78,8 +88,43 @@ def numbers_to_masses(atomic_numbers: np.ndarray) -> np.ndarray:
     return ATOMIC_MASSES[atomic_numbers]
 
 
-class UnknownSpeciesError(ValueError):
+def numbers_to_symbols(atomic_numbers: np.ndarray) -> list[str]:
+    """Return chemical symbols for an array of atomic numbers.
+
+    The inverse of `species_to_numbers` on the same `CHEMICAL_SYMBOLS` table.
+    Validates explicitly rather than letting the table index raise, because a
+    negative atomic number would silently wrap to the far end of the table.
+    """
+    values = atomic_numbers.tolist()
+    unknown = sorted({z for z in values if not 0 <= z < len(CHEMICAL_SYMBOLS)})
+    if unknown:
+        raise UnknownSpeciesError(f"atomic numbers have no chemical symbol: {unknown}")
+    return [CHEMICAL_SYMBOLS[z] for z in values]
+
+
+class FieldError(OxyzError):
+    """A well-known field is absent, or present in a shape it cannot hold.
+
+    Raised by the derived `Frame` accessors (`positions`, `numbers`, `symbols`,
+    `cell`, `pbc`) and by `oxyz.write` when a column's row count disagrees with
+    the frame's `n_atoms`.
+    """
+
+
+class UnknownSpeciesError(FieldError):
     """A species token has no chemical-symbol mapping to an atomic number."""
+
+
+class MissingSpeciesError(FieldError):
+    """Columns carry no `Z`, `numbers`, or `species` to derive atomic numbers.
+
+    Carries a default message so it reads sensibly when it escapes a `Frame`
+    accessor unwrapped; each conversion target catches it and re-raises with
+    its own wording.
+    """
+
+    def __init__(self, message: str = "no 'species', 'Z', or 'numbers' column") -> None:
+        super().__init__(message)
 
 
 @functools.cache
@@ -121,3 +166,112 @@ def species_to_numbers(symbols: np.ndarray | list) -> np.ndarray:
         raise UnknownSpeciesError(
             f"species are not chemical symbols: {unknown}"
         ) from None
+
+
+def positions(columns: dict[str, ColumnValues]) -> np.ndarray:
+    """Return the `pos` column as an array.
+
+    The stored array itself, not a copy. Raises `FieldError` when the frame
+    carries no `pos` column.
+    """
+    column = columns.get("pos")
+    if column is None:
+        raise FieldError("no 'pos' column to use as positions")
+    return np.asarray(column)
+
+
+def numbers(columns: dict[str, ColumnValues]) -> np.ndarray:
+    """Return atomic numbers (int32) from columns.
+
+    An explicit `Z`/`numbers` column wins, else the `species` column is
+    mapped via the shared element table. Works on a single frame's per-atom
+    columns or a batch's concatenated
+    columns alike. Raises `MissingSpeciesError` when no usable column is
+    present, `UnknownSpeciesError` when a species token has no chemical
+    symbol, and `FieldError` when a `Z`/`numbers` column holds something that
+    is not a number (a `Z:S:1` string column, say); the conversion layers map
+    these to their own error type.
+    """
+    for name in ("Z", "numbers"):
+        column = columns.get(name)
+        if column is not None:
+            try:
+                values = np.asarray(column)
+                if np.issubdtype(values.dtype, np.floating):
+                    values = np.rint(values)  # a float Z column: round, don't truncate
+                return values.astype(np.int32, copy=False)
+            except (ValueError, TypeError) as error:
+                raise FieldError(
+                    f"column {name!r} holds no atomic numbers: {error}"
+                ) from None
+
+    species = columns.get("species")
+    if species is None:
+        raise MissingSpeciesError
+    return species_to_numbers(species)
+
+
+def symbols(columns: dict[str, ColumnValues]) -> list[str]:
+    """Return chemical symbols for the frame's atoms.
+
+    A `species` column wins and is returned as stored (the list itself when it
+    is already a `list[str]`); otherwise the symbols are mapped back from
+    `numbers`. Raises `MissingSpeciesError` when neither is present, and
+    `FieldError` for a multi-component `species:S:2`-style column, which has
+    no one symbol per atom, or for a `species` that is not a per-atom column
+    at all.
+    """
+    species = columns.get("species")
+    if species is None:
+        return numbers_to_symbols(numbers(columns))
+    values = species if isinstance(species, list) else np.asarray(species).tolist()
+    if not isinstance(values, list):
+        raise FieldError(
+            f"'species' is not a per-atom column; got {type(species).__name__}"
+        )
+    if values and not isinstance(values[0], str):
+        raise FieldError("'species' is multi-component; it has no symbol per atom")
+    return cast("list[str]", values)
+
+
+def cell(metadata: dict[str, MetadataValue]) -> np.ndarray:
+    """Return the 3x3 cell in ASE's row-vector convention.
+
+    The flat, Fortran-order `Lattice` reshaped and transposed; all-zero when
+    `Lattice` is absent. Raises `FieldError` when `Lattice` is present with a
+    shape other than `(9,)`, or holding something that is not numeric.
+    """
+    lattice = metadata.get("Lattice")
+    if lattice is None:
+        return np.zeros((3, 3))
+    try:
+        flat = np.asarray(lattice)
+    except (ValueError, TypeError) as error:
+        raise FieldError(f"Lattice is not an array: {error}") from None
+    if flat.shape != (9,):
+        raise FieldError(f"Lattice must have 9 components, got shape {flat.shape}")
+    try:
+        return np.ascontiguousarray(flat.reshape((3, 3), order="F").T, dtype=float)
+    except (ValueError, TypeError) as error:
+        raise FieldError(f"Lattice holds no numeric cell: {error}") from None
+
+
+def pbc(metadata: dict[str, MetadataValue]) -> np.ndarray:
+    """Return the three periodic-boundary flags.
+
+    An explicit `pbc` defaults to all-true when `Lattice` is present and
+    all-false when it is not; a scalar broadcasts to all three axes, as ASE
+    does. Raises `FieldError` for any other shape.
+    """
+    value = metadata.get("pbc")
+    if value is None:
+        return np.full(3, metadata.get("Lattice") is not None, dtype=bool)
+    try:
+        array = np.asarray(value, dtype=bool)
+    except (ValueError, TypeError) as error:
+        raise FieldError(f"pbc is not a boolean value: {error}") from None
+    if array.ndim == 0:
+        return np.full(3, bool(array))
+    if array.shape != (3,):
+        raise FieldError(f"pbc must be a scalar or 3 booleans, got shape {array.shape}")
+    return array

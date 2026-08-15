@@ -27,27 +27,16 @@ FIXTURES = sorted(
 has_ase = importlib.util.find_spec("ase") is not None
 
 
-def arrays_equal(ours: object, theirs: object) -> bool:
-    a, b = np.asarray(ours), np.asarray(theirs)
-    if a.shape != b.shape:
-        return False
-    if a.dtype.kind == "f":
-        return np.array_equal(a, b, equal_nan=True)  # bit-exact, NaN included
-    return bool(np.array_equal(a, b))
-
-
 def assert_frames_equivalent(originals: list[Frame], rewritten: list[Frame]) -> None:
-    """Columns and metadata match as (unordered) name->value maps; write imposes
-    its own order, so order is not compared, but every value must be exact."""
+    """Every rewritten frame equals the one it came from.
+
+    `Frame.__eq__` is the promise under test: same atom count, same name->value
+    pairs, values bit-exact with NaN equal to NaN. Key order is not compared —
+    `write` imposes its own.
+    """
     assert len(originals) == len(rewritten)
-    for original, frame in zip(originals, rewritten, strict=True):
-        assert original.n_atoms == frame.n_atoms
-        assert set(original.columns) == set(frame.columns)
-        for name, values in original.columns.items():
-            assert arrays_equal(values, frame.columns[name]), f"column {name!r}"
-        assert set(original.metadata) == set(frame.metadata)
-        for key, value in original.metadata.items():
-            assert arrays_equal(value, frame.metadata[key]), f"metadata {key!r}"
+    for index, (original, frame) in enumerate(zip(originals, rewritten, strict=True)):
+        assert original == frame, f"frame {index}"
 
 
 def has_species_and_pos(frames: list[Frame]) -> bool:
