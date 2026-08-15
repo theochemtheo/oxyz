@@ -1,36 +1,27 @@
 """Torch conversion helpers shared by `oxyz.metatomic` and `oxyz.torch_sim`.
 
-Both targets turn the same untouched core arrays into torch tensors: atomic
-numbers from a `Z`/`numbers`/`species` column, numeric arrays to tensors of a
-resolved dtype, and the `dtype=None` -> `torch.get_default_dtype()` rule that
-`systems_to_torch` and `atoms_to_state` both follow. The species/cell *policy*
-that differs between the two (metatomic's per-frame transpose-and-zero cell
-versus torch_sim's batched column-convention cell, and each target's own error
-type) stays in the target modules; only the target-neutral mechanics live here.
+Both targets turn the same untouched core arrays into torch tensors: numeric
+arrays to tensors of a resolved dtype, and the `dtype=None` ->
+`torch.get_default_dtype()` rule that `systems_to_torch` and `atoms_to_state`
+both follow. The species/cell *policy* that differs between the two
+(metatomic's per-frame transpose-and-zero cell versus torch_sim's batched
+column-convention cell, and each target's own error type) stays in the target
+modules; only the target-neutral mechanics live here.
 
 `torch` is imported eagerly: this module is only reached after a target module's
-own guarded import of torch has already succeeded.
+own guarded import of torch has already succeeded. That is why the well-known
+field resolvers live in `oxyz._convert` instead — `Frame.numbers` must work
+without the torch extra installed.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
 import torch
 
-from oxyz._convert import species_to_numbers
-
 if TYPE_CHECKING:
-    from oxyz._frames import ColumnValues
-
-
-class MissingSpeciesError(Exception):
-    """Columns carry no `Z`, `numbers`, or `species` to derive atomic numbers.
-
-    Raised neutrally so each target wraps it in its own conversion error with
-    its own wording (a metatomic `Frame` versus a batched torch_sim state).
-    """
+    import numpy as np
 
 
 def resolve_dtype(dtype: torch.dtype | None) -> torch.dtype:
@@ -60,27 +51,3 @@ def to_tensor(
             f"{key!r} is not numeric (dtype {array.dtype}); cannot make a tensor"
         )
     return torch.tensor(array, dtype=dtype, device=device)
-
-
-def numbers(columns: dict[str, ColumnValues]) -> np.ndarray:
-    """Return atomic numbers (int32) from columns.
-
-    An explicit `Z`/`numbers` column wins, else the `species` column is
-    mapped via the shared element table. Works on a single frame's per-atom
-    columns or a batch's concatenated
-    columns alike. Raises `MissingSpeciesError` when no usable column is
-    present and `oxyz._convert.UnknownSpeciesError` when a species token has no
-    chemical symbol; the caller maps both to its own error type.
-    """
-    for name in ("Z", "numbers"):
-        column = columns.get(name)
-        if column is not None:
-            values = np.asarray(column)
-            if np.issubdtype(values.dtype, np.floating):
-                values = np.rint(values)  # a float Z column: round, don't truncate
-            return values.astype(np.int32, copy=False)
-
-    species = columns.get("species")
-    if species is None:
-        raise MissingSpeciesError
-    return species_to_numbers(species)

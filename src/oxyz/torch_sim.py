@@ -31,7 +31,12 @@ from collections.abc import Iterator, Mapping
 import numpy as np
 
 from oxyz._batch import Batch, MemoryScaling, iread_batch, read_batch
-from oxyz._convert import UnknownSpeciesError, numbers_to_masses
+from oxyz._convert import (
+    MissingSpeciesError,
+    UnknownSpeciesError,
+    numbers,
+    numbers_to_masses,
+)
 from oxyz._frames import _require_schema_for_mode
 from oxyz._rust import OxyzError
 from oxyz._scan import scan
@@ -48,7 +53,7 @@ except ImportError as error:
 
 from typing import TYPE_CHECKING
 
-from oxyz._torch import MissingSpeciesError, numbers, to_tensor
+from oxyz._torch import to_tensor
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -566,6 +571,8 @@ def _masses(batch: Batch, atomic_numbers: np.ndarray) -> np.ndarray:
     return values
 
 
+# Batched and in torch_sim's column-vector convention — the opposite of ASE's.
+# `oxyz._convert.cell` is the per-frame, ASE-convention twin behind `Frame.cell`.
 def _cell_and_pbc(batch: Batch) -> tuple[np.ndarray, np.ndarray]:
     """Per-system cells and the batch's single shared pbc.
 

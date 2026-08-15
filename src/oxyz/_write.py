@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Self, cast
 import numpy as np
 
 from oxyz import _rust
+from oxyz._convert import FieldError
 from oxyz._frames import ColumnValues, Compression, Frame, MetadataValue
 
 if TYPE_CHECKING:
@@ -194,12 +195,31 @@ def _payload(obj: Writable) -> _rust.FrameData:
 
 
 def _frame_payload(frame: Frame) -> _rust.FrameData:
-    """Convert `frame`'s columns and metadata to their canonical dtypes."""
+    """Convert `frame`'s columns and metadata to their canonical dtypes.
+
+    Checks each column's row count against `n_atoms` on the way: the encoder
+    indexes `row * width` for `n_atoms` rows, so a short column would panic
+    and a long one would silently drop atoms. A 0-D value is one row, the
+    scalar-width-1 form the binding accepts, so it is legal at `n_atoms == 1`.
+    """
+    columns: dict[str, ColumnValues] = {}
+    for name, values in frame.columns.items():
+        try:
+            rows = 1 if getattr(values, "ndim", 1) == 0 else len(values)
+        except TypeError:
+            raise FieldError(
+                f"column {name!r} is not a per-atom sequence; "
+                f"expected an array or a list of strings, got {type(values).__name__}"
+            ) from None
+        if rows != frame.n_atoms:
+            raise FieldError(
+                f"column {name!r} has {rows} rows, but the frame declares "
+                f"n_atoms={frame.n_atoms}"
+            )
+        columns[name] = _canonical_column(values)
     return {
         "n_atoms": frame.n_atoms,
-        "columns": {
-            name: _canonical_column(values) for name, values in frame.columns.items()
-        },
+        "columns": columns,
         "metadata": {
             key: _canonical_meta(value) for key, value in frame.metadata.items()
         },

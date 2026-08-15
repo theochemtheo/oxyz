@@ -92,6 +92,9 @@ def to_atoms(frame: Frame) -> Atoms:  # noqa: C901, PLR0912  flat field-by-field
     """
     info: dict = dict(frame.metadata)
 
+    # ASE-table parity, not a duplicate of `oxyz._convert.cell`: this loop
+    # reshapes `virial` and `stress` alongside `Lattice`, following ASE's own
+    # routing tables, and feeds the `info.pop` flow below.
     for key in SPECIAL_3_3_KEYS:
         value = info.get(key)
         if value is None:

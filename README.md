@@ -75,7 +75,11 @@ columns as numpy arrays and its comment-line metadata as typed Python
 values, with no per-atom Python objects or calculator indirection. Names and
 values are kept exactly as written: `force` and `forces` stay distinct,
 nothing is reordered, and `Lattice` remains the flat 9-value array from the
-file. Normalisation is the ASE layer's job (or yours).
+file. Normalisation is opt-in: `frame.positions`, `frame.numbers`,
+`frame.symbols`, `frame.cell`, and `frame.pbc` are derived views computed on
+access — `frame.cell` is the 3x3 cell in ASE's row-vector convention while
+`frame.metadata["Lattice"]` still holds the flat 9-value array. Nothing is
+cached and nothing the frame stores is rewritten.
 
 **Batches in the PyG layout.** `Batch` concatenates frames atom-major,
 CSR-style: every per-atom column is one dense array of `total_atoms` rows,
@@ -572,9 +576,10 @@ share the reader index grammar; their signatures are in the sections above.
 (`ColumnSchema`, `MetadataSchema`, the variant records, the `Kind` enum), and
 the `SchemaSpec` rule types (`ColumnRule`, `MetadataRule`, `FrameRule`) are
 frozen dataclasses. Every error oxyz raises subclasses `oxyz.OxyzError` (a
-`ValueError`): `ParseError`, `SchemaError`, and the converters' errors. The
-keyword/value types `Compression`, `Conformance`, `Mode`, `MemoryScaling`, and
-`Writable` are exported aliases. Everything ships with type stubs.
+`ValueError`): `ParseError`, `SchemaError`, `FieldError`, and the converters'
+errors. The keyword/value types `Compression`, `Conformance`, `Mode`,
+`MemoryScaling`, and `Writable` are exported aliases. Everything ships with
+type stubs.
 
 Everything outside that promise may change in any release: any
 underscore-prefixed name, the `oxyz._rust` extension module, and any
@@ -605,6 +610,10 @@ Contracts worth knowing before relying on them:
   comment line repeats a key, the last occurrence wins.
 - **`Batch.batch` is computed per access** (`np.repeat` over the atom
   counts); hoist it out of a hot loop.
+- **`Frame` and `Batch` compare by value and are unhashable:** `==` matches
+  atom counts and every stored value (NaN equal to NaN, key order ignored),
+  so a written-then-read frame equals the one it came from; their `repr`
+  summarises each entry's dtype and shape rather than printing the data.
 - **Errors carry frame context:** malformed input raises
   `oxyz.ParseError` with the frame index and the offending line or value in
   the message, and the same location on the exception as attributes

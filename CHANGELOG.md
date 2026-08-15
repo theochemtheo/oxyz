@@ -22,6 +22,21 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `Frame` derived accessors: `frame.positions`, `frame.numbers`,
+  `frame.symbols`, `frame.cell`, and `frame.pbc` resolve the well-known fields
+  from the untouched `columns`/`metadata` dicts on each access — `cell` is the
+  3x3 ASE-convention cell from the flat Fortran-order `Lattice`, `pbc` defaults
+  to `Lattice` presence. Nothing is cached and nothing stored is rewritten.
+  `len(frame)` is the atom count.
+- `oxyz.FieldError` (an `OxyzError`, so still a `ValueError`): a well-known
+  field is absent, or present in a shape or type it cannot hold. Raised by the
+  new accessors — including when the field is present but will not coerce, so
+  a `Z:S:1` string column reports a `FieldError` rather than numpy's `invalid
+  literal for int()` — and by `oxyz.write` when a column's row count disagrees
+  with the frame's `n_atoms`: a hand-built short column used to panic inside
+  the Rust encoder and a long one silently dropped atoms. A 0-D column counts
+  as the one row the encoder writes from it, so the scalar-width-1 form stays
+  legal for a single-atom frame.
 - Tests for the optional targets' import guards: that a missing dependency
   raises `ImportError` naming both the module and the extra to install, and
   chains the original cause. The imports are blocked in-process, so these run —
@@ -38,6 +53,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Internal
 
+- The well-known-field resolution the converters each carried is now one layer:
+  `oxyz._convert` owns `positions`/`numbers`/`symbols`/`cell`/`pbc` over the
+  plain dicts, and `oxyz.metatomic` consumes it instead of its own
+  `_cell_and_pbc` body. `numbers` and `MissingSpeciesError` move out of
+  `oxyz._torch`, which imports torch eagerly and so could not back
+  `Frame.numbers`. `oxyz.ase` keeps its own routing loop (ASE-table parity),
+  and `oxyz.torch_sim` keeps its batched, column-vector cell.
+- New `oxyz._summary`: the shape-only repr and the NaN-equal, order-insensitive
+  value comparison `Frame` and `Batch` share.
 - `pytest`/`pytest-cov` and `boto3`/`moto` move out of the `dev` group into new
   `test` and `s3-test` groups, which `dev` includes. A plain `uv sync` resolves
   to exactly what it did before; the split exists so CI can build a partial

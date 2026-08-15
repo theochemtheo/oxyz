@@ -24,7 +24,9 @@ from typing import TYPE_CHECKING, overload
 
 import numpy as np
 
-from oxyz._convert import UnknownSpeciesError
+from oxyz._convert import FieldError, MissingSpeciesError, UnknownSpeciesError, numbers
+from oxyz._convert import cell as _resolve_cell
+from oxyz._convert import pbc as _resolve_pbc
 from oxyz._frames import (
     Compression,
     Frame,
@@ -43,7 +45,7 @@ except ImportError as error:
         "'metatomic-torch'; install them with: pip install oxyz[metatomic]"
     ) from error
 
-from oxyz._torch import MissingSpeciesError, numbers, resolve_dtype, to_tensor
+from oxyz._torch import resolve_dtype, to_tensor
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -566,29 +568,10 @@ def _cell_and_pbc(frame: Frame) -> tuple[np.ndarray, np.ndarray]:
     """Reconstruct ASE's `(cell, pbc)`.
 
     A Fortran-order `Lattice`; pbc inferred from `Lattice` presence when not
-    given explicitly.
+    given explicitly. The resolution itself lives in `oxyz._convert`; here it
+    only gains this target's error type.
     """
-    pbc = frame.metadata.get("pbc")
-    lattice = frame.metadata.get("Lattice")
-    if lattice is not None:
-        flat = np.asarray(lattice)
-        if flat.shape != (9,):
-            raise ToSystemError(
-                f"Lattice must have 9 components, got shape {flat.shape}"
-            )
-        cell = flat.reshape((3, 3), order="F").T
-        if pbc is None:
-            pbc = np.array([True, True, True])
-    else:
-        cell = np.zeros((3, 3))
-        if pbc is None:
-            pbc = np.array([False, False, False])
-    pbc_array = np.asarray(pbc, dtype=bool)
-    if pbc_array.ndim == 0:
-        # A scalar pbc (e.g. `pbc=T`) broadcasts to all three axes, as ASE does.
-        pbc_array = np.full(3, bool(pbc_array))
-    elif pbc_array.shape != (3,):
-        raise ToSystemError(
-            f"pbc must be a scalar or 3 booleans, got shape {pbc_array.shape}"
-        )
-    return np.ascontiguousarray(cell, dtype=float), pbc_array
+    try:
+        return _resolve_cell(frame.metadata), _resolve_pbc(frame.metadata)
+    except FieldError as error:
+        raise ToSystemError(str(error)) from None

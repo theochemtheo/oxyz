@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
-from oxyz import _remote, _rust
+from oxyz import _remote, _rust, _summary
 from oxyz._frames import (
     ColumnValues,
     Compression,
@@ -29,8 +29,8 @@ packing: `"n_atoms"` is the atom count; `"n_atoms_x_density"` is
 memory."""
 
 
-@dataclass(frozen=True, slots=True)
-class Batch:
+@dataclass(frozen=True, slots=True, eq=False)
+class Batch:  # noqa: PLW1641  a dict of arrays is unhashable by construction
     """Frames concatenated atom-major, CSR-style (PyG's batch layout).
 
     `columns` holds per-atom arrays with `total_atoms` rows; `metadata` holds
@@ -67,6 +67,29 @@ class Batch:
     metadata: dict[str, ColumnValues]
     offsets: np.ndarray
     frame_indices: np.ndarray
+
+    def __repr__(self) -> str:
+        """Summarise the batch's shape without printing any of its data."""
+        return (
+            f"Batch(n_frames={self.n_frames}, total_atoms={self.total_atoms}, "
+            f"columns={_summary.mapping_repr(self.columns)}, "
+            f"metadata={_summary.mapping_repr(self.metadata)})"
+        )
+
+    def __eq__(self, other: object) -> bool:
+        """Compare the layout arrays and every stored value, pairwise.
+
+        Key order is ignored and NaN compares equal, matching `Frame`. `Batch`
+        is unhashable, as a mutable dict of arrays must be.
+        """
+        if not isinstance(other, Batch):
+            return NotImplemented
+        return (
+            _summary.values_equal(self.offsets, other.offsets)
+            and _summary.values_equal(self.frame_indices, other.frame_indices)
+            and _summary.mappings_equal(self.columns, other.columns)
+            and _summary.mappings_equal(self.metadata, other.metadata)
+        )
 
     @property
     def n_frames(self) -> int:

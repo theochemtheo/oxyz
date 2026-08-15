@@ -11,7 +11,6 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 import oxyz
@@ -30,12 +29,6 @@ CODECS = [
 ]
 
 
-def _frames_equal(a: oxyz.Frame, b: oxyz.Frame) -> bool:
-    if a.n_atoms != b.n_atoms or a.columns.keys() != b.columns.keys():
-        return False
-    return all(np.array_equal(a.columns[k], b.columns[k]) for k in a.columns)
-
-
 @pytest.fixture
 def plain_frames() -> list[oxyz.Frame]:
     return oxyz.read(PLAIN)
@@ -45,7 +38,7 @@ def plain_frames() -> list[oxyz.Frame]:
 def test_read_frames_matches_plain(name: str, plain_frames: list[oxyz.Frame]) -> None:
     frames = oxyz.read(DATA_DIR / name)
     assert len(frames) == len(plain_frames)
-    assert all(_frames_equal(a, b) for a, b in zip(frames, plain_frames, strict=True))
+    assert all(a == b for a, b in zip(frames, plain_frames, strict=True))
 
 
 @pytest.mark.parametrize("name", CODECS)

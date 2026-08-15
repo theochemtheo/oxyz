@@ -8,11 +8,14 @@ expected structure. ASE conversion lives in the optional `oxyz.ase`
 submodule.
 
 Columns and metadata are kept as written — no aliasing, no normalisation.
+`Frame`'s derived accessors (`positions`, `numbers`, `symbols`, `cell`, `pbc`)
+are opt-in views over those same dicts, computed on access.
 """
 
 from __future__ import annotations
 
 from oxyz._batch import Batch, MemoryScaling, iread_batch, read_batch
+from oxyz._convert import FieldError
 from oxyz._frames import (
     ColumnValues,
     Compression,
@@ -50,6 +53,7 @@ __all__ = [
     "ColumnVariant",
     "Compression",
     "Conformance",
+    "FieldError",
     "Frame",
     "FrameIndex",
     "FrameRule",
