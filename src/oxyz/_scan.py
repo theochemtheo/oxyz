@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from oxyz import _remote, _rust, _summary
+from oxyz import _html, _remote, _rust, _summary
 from oxyz._stats import AtomCountStats
 
 if TYPE_CHECKING:
@@ -51,6 +51,10 @@ class FrameIndex(AtomCountStats):
             f"FrameIndex(n_frames={self.n_frames}, total_atoms={self.total_atoms}"
             f"{_summary.atom_range(self.n_atoms)}{volumes})"
         )
+
+    def _repr_html_(self) -> str:
+        """Render as tables for a notebook, previewing a bounded slice of values."""
+        return _html.frame_index(self)
 
     @property
     def n_frames(self) -> int:

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Literal, overload
 
 import numpy as np
 
-from oxyz import _convert, _remote, _rust, _summary
+from oxyz import _convert, _html, _remote, _rust, _summary
 from oxyz._lookup import NameLookup
 
 if TYPE_CHECKING:
@@ -88,6 +88,10 @@ class Frame(NameLookup[ColumnValues, MetadataValue]):  # noqa: PLW1641  a dict o
             f"columns={_summary.mapping_repr(self.columns)}, "
             f"metadata={_summary.mapping_repr(self.metadata)})"
         )
+
+    def _repr_html_(self) -> str:
+        """Render as tables for a notebook, previewing a bounded slice of values."""
+        return _html.frame(self)
 
     def __eq__(self, other: object) -> bool:
         """Compare atom counts and every stored value, pairwise.

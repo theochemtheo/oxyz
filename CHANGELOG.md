@@ -22,6 +22,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Notebook rendering: `Frame`, `Batch`, `Schema`, `SchemaSpec` and `FrameIndex`
+  have a `_repr_html_`, so Jupyter shows them as tables — one row per column
+  or metadata key with its dtype, shape and a preview of values; the schema
+  report, a spec's rules, and a scan's atom-count and volume statistics as
+  tables of their own. Previews are bounded: the first 3 rows of an array,
+  arrays in full up to 12 elements, every cell cut at 80 characters, floats to
+  4 decimal places formatted independently of numpy's global print options.
+  The markup carries no styles or scripts, so the notebook's theme applies, and
+  every name and value is escaped.
 - `Batch` is a sequence of its frames. `len(batch)` is `n_frames` and
   iterating yields each `Frame`. Indexing follows numpy: `batch[i]` is a
   `Frame` whose numeric arrays are views onto the batch, `batch[a:b]` is a
