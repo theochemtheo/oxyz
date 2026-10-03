@@ -51,6 +51,23 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of passing over nothing. The `python` and `coverage` jobs declare
   `full` and are asserted the same way.
 
+### Changed
+
+- Every public object has a one-line `repr` that prints no data, so its length
+  depends on how many names an object carries rather than how many atoms or
+  frames. Objects that hold data — `Frame`, `Batch`, `SimStateSource`,
+  `SystemSource` — describe values by numpy dtype and shape
+  (`'pos': float64[96, 3]`); `Schema` and `SchemaSpec` describe a file in the
+  extxyz letters of `Properties=` (`'pos': R:3`, `'stress': R[3, 3]`), joining
+  drifting variants with `|` and marking an entry some frames lack, or an
+  optional rule, with `?`. Multi-frame objects show their atom-count range,
+  `n_atoms=lo..hi`. `FrameIndex` no longer prints its offset arrays; `Writer`
+  shows its path, non-default options, `frames_written`, and whether it is
+  closed; the schema rules and `Violation` omit fields left at their defaults;
+  `Kind` is `Kind.REAL`. `str(schema)` is still the multi-line report.
+- A schema violation on a 2-D metadata rule now states the expected shape in
+  full (`R[3, 3]`, formerly `R[3]`).
+
 ### Internal
 
 - The well-known-field resolution the converters each carried is now one layer:

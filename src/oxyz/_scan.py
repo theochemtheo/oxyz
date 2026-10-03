@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from oxyz import _remote, _rust
+from oxyz import _remote, _rust, _summary
 from oxyz._stats import AtomCountStats
 
 if TYPE_CHECKING:
@@ -39,6 +39,18 @@ class FrameIndex(AtomCountStats):
     offsets: np.ndarray
     n_atoms: np.ndarray
     volumes: np.ndarray | None = None
+
+    def __repr__(self) -> str:
+        """Summarise the counts without printing the per-frame arrays."""
+        volumes = (
+            ""
+            if self.volumes is None
+            else f", volumes={_summary.summarise(self.volumes)}"
+        )
+        return (
+            f"FrameIndex(n_frames={self.n_frames}, total_atoms={self.total_atoms}"
+            f"{_summary.atom_range(self.n_atoms)}{volumes})"
+        )
 
     @property
     def n_frames(self) -> int:

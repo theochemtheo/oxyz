@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
+from oxyz import _summary
 from oxyz._rust import OxyzError
-from oxyz._schema import Kind
+from oxyz._schema import Kind, column_sig, metadata_sig
 from oxyz._schema_spec import (
-    KIND_TO_LETTER,
     ColumnRule,
     FrameRule,
     MetadataRule,
@@ -82,6 +82,10 @@ class Violation:
     found: str | None
     frame_index: int | None = None
     line: int | None = None
+
+    def __repr__(self) -> str:
+        """Show the location fields only once a producer has set them."""
+        return _summary.nondefault_repr(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,10 +173,6 @@ def column_signature(value: object) -> tuple[Kind, int]:
     return Kind.STR, 1
 
 
-def _column_sig_str(kind: Kind, width: int) -> str:
-    return f"{KIND_TO_LETTER[kind]}:{width}"
-
-
 def metadata_signature(value: object) -> tuple[Kind, tuple[int, ...]]:
     """Derive `(kind, shape)` from a built metadata value.
 
@@ -195,11 +195,6 @@ def metadata_signature(value: object) -> tuple[Kind, tuple[int, ...]]:
     raise TypeError(f"unsupported metadata value type: {type(value).__name__}")
 
 
-def _metadata_sig_str(kind: Kind, shape: tuple[int, ...]) -> str:
-    letter = KIND_TO_LETTER[kind]
-    return letter if shape == () else f"{letter}[{shape[0]}]"
-
-
 def _cardinality(rule: ColumnRule | MetadataRule) -> tuple[int, int | None]:
     if rule.count is not None:
         return rule.count, rule.count
@@ -217,17 +212,15 @@ def _validate_columns(
     for name, rule in compiled.columns_literal.items():
         if name not in present:
             if rule.required:
-                expected = _column_sig_str(rule.kind, rule.width)
+                expected = column_sig(rule.kind, rule.width)
                 out.append(Violation("column", name, "missing", expected, None))
             continue
         claimed.add(name)
         kind, width = column_signature(present[name])
         if (kind, width) != (rule.kind, rule.width):
-            expected = _column_sig_str(rule.kind, rule.width)
+            expected = column_sig(rule.kind, rule.width)
             out.append(
-                Violation(
-                    "column", name, "mismatch", expected, _column_sig_str(kind, width)
-                )
+                Violation("column", name, "mismatch", expected, column_sig(kind, width))
             )
 
     for rule, matcher in compiled.columns_pattern:
@@ -236,14 +229,14 @@ def _validate_columns(
             claimed.add(name)
             kind, width = column_signature(present[name])
             if (kind, width) != (rule.kind, rule.width):
-                expected = _column_sig_str(rule.kind, rule.width)
+                expected = column_sig(rule.kind, rule.width)
                 out.append(
                     Violation(
                         "column",
                         name,
                         "mismatch",
                         expected,
-                        _column_sig_str(kind, width),
+                        column_sig(kind, width),
                     )
                 )
         lo, hi = _cardinality(rule)
@@ -263,9 +256,7 @@ def _validate_columns(
             if name not in claimed:
                 kind, width = column_signature(present[name])
                 out.append(
-                    Violation(
-                        "column", name, "extra", None, _column_sig_str(kind, width)
-                    )
+                    Violation("column", name, "extra", None, column_sig(kind, width))
                 )
     return out
 
@@ -280,20 +271,20 @@ def _validate_metadata(
     for name, rule in compiled.metadata_literal.items():
         if name not in present:
             if rule.required:
-                expected = _metadata_sig_str(rule.kind, rule.shape)
+                expected = metadata_sig(rule.kind, rule.shape)
                 out.append(Violation("metadata", name, "missing", expected, None))
             continue
         claimed.add(name)
         kind, shape = metadata_signature(present[name])
         if (kind, shape) != (rule.kind, rule.shape):
-            expected = _metadata_sig_str(rule.kind, rule.shape)
+            expected = metadata_sig(rule.kind, rule.shape)
             out.append(
                 Violation(
                     "metadata",
                     name,
                     "mismatch",
                     expected,
-                    _metadata_sig_str(kind, shape),
+                    metadata_sig(kind, shape),
                 )
             )
 
@@ -303,14 +294,14 @@ def _validate_metadata(
             claimed.add(name)
             kind, shape = metadata_signature(present[name])
             if (kind, shape) != (rule.kind, rule.shape):
-                expected = _metadata_sig_str(rule.kind, rule.shape)
+                expected = metadata_sig(rule.kind, rule.shape)
                 out.append(
                     Violation(
                         "metadata",
                         name,
                         "mismatch",
                         expected,
-                        _metadata_sig_str(kind, shape),
+                        metadata_sig(kind, shape),
                     )
                 )
         lo, hi = _cardinality(rule)
@@ -331,7 +322,7 @@ def _validate_metadata(
                 kind, shape = metadata_signature(present[name])
                 out.append(
                     Violation(
-                        "metadata", name, "extra", None, _metadata_sig_str(kind, shape)
+                        "metadata", name, "extra", None, metadata_sig(kind, shape)
                     )
                 )
     return out

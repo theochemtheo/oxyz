@@ -16,7 +16,7 @@ import math
 import warnings
 from typing import TYPE_CHECKING, cast
 
-from oxyz._schema import Kind
+from oxyz._schema import KIND_TO_LETTER, Kind
 from oxyz._schema_match import (
     SchemaError,
     SchemaWarning,
@@ -25,7 +25,7 @@ from oxyz._schema_match import (
     _matcher,
     message,
 )
-from oxyz._schema_spec import KIND_TO_LETTER, ColumnRule, MetadataRule, SchemaSpec
+from oxyz._schema_spec import ColumnRule, MetadataRule, SchemaSpec
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
