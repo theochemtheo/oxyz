@@ -77,6 +77,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   again and adding new ones unprotected.
 - Coverage is unchanged and still measured only on the full dependency set; the
   tiers never pass `--cov`, since a partial run is not a coverage figure.
+- uv pinned to 0.12.17, in `pyproject.toml` and every `setup-uv` step. The
+  lockfile is unchanged under it.
 
 ## [1.1.0] - 2026-07-29
 

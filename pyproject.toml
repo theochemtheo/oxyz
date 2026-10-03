@@ -106,7 +106,7 @@ dev = [
 [tool.uv]
 # Pinned exactly, and matched by the `version:` on every setup-uv step: the
 # lockfile is written by one uv version, so CI must not float onto another.
-required-version = "==0.12.0"
+required-version = "==0.12.17"
 # Pull torch from PyPI's CPU index everywhere except macOS, whose PyPI wheels
 # are already CPU-only; this keeps Linux/Windows CI off the default CUDA build.
 sources = { torch = [
