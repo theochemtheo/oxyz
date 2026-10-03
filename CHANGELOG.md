@@ -6,31 +6,26 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Fixed
-
-- Three skip guards did not guard. `tests/test_errors.py` tested
-  `find_spec("metatomic.torch")`, which imports the parent package and so raises
-  `ModuleNotFoundError` when `metatomic` is absent instead of returning `None` —
-  aborting collection of the module rather than skipping one test.
-  `tests/test_compressed.py` used `importorskip("oxyz.ase")`, which stopped
-  skipping when pytest 9.1 narrowed the default `exc_type` to
-  `ModuleNotFoundError`: `oxyz.ase` imports fine and raises a plain
-  `ImportError` carrying its install hint, so pytest now propagates it as a
-  failure. Both are within the project's declared `pytest>=9.0.3` range. The ty
-  canary asserted `ty` was on `PATH` rather than skipping without it. None of
-  these were visible in CI, because every job installed every dependency.
+## [1.2.0] - 2026-10-03
 
 ### Added
 
-- Notebook rendering: `Frame`, `Batch`, `Schema`, `SchemaSpec` and `FrameIndex`
-  have a `_repr_html_`, so Jupyter shows them as tables — one row per column
-  or metadata key with its dtype, shape and a preview of values; the schema
-  report, a spec's rules, and a scan's atom-count and volume statistics as
-  tables of their own. Previews are bounded: the first 3 rows of an array,
-  arrays in full up to 12 elements, every cell cut at 80 characters, floats to
-  4 decimal places formatted independently of numpy's global print options.
-  The markup carries no styles or scripts, so the notebook's theme applies, and
-  every name and value is escaped.
+- `Frame` derived accessors: `frame.positions`, `frame.numbers`,
+  `frame.symbols`, `frame.cell`, and `frame.pbc` resolve the well-known fields
+  from the untouched `columns`/`metadata` dicts on each access — `cell` is the
+  3x3 ASE-convention cell from the flat Fortran-order `Lattice`, `pbc` defaults
+  to `Lattice` presence. Nothing is cached and nothing stored is rewritten.
+- Lookup by name across columns and metadata: `frame["pos"]` and
+  `frame["energy"]` both work, as do `name in frame`, `frame.get(name,
+  default)`, `frame.keys()`, and so `dict(frame)`. The value returned is the
+  stored one, not a copy. `Batch`, `Schema` (returning the `ColumnSchema` or
+  `MetadataSchema`) and `SchemaSpec` (returning the rule declared under that
+  exact name) behave the same. A name that is both a column and a metadata key
+  raises the new `oxyz.AmbiguousNameError` (an `OxyzError`, deliberately not a
+  `KeyError`) rather than picking one. None of these is a `Mapping`: `Frame`,
+  `Schema` and `SchemaSpec` have no `len()` and cannot be iterated (a `Batch`
+  iterates its frames, below), so numpy keeps a list of frames as frames —
+  `rng.choice(frames, k)` and `np.array(frames, dtype=object)` still work.
 - `Batch` is a sequence of its frames. `len(batch)` is `n_frames` and
   iterating yields each `Frame`. Indexing follows numpy: `batch[i]` is a
   `Frame` whose numeric arrays are views onto the batch, `batch[a:b]` is a
@@ -41,46 +36,31 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Python value `oxyz.read` gives, so `batch[i]` equals the frame read from the
   file, dtype for dtype. Being iterable, a batch can be passed straight to
   `oxyz.write` and `Writer.write`.
-- Lookup by name across columns and metadata: `frame["pos"]` and
-  `frame["energy"]` both work, as do `name in frame`, `frame.get(name,
-  default)`, `frame.keys()`, and so `dict(frame)`. The value returned is the
-  stored one, not a copy. `Batch`, `Schema` (returning the `ColumnSchema` or
-  `MetadataSchema`) and `SchemaSpec` (returning the rule declared under that
-  exact name) behave the same. A name that is both a column and a metadata key
-  raises the new `oxyz.AmbiguousNameError` (an `OxyzError`, deliberately not a
-  `KeyError`) rather than picking one. None of these is a `Mapping` — no
-  `len()`, no iteration — so numpy keeps a list of frames as frames:
-  `rng.choice(frames, k)` and `np.array(frames, dtype=object)` still work.
+- Notebook rendering: `Frame`, `Batch`, `Schema`, `SchemaSpec` and `FrameIndex`
+  have a `_repr_html_`, so Jupyter shows them as tables — one row per column
+  or metadata key with its dtype, shape and a preview of values; the schema
+  report, a spec's rules, and a scan's atom-count and volume statistics as
+  tables of their own. Previews are bounded: the first 3 rows of an array,
+  arrays in full up to 12 elements, every cell cut at 80 characters, floats to
+  4 decimal places formatted independently of numpy's global print options.
+  The markup carries no styles or scripts, so the notebook's theme applies, and
+  every name and value is escaped.
 - `SchemaSpec.rule_for(name, axis=None)`: the rule validation would apply to a
   field of that name — its literal rule, else the first matching glob or regex
   in declaration order — or `None`.
-- `Frame` derived accessors: `frame.positions`, `frame.numbers`,
-  `frame.symbols`, `frame.cell`, and `frame.pbc` resolve the well-known fields
-  from the untouched `columns`/`metadata` dicts on each access — `cell` is the
-  3x3 ASE-convention cell from the flat Fortran-order `Lattice`, `pbc` defaults
-  to `Lattice` presence. Nothing is cached and nothing stored is rewritten.
 - `oxyz.FieldError` (an `OxyzError`, so still a `ValueError`): a well-known
   field is absent, or present in a shape or type it cannot hold. Raised by the
   new accessors — including when the field is present but will not coerce, so
   a `Z:S:1` string column reports a `FieldError` rather than numpy's `invalid
-  literal for int()` — and by `oxyz.write` when a column's row count disagrees
-  with the frame's `n_atoms`: a hand-built short column used to panic inside
-  the Rust encoder and a long one silently dropped atoms. A 0-D column counts
-  as the one row the encoder writes from it, so the scalar-width-1 form stays
-  legal for a single-atom frame.
-- Tests for the optional targets' import guards: that a missing dependency
-  raises `ImportError` naming both the module and the extra to install, and
-  chains the original cause. The imports are blocked in-process, so these run —
-  and are measured by coverage — whether or not the optional dependency is
-  installed, and the guard branches are no longer dead lines in the report.
-- CI runs the test suite on **deliberately incomplete dependency
-  environments**: `base` (no optional dependencies), `ase`, and `s3`, pinned to
-  3.12, the abi3 floor, plus `base` on the newest supported interpreter as a
-  forward-compatibility check on the single `cp312-abi3` wheel. A tier canary
-  keyed on `OXYZ_TEST_TIER` asserts the environment is the one CI declared, so a
-  tier that installs too much, or a guard that skips for the wrong reason, fails
-  instead of passing over nothing. The `python` and `coverage` jobs declare
-  `full` and are asserted the same way.
+  literal for int()` — and by `oxyz.write` (see Fixed).
+
+### Fixed
+
+- `oxyz.write` and `Writer.write` check every column's row count against the
+  frame's `n_atoms`, raising `oxyz.FieldError` on a mismatch. A hand-built
+  short column used to panic inside the Rust encoder, and a long one silently
+  dropped atoms. A 0-D column counts as the one row the encoder writes from it,
+  so the scalar-width-1 form stays legal for a single-atom frame.
 
 ### Changed
 
@@ -130,6 +110,30 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Every workflow action re-pinned to its latest release, `rust-toolchain` to the
   current tip of `stable`, and zizmor to 1.30.1. The two `download-artifact`
   pins, which had drifted to different majors, now agree.
+- Three skip guards did not guard. `tests/test_errors.py` tested
+  `find_spec("metatomic.torch")`, which imports the parent package and so raises
+  `ModuleNotFoundError` when `metatomic` is absent instead of returning `None` —
+  aborting collection of the module rather than skipping one test.
+  `tests/test_compressed.py` used `importorskip("oxyz.ase")`, which stopped
+  skipping when pytest 9.1 narrowed the default `exc_type` to
+  `ModuleNotFoundError`: `oxyz.ase` imports fine and raises a plain
+  `ImportError` carrying its install hint, so pytest now propagates it as a
+  failure. Both are within the project's declared `pytest>=9.0.3` range. The ty
+  canary asserted `ty` was on `PATH` rather than skipping without it. None of
+  these were visible in CI, because every job installed every dependency.
+- Tests for the optional targets' import guards: that a missing dependency
+  raises `ImportError` naming both the module and the extra to install, and
+  chains the original cause. The imports are blocked in-process, so these run —
+  and are measured by coverage — whether or not the optional dependency is
+  installed, and the guard branches are no longer dead lines in the report.
+- CI runs the test suite on **deliberately incomplete dependency
+  environments**: `base` (no optional dependencies), `ase`, and `s3`, pinned to
+  3.12, the abi3 floor, plus `base` on the newest supported interpreter as a
+  forward-compatibility check on the single `cp312-abi3` wheel. A tier canary
+  keyed on `OXYZ_TEST_TIER` asserts the environment is the one CI declared, so a
+  tier that installs too much, or a guard that skips for the wrong reason, fails
+  instead of passing over nothing. The `python` and `coverage` jobs declare
+  `full` and are asserted the same way.
 
 ## [1.1.0] - 2026-07-29
 
@@ -483,6 +487,7 @@ for reading atomistic-simulation datasets into numpy or ASE.
 - abi3 wheels for CPython 3.11 and newer on Linux (x86_64, aarch64), macOS
   (arm64, x86_64), and Windows (x64).
 
+[1.2.0]: https://github.com/theochemtheo/oxyz/releases/tag/v1.2.0
 [1.1.0]: https://github.com/theochemtheo/oxyz/releases/tag/v1.1.0
 [1.0.0]: https://github.com/theochemtheo/oxyz/releases/tag/v1.0.0
 [0.5.0]: https://github.com/theochemtheo/oxyz/releases/tag/v0.5.0
