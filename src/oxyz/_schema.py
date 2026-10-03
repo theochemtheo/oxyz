@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from oxyz import _remote, _rust, _summary
+from oxyz import _html, _remote, _rust, _summary
 from oxyz._lookup import NameLookup
 from oxyz._stats import AtomCountStats
 
@@ -216,6 +216,10 @@ class Schema(AtomCountStats, NameLookup[ColumnSchema, MetadataSchema]):
             {c.name: c for c in self.columns},
             {m.key: m for m in self.metadata},
         )
+
+    def _repr_html_(self) -> str:
+        """Render as tables for a notebook, previewing a bounded slice of values."""
+        return _html.schema(self)
 
     def report(self) -> str:
         """Human-readable summary: one line per column and metadata key."""

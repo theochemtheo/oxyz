@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Literal, cast, overload
 
 import numpy as np
 
-from oxyz import _remote, _rust, _summary
+from oxyz import _html, _remote, _rust, _summary
 from oxyz._frames import (
     ColumnValues,
     Compression,
@@ -93,6 +93,10 @@ class Batch(NameLookup[ColumnValues, ColumnValues]):  # noqa: PLW1641  a dict of
             f"columns={_summary.mapping_repr(self.columns)}, "
             f"metadata={_summary.mapping_repr(self.metadata)})"
         )
+
+    def _repr_html_(self) -> str:
+        """Render as tables for a notebook, previewing a bounded slice of values."""
+        return _html.batch(self)
 
     def __eq__(self, other: object) -> bool:
         """Compare the layout arrays and every stored value, pairwise.

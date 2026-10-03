@@ -622,6 +622,12 @@ Contracts worth knowing before relying on them:
   atom counts and every stored value (NaN equal to NaN, key order ignored),
   so a written-then-read frame equals the one it came from; their `repr`
   summarises each entry's dtype and shape rather than printing the data.
+- **Notebooks render tables:** in Jupyter, `Frame`, `Batch`, `Schema`,
+  `SchemaSpec` and `FrameIndex` display as plain HTML tables, one row per
+  field. Values are previewed within fixed bounds — the first 3 rows of an
+  array, arrays in full up to 12 elements, cells cut at 80 characters, floats
+  to 4 decimal places regardless of numpy's print options — so a 100k-atom
+  frame renders as small a page as a 2-atom one.
 - **Errors carry frame context:** malformed input raises
   `oxyz.ParseError` with the frame index and the offending line or value in
   the message, and the same location on the exception as attributes

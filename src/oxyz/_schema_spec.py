@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 
 import yaml
 
-from oxyz import _summary
+from oxyz import _html, _summary
 from oxyz._lookup import NameLookup
 from oxyz._schema import (
     KIND_TO_LETTER,
@@ -232,6 +232,10 @@ class SchemaSpec(NameLookup[ColumnRule, MetadataRule]):
             f"SchemaSpec(columns={_summary.mapping_repr(columns, str)}, "
             f"metadata={_summary.mapping_repr(metadata, str)}{frame}{mode})"
         )
+
+    def _repr_html_(self) -> str:
+        """Render as tables for a notebook, previewing a bounded slice of values."""
+        return _html.spec(self)
 
     def _sides(self) -> tuple[dict[str, ColumnRule], dict[str, MetadataRule]]:
         return (
