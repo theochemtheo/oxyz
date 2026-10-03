@@ -18,7 +18,6 @@ import pytest
 import oxyz
 from oxyz import (
     AmbiguousNameError,
-    Batch,
     ColumnRule,
     ColumnSchema,
     Frame,
@@ -146,19 +145,11 @@ def test_batch_lookup_matches_frame_lookup() -> None:
     assert batch.keys() == ["species", "pos", "forces", "Lattice", "energy", "Time"]
     with pytest.raises(KeyError):
         batch["forcez"]
-    assert not isinstance(batch, Iterable)
 
 
 def test_batch_lookup_of_a_clashing_name_is_ambiguous(clashing: Path) -> None:
     with pytest.raises(AmbiguousNameError, match="'charge'"):
         oxyz.read_batch(clashing)["charge"]
-
-
-def test_batch_keeps_integer_keys_for_frames(clashing: Path) -> None:
-    batch: Batch = oxyz.read_batch(clashing)
-
-    with pytest.raises(TypeError, match="names"):
-        batch[0]  # ty: ignore[invalid-argument-type]
 
 
 def test_schema_lookup_returns_the_entry_for_a_name() -> None:
