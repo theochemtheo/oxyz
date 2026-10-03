@@ -13,6 +13,7 @@ from oxyz._frames import (
     _projection,
     _require_schema_for_mode,
 )
+from oxyz._lookup import NameLookup
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
@@ -30,12 +31,13 @@ memory."""
 
 
 @dataclass(frozen=True, slots=True, eq=False)
-class Batch:  # noqa: PLW1641  a dict of arrays is unhashable by construction
+class Batch(NameLookup[ColumnValues, ColumnValues]):  # noqa: PLW1641  a dict of arrays is unhashable by construction
     """Frames concatenated atom-major, CSR-style (PyG's batch layout).
 
     `columns` holds per-atom arrays with `total_atoms` rows; `metadata` holds
     per-frame arrays with `n_frames` rows. Frame `i` occupies rows
-    `offsets[i]:offsets[i + 1]` of every column.
+    `offsets[i]:offsets[i + 1]` of every column. `batch[name]` looks a name up
+    across both, as `Frame` does.
 
     Attributes
     ----------
@@ -91,6 +93,9 @@ class Batch:  # noqa: PLW1641  a dict of arrays is unhashable by construction
             and _summary.mappings_equal(self.columns, other.columns)
             and _summary.mappings_equal(self.metadata, other.metadata)
         )
+
+    def _sides(self) -> tuple[dict[str, ColumnValues], dict[str, ColumnValues]]:
+        return self.columns, self.metadata
 
     @property
     def n_frames(self) -> int:

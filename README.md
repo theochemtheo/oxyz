@@ -14,8 +14,8 @@ tells you whether a training file is what you think it is.
 import oxyz
 
 frames = oxyz.read("train.extxyz")          # all cores, one pass
-frames[0].columns["pos"]                    # float64 ndarray, shape (n_atoms, 3)
-frames[0].metadata["energy"]                # float
+frames[0]["pos"]                            # float64 ndarray, shape (n_atoms, 3)
+frames[0]["energy"]                         # float: columns and metadata alike
 
 schema = oxyz.infer_schema("train.extxyz")
 schema.is_consistent                        # False: now you know before training
@@ -79,7 +79,10 @@ file. Normalisation is opt-in: `frame.positions`, `frame.numbers`,
 `frame.symbols`, `frame.cell`, and `frame.pbc` are derived views computed on
 access — `frame.cell` is the 3x3 cell in ASE's row-vector convention while
 `frame.metadata["Lattice"]` still holds the flat 9-value array. Nothing is
-cached and nothing the frame stores is rewritten.
+cached and nothing the frame stores is rewritten. `frame["pos"]` looks a
+name up in either dict (as do `in`, `get`, and `keys`), and raises rather than
+guess when a name is both a column and a metadata key; `Batch`, `Schema` and
+`SchemaSpec` do the same.
 
 **Batches in the PyG layout.** `Batch` concatenates frames atom-major,
 CSR-style: every per-atom column is one dense array of `total_atoms` rows,

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 
 from oxyz import _summary
+from oxyz._lookup import AmbiguousNameError
 from oxyz._rust import OxyzError
 from oxyz._schema import Kind, column_sig, metadata_sig
 from oxyz._schema_spec import (
@@ -155,6 +156,40 @@ def compile_spec(spec: SchemaSpec) -> CompiledSpec:
         metadata_pattern=metadata_pattern,
         frame=spec.frame,
     )
+
+
+def governing_rule(
+    spec: SchemaSpec, name: str, axis: Literal["column", "metadata"] | None
+) -> ColumnRule | MetadataRule | None:
+    """Back `SchemaSpec.rule_for` with the matchers validation uses."""
+    if axis not in (None, "column", "metadata"):
+        raise ValueError(f"unknown axis {axis!r}; use 'column', 'metadata' or None")
+    compiled = compile_spec(spec)
+
+    def first[Rule: (ColumnRule, MetadataRule)](
+        literal: dict[str, Rule], patterns: tuple[tuple[Rule, re.Pattern[str]], ...]
+    ) -> Rule | None:
+        if name in literal:
+            return literal[name]
+        return next((rule for rule, matcher in patterns if matcher.match(name)), None)
+
+    column = (
+        None
+        if axis == "metadata"
+        else first(compiled.columns_literal, compiled.columns_pattern)
+    )
+    metadata = (
+        None
+        if axis == "column"
+        else first(compiled.metadata_literal, compiled.metadata_pattern)
+    )
+    if column is not None and metadata is not None:
+        raise AmbiguousNameError(
+            f"{name!r} is governed by both a column and a metadata rule; "
+            "pass axis='column' or axis='metadata'",
+            name=name,
+        )
+    return column if column is not None else metadata
 
 
 def column_signature(value: object) -> tuple[Kind, int]:
