@@ -79,6 +79,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tiers never pass `--cov`, since a partial run is not a coverage figure.
 - uv pinned to 0.12.17, in `pyproject.toml` and every `setup-uv` step. The
   lockfile is unchanged under it.
+- Every workflow action re-pinned to its latest release, `rust-toolchain` to the
+  current tip of `stable`, and zizmor to 1.30.1. The two `download-artifact`
+  pins, which had drifted to different majors, now agree.
 
 ## [1.1.0] - 2026-07-29
 
