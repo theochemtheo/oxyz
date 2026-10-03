@@ -36,9 +36,10 @@ class AmbiguousNameError(OxyzError):
 class NameLookup[C, M]:
     """Mapping-like access by name over a host's columns and metadata.
 
-    Not a `Mapping`: a host has no `__len__` and cannot be iterated. With both,
-    numpy reads a list of hosts as a sequence of key names, so
-    `rng.choice(frames, k)` would return names rather than frames.
+    Not a `Mapping`: iterating the names is disabled and no `__len__` counts
+    them. With both, numpy reads a list of hosts as a sequence of key names, so
+    `rng.choice(frames, k)` would return names rather than frames. `Batch`
+    instead defines both over its frames, as the sequence it is.
     """
 
     __slots__ = ()

@@ -22,6 +22,16 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `Batch` is a sequence of its frames. `len(batch)` is `n_frames` and
+  iterating yields each `Frame`. Indexing follows numpy: `batch[i]` is a
+  `Frame` whose numeric arrays are views onto the batch, `batch[a:b]` is a
+  `Batch` of views with `offsets` rebased, and a step slice, a list or array
+  of positions, or a boolean mask over frames (`batch[batch["energy"] < 0]`)
+  gathers a new `Batch`, a copy, keeping `frame_indices` as file provenance.
+  String columns are lists and so are copied; scalar metadata comes out as the
+  Python value `oxyz.read` gives, so `batch[i]` equals the frame read from the
+  file, dtype for dtype. Being iterable, a batch can be passed straight to
+  `oxyz.write` and `Writer.write`.
 - Lookup by name across columns and metadata: `frame["pos"]` and
   `frame["energy"]` both work, as do `name in frame`, `frame.get(name,
   default)`, `frame.keys()`, and so `dict(frame)`. The value returned is the

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast, overload
 
 import numpy as np
 
@@ -9,6 +9,8 @@ from oxyz import _remote, _rust, _summary
 from oxyz._frames import (
     ColumnValues,
     Compression,
+    Frame,
+    MetadataValue,
     _check_threads,
     _projection,
     _require_schema_for_mode,
@@ -38,6 +40,19 @@ class Batch(NameLookup[ColumnValues, ColumnValues]):  # noqa: PLW1641  a dict of
     per-frame arrays with `n_frames` rows. Frame `i` occupies rows
     `offsets[i]:offsets[i + 1]` of every column. `batch[name]` looks a name up
     across both, as `Frame` does.
+
+    A batch is also a sequence of its frames: `len(batch)` is `n_frames`, and
+    iterating yields each frame. Indexing follows numpy's rule — basic
+    indexing shares memory, advanced indexing copies:
+
+    - `batch[i]` is a `Frame` whose numeric arrays are views onto the batch;
+    - `batch[a:b]` is a `Batch` of views;
+    - a step slice, a sequence of indices, or a boolean mask over frames
+      gathers a new `Batch`, a copy.
+
+    String columns are Python lists, so a frame or slice gets new lists of the
+    same strings; scalar metadata comes out as the Python value `oxyz.read`
+    gives. `name in batch` tests names, as on `Frame`, not frames.
 
     Attributes
     ----------
@@ -97,6 +112,120 @@ class Batch(NameLookup[ColumnValues, ColumnValues]):  # noqa: PLW1641  a dict of
     def _sides(self) -> tuple[dict[str, ColumnValues], dict[str, ColumnValues]]:
         return self.columns, self.metadata
 
+    def __len__(self) -> int:
+        """Return the number of frames, `n_frames`."""
+        return self.n_frames
+
+    def __iter__(self) -> Iterator[Frame]:
+        """Yield each frame in turn, as `batch[i]` would."""
+        for i in range(self.n_frames):
+            yield self._frame(i)
+
+    @overload
+    def __getitem__(self, key: str) -> ColumnValues: ...
+    @overload
+    def __getitem__(self, key: int | np.integer) -> Frame: ...
+    @overload
+    def __getitem__(self, key: slice | Sequence[int] | np.ndarray) -> Batch: ...
+    # A str key keeps NameLookup's exact signature; ty does not yet read an
+    # overloaded override as compatible.
+    def __getitem__(  # ty: ignore[invalid-method-override]
+        self, key: str | int | np.integer | slice | Sequence[int] | np.ndarray
+    ) -> ColumnValues | Frame | Batch:
+        """Look up a field by name, a frame by position, or frames by selection.
+
+        A `str` is a column or metadata name. An `int` gives a `Frame`; a
+        `slice` with step 1 a `Batch` of views; any other slice, a sequence of
+        positions, or a boolean mask of length `n_frames` a gathered `Batch`.
+        Negative positions count from the end; out of range is `IndexError`.
+        """
+        if isinstance(key, str):
+            return NameLookup.__getitem__(self, key)
+        if isinstance(key, slice):
+            start, stop, step = key.indices(self.n_frames)
+            if step == 1:
+                return self._slice(start, max(start, stop))
+            return self._gather(np.arange(start, stop, step, dtype=np.intp))
+        if isinstance(key, (int, np.integer)) and not isinstance(key, (bool, np.bool_)):
+            return self._frame(self._position(int(key)))
+        if isinstance(key, (list, tuple, np.ndarray)):
+            return self._gather(self._positions(key))
+        raise TypeError(
+            "Batch keys are names (str), frame positions (int), slices, "
+            f"position sequences or boolean masks, not {type(key).__name__}"
+        )
+
+    def _position(self, index: int) -> int:
+        n = self.n_frames
+        if not -n <= index < n:
+            raise IndexError(f"frame {index} is out of range for a batch of {n} frames")
+        return index + n if index < 0 else index
+
+    def _positions(self, key: object) -> np.ndarray:
+        n = self.n_frames
+        selection = np.asarray(key)
+        if selection.size == 0:
+            return np.empty(0, dtype=np.intp)
+        if selection.dtype == np.bool_:
+            if selection.shape != (n,):
+                raise IndexError(
+                    f"boolean mask of shape {selection.shape} does not match a "
+                    f"batch of {n} frames"
+                )
+            return np.flatnonzero(selection)
+        if selection.ndim != 1 or selection.dtype.kind not in "iu":
+            raise TypeError(
+                "frame positions must be a 1-D sequence of integers, not "
+                f"{selection.dtype}{list(selection.shape)}"
+            )
+        out_of_range = (selection < -n) | (selection >= n)
+        if out_of_range.any():
+            raise IndexError(
+                f"frames {selection[out_of_range].tolist()} are out of range "
+                f"for a batch of {n} frames"
+            )
+        return np.where(selection < 0, selection + n, selection).astype(np.intp)
+
+    def _frame(self, i: int) -> Frame:
+        lo, hi = int(self.offsets[i]), int(self.offsets[i + 1])
+        return Frame(
+            n_atoms=hi - lo,
+            columns={
+                name: _fresh(value[lo:hi]) for name, value in self.columns.items()
+            },
+            metadata={name: _unbox(value[i]) for name, value in self.metadata.items()},
+        )
+
+    def _slice(self, start: int, stop: int) -> Batch:
+        lo, hi = int(self.offsets[start]), int(self.offsets[stop])
+        return Batch(
+            columns={
+                name: _fresh(value[lo:hi]) for name, value in self.columns.items()
+            },
+            metadata={
+                name: _fresh(value[start:stop]) for name, value in self.metadata.items()
+            },
+            offsets=self.offsets[start : stop + 1] - lo,
+            frame_indices=self.frame_indices[start:stop],
+        )
+
+    def _gather(self, positions: np.ndarray) -> Batch:
+        starts = self.offsets[positions]
+        counts = self.offsets[positions + 1] - starts
+        offsets = np.zeros(len(positions) + 1, dtype=self.offsets.dtype)
+        np.cumsum(counts, out=offsets[1:])
+        # Atom row `k` of the gather is row `k - offsets[f] + starts[f]` of
+        # the batch, for the frame `f` it falls in.
+        rows = np.arange(offsets[-1]) + np.repeat(starts - offsets[:-1], counts)
+        return Batch(
+            columns={name: _take(value, rows) for name, value in self.columns.items()},
+            metadata={
+                name: _take(value, positions) for name, value in self.metadata.items()
+            },
+            offsets=offsets,
+            frame_indices=self.frame_indices[positions],
+        )
+
     @property
     def n_frames(self) -> int:
         """Number of frames in the batch."""
@@ -124,6 +253,36 @@ class Batch(NameLookup[ColumnValues, ColumnValues]):  # noqa: PLW1641  a dict of
         Recomputed on each access; hoist it out of a hot loop.
         """
         return np.repeat(np.arange(self.n_frames), self.n_atoms)
+
+
+def _fresh[V](value: V) -> V:
+    """Return `value` with every list in it replaced by a new one.
+
+    Arrays pass through untouched (a slice of one is already a view); only
+    the Python lists that hold strings need copying, so that a frame or slice
+    never aliases the batch's lists.
+    """
+    if isinstance(value, list):
+        return [_fresh(item) for item in value]  # ty: ignore[invalid-return-type]
+    return value
+
+
+def _unbox(value: object) -> MetadataValue:
+    """Turn one frame's metadata row into what `oxyz.read` would give.
+
+    A numpy scalar becomes its Python value; an array row stays a view.
+    """
+    if isinstance(value, np.generic):
+        # A batch's numeric metadata is float64, int64 or bool.
+        return cast("float | int | bool", value.item())
+    return cast("MetadataValue", _fresh(value))
+
+
+def _take(value: ColumnValues, rows: np.ndarray) -> ColumnValues:
+    """Gather `rows` of a stored value: fancy indexing, or list picking."""
+    if isinstance(value, list):
+        return [_fresh(value[row]) for row in rows.tolist()]
+    return value[rows]
 
 
 def _scan_count(

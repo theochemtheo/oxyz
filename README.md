@@ -89,7 +89,10 @@ CSR-style: every per-atom column is one dense array of `total_atoms` rows,
 frame `i` occupying rows `offsets[i]:offsets[i+1]`; per-frame metadata
 stacks into arrays of `n_frames` rows. `batch.ptr` and `batch.batch` carry
 their PyTorch Geometric names, and `torch.from_numpy(batch.columns["pos"])`
-is zero-copy, so the path into a training loop is short.
+is zero-copy, so the path into a training loop is short. A batch is also a
+sequence of its frames: `batch[i]` is a `Frame` whose arrays are views onto the
+batch, `batch[a:b]` a batch of views, and an index list or boolean mask gathers
+a copy, as numpy's basic and advanced indexing do.
 
 ```python
 for batch in oxyz.iread_batch("bulk.extxyz", atoms_per_batch=4096,
@@ -97,6 +100,8 @@ for batch in oxyz.iread_batch("bulk.extxyz", atoms_per_batch=4096,
     batch.columns["forces"]        # (total_atoms, 3)
     batch.metadata["energy"]       # (n_frames,)
     batch.frame_indices            # which file frames these are
+    batch[0]["pos"]                # the first frame's rows, a view
+    batch[batch["energy"] < -6.0]  # a new batch of the matching frames
 ```
 
 `iread_batch` packs by frame count or by a total-atom budget, in file
