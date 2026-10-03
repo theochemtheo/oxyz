@@ -9,7 +9,6 @@ are replaced; these tests pin the replacements and the accessors that resolve
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from pathlib import Path
 from typing import cast
 
@@ -229,17 +228,6 @@ def test_batch_equality_covers_the_layout_arrays() -> None:
     )
     assert batch != retagged
     assert batch != 42
-
-
-def test_len_is_the_atom_count_and_does_not_make_a_frame_iterable() -> None:
-    # MOLECULE has 3 atoms but 2 columns, so this cannot pass on a len() that
-    # returns the column count.
-    molecule = oxyz.read(MOLECULE, 0)
-
-    assert len(molecule) == molecule.n_atoms == 3
-    assert len(molecule.columns) == 2
-    # oxyz.write dispatches on Iterable; a Frame must not look like a sequence.
-    assert not isinstance(molecule, Iterable)
 
 
 def test_accessors_on_a_periodic_frame() -> None:

@@ -4,11 +4,12 @@ import json
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 import yaml
 
 from oxyz import _summary
+from oxyz._lookup import NameLookup
 from oxyz._schema import (
     KIND_TO_LETTER,
     LETTER_TO_KIND,
@@ -180,7 +181,7 @@ def _frame_rule(attrs: Mapping[str, Any]) -> FrameRule:
 
 
 @dataclass(frozen=True, slots=True)
-class SchemaSpec:
+class SchemaSpec(NameLookup[ColumnRule, MetadataRule]):
     """A prescriptive schema: expected columns, metadata, and structural facts.
 
     Each format has a `from_`/`to_` pair: `from_dict`/`to_dict`,
@@ -188,6 +189,10 @@ class SchemaSpec:
     stable order and comment support), and `from_file`/`to_file` (dispatching on
     `.json`/`.yaml`/`.yml`, with `from_file` also reading `.toml`). Or build one
     directly.
+
+    `spec[name]` returns the rule declared under exactly that name, pattern
+    text included (`spec["REF_*"]`); `rule_for` answers which rule governs a
+    given field.
 
     Attributes
     ----------
@@ -227,6 +232,46 @@ class SchemaSpec:
             f"SchemaSpec(columns={_summary.mapping_repr(columns, str)}, "
             f"metadata={_summary.mapping_repr(metadata, str)}{frame}{mode})"
         )
+
+    def _sides(self) -> tuple[dict[str, ColumnRule], dict[str, MetadataRule]]:
+        return (
+            {r.name: r for r in self.columns},
+            {r.key: r for r in self.metadata},
+        )
+
+    @overload
+    def rule_for(self, name: str, axis: Literal["column"]) -> ColumnRule | None: ...
+    @overload
+    def rule_for(self, name: str, axis: Literal["metadata"]) -> MetadataRule | None: ...
+    @overload
+    def rule_for(
+        self, name: str, axis: None = None
+    ) -> ColumnRule | MetadataRule | None: ...
+    def rule_for(
+        self, name: str, axis: Literal["column", "metadata"] | None = None
+    ) -> ColumnRule | MetadataRule | None:
+        """Return the rule validation applies to a field called `name`.
+
+        The literal rule of that name, else the first pattern (glob or `re:`)
+        that matches, in declaration order — the order validation claims
+        fields in. `None` when no rule governs it.
+
+        Parameters
+        ----------
+        name
+            A column name or metadata key, as it would appear in a frame.
+        axis
+            `"column"` or `"metadata"` to search one side. `None` searches
+            both, and raises `oxyz.AmbiguousNameError` if both govern `name`.
+
+        Returns
+        -------
+        ColumnRule or MetadataRule or None
+            The governing rule, or `None`.
+        """
+        from oxyz._schema_match import governing_rule
+
+        return governing_rule(self, name, axis)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> SchemaSpec:

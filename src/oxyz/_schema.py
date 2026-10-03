@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from oxyz import _remote, _rust, _summary
+from oxyz._lookup import NameLookup
 from oxyz._stats import AtomCountStats
 
 if TYPE_CHECKING:
@@ -164,7 +165,7 @@ class MetadataSchema:
 
 
 @dataclass(frozen=True, slots=True)
-class Schema(AtomCountStats):
+class Schema(AtomCountStats, NameLookup[ColumnSchema, MetadataSchema]):
     """Observed structure of a dataset: columns, metadata, and consistency.
 
     Built by `infer_schema` in one pass; records counts, not frame indices.
@@ -174,6 +175,8 @@ class Schema(AtomCountStats):
     are None only for an empty file. The same single pass keeps the per-frame
     `n_atoms`, so `mean_atoms`/`median_atoms`/`std_atoms` (from
     `AtomCountStats`) match what a `scan` would report without a second read.
+    `schema[name]` returns the `ColumnSchema` or `MetadataSchema` so named, as
+    `Frame` looks names up.
 
     Attributes
     ----------
@@ -205,6 +208,14 @@ class Schema(AtomCountStats):
     metadata: tuple[MetadataSchema, ...]
     is_consistent: bool
     _report: str = field(repr=False)
+
+    def _sides(
+        self,
+    ) -> tuple[dict[str, ColumnSchema], dict[str, MetadataSchema]]:
+        return (
+            {c.name: c for c in self.columns},
+            {m.key: m for m in self.metadata},
+        )
 
     def report(self) -> str:
         """Human-readable summary: one line per column and metadata key."""

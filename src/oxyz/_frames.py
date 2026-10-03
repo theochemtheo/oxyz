@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Literal, overload
 import numpy as np
 
 from oxyz import _convert, _remote, _rust, _summary
+from oxyz._lookup import NameLookup
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence
@@ -37,13 +38,19 @@ not say `.tar`, `.tar.gz` or `.tar.zst`."""
 
 
 @dataclass(frozen=True, slots=True, eq=False)
-class Frame:  # noqa: PLW1641  a dict of arrays is unhashable by construction
+class Frame(NameLookup[ColumnValues, MetadataValue]):  # noqa: PLW1641  a dict of arrays is unhashable by construction
     """One parsed extxyz frame: per-atom columns plus comment-line metadata.
 
     Both dicts preserve file order. Column names and metadata values are kept
     exactly as written in the file; aliasing (`force` vs `forces`) and
     conversions (Fortran-order `Lattice` to a 3x3 cell) are never applied to
     them. `metadata` is a dict, so a repeated key keeps only its last value.
+
+    `frame[name]` looks a name up in `columns`, then `metadata`, returning
+    the stored value; `name in frame`, `frame.get(name)` and `frame.keys()`
+    follow suit, and `dict(frame)` flattens the two. A name in both raises
+    `oxyz.AmbiguousNameError`. A frame is not a `Mapping`: it has no `len()`
+    and cannot be iterated, so numpy keeps a list of frames as frames.
 
     The derived accessors below are opt-in views over those same dicts: each
     resolves the well-known field on every access, and none of them mutates,
@@ -97,9 +104,8 @@ class Frame:  # noqa: PLW1641  a dict of arrays is unhashable by construction
             and _summary.mappings_equal(self.metadata, other.metadata)
         )
 
-    def __len__(self) -> int:
-        """Return the number of atoms, so `len(frame)` matches `len(ase.Atoms)`."""
-        return self.n_atoms
+    def _sides(self) -> tuple[dict[str, ColumnValues], dict[str, MetadataValue]]:
+        return self.columns, self.metadata
 
     @property
     def positions(self) -> np.ndarray:

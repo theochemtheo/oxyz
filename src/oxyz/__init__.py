@@ -24,6 +24,7 @@ from oxyz._frames import (
     iread,
     read,
 )
+from oxyz._lookup import AmbiguousNameError
 from oxyz._remote import StorageOptions
 from oxyz._rust import OxyzError, ParseError
 from oxyz._scan import FrameIndex, scan
@@ -46,6 +47,7 @@ from oxyz._schema_spec import ColumnRule, FrameRule, MetadataRule, Mode, SchemaS
 from oxyz._write import Writable, Writer, write
 
 __all__ = [
+    "AmbiguousNameError",
     "Batch",
     "ColumnRule",
     "ColumnSchema",

@@ -22,12 +22,24 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Lookup by name across columns and metadata: `frame["pos"]` and
+  `frame["energy"]` both work, as do `name in frame`, `frame.get(name,
+  default)`, `frame.keys()`, and so `dict(frame)`. The value returned is the
+  stored one, not a copy. `Batch`, `Schema` (returning the `ColumnSchema` or
+  `MetadataSchema`) and `SchemaSpec` (returning the rule declared under that
+  exact name) behave the same. A name that is both a column and a metadata key
+  raises the new `oxyz.AmbiguousNameError` (an `OxyzError`, deliberately not a
+  `KeyError`) rather than picking one. None of these is a `Mapping` — no
+  `len()`, no iteration — so numpy keeps a list of frames as frames:
+  `rng.choice(frames, k)` and `np.array(frames, dtype=object)` still work.
+- `SchemaSpec.rule_for(name, axis=None)`: the rule validation would apply to a
+  field of that name — its literal rule, else the first matching glob or regex
+  in declaration order — or `None`.
 - `Frame` derived accessors: `frame.positions`, `frame.numbers`,
   `frame.symbols`, `frame.cell`, and `frame.pbc` resolve the well-known fields
   from the untouched `columns`/`metadata` dicts on each access — `cell` is the
   3x3 ASE-convention cell from the flat Fortran-order `Lattice`, `pbc` defaults
   to `Lattice` presence. Nothing is cached and nothing stored is rewritten.
-  `len(frame)` is the atom count.
 - `oxyz.FieldError` (an `OxyzError`, so still a `ValueError`): a well-known
   field is absent, or present in a shape or type it cannot hold. Raised by the
   new accessors — including when the field is present but will not coerce, so
