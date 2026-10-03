@@ -71,7 +71,8 @@ class Batch:  # noqa: PLW1641  a dict of arrays is unhashable by construction
     def __repr__(self) -> str:
         """Summarise the batch's shape without printing any of its data."""
         return (
-            f"Batch(n_frames={self.n_frames}, total_atoms={self.total_atoms}, "
+            f"Batch(n_frames={self.n_frames}, total_atoms={self.total_atoms}"
+            f"{_summary.atom_range(self.n_atoms)}, "
             f"columns={_summary.mapping_repr(self.columns)}, "
             f"metadata={_summary.mapping_repr(self.metadata)})"
         )

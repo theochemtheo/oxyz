@@ -349,6 +349,17 @@ def test_source_state_matches_read_and_serves_arrays() -> None:
     assert list(offsets) == [0, 3, 4, 6]
 
 
+def test_source_repr_summarises_its_batch() -> None:
+    import oxyz.torch_sim
+
+    source = oxyz.torch_sim.SimStateSource(DATA_DIR / "varying_atom_counts.xyz")
+    assert repr(source) == (
+        "SimStateSource(n_frames=3, total_atoms=6, n_atoms=1..3, "
+        "columns={'species': str[6], 'pos': float64[6, 3], 'forces': float64[6, 3]}, "
+        "metadata={'Lattice': int64[3, 9], 'energy': float64[3]})"
+    )
+
+
 def test_source_missing_key_raises() -> None:
     import oxyz.torch_sim
 

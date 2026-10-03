@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from oxyz import _remote, _rust
+from oxyz import _remote, _rust, _summary
 from oxyz._stats import AtomCountStats
 
 if TYPE_CHECKING:
@@ -36,6 +36,32 @@ class Kind(StrEnum):
     INT = "Int"
     BOOL = "Bool"
     STR = "Str"
+
+    def __repr__(self) -> str:
+        """Name the member as it is spelt in code, e.g. `Kind.REAL`."""
+        return f"Kind.{self.name}"
+
+
+LETTER_TO_KIND: dict[str, Kind] = {
+    "R": Kind.REAL,
+    "I": Kind.INT,
+    "L": Kind.BOOL,
+    "S": Kind.STR,
+}
+KIND_TO_LETTER: dict[Kind, str] = {
+    kind: letter for letter, kind in LETTER_TO_KIND.items()
+}
+
+
+def column_sig(kind: Kind, width: int) -> str:
+    """Render a column's type as extxyz writes it in `Properties=`: `R:3`."""
+    return f"{KIND_TO_LETTER[kind]}:{width}"
+
+
+def metadata_sig(kind: Kind, shape: tuple[int, ...]) -> str:
+    """Render a metadata value's type: `R` for a scalar, else `R[9]`, `R[3, 3]`."""
+    letter = KIND_TO_LETTER[kind]
+    return letter if shape == () else f"{letter}[{', '.join(map(str, shape))}]"
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,6 +224,33 @@ class Schema(AtomCountStats):
     def __str__(self) -> str:
         """Alias for `report()`."""
         return self._report
+
+    def __repr__(self) -> str:
+        """Summarise counts and each entry's type, in extxyz letters.
+
+        Drifting variants join with `|`; `?` marks an entry some frames lack.
+        """
+
+        def absent(entry: ColumnSchema | MetadataSchema) -> str:
+            return "?" if entry.frames_present < self.n_frames else ""
+
+        columns = {
+            c.name: "|".join(column_sig(v.kind, v.width) for v in c.variants)
+            + absent(c)
+            for c in self.columns
+        }
+        metadata = {
+            m.key: "|".join(metadata_sig(v.kind, v.shape) for v in m.variants)
+            + absent(m)
+            for m in self.metadata
+        }
+        return (
+            f"Schema(n_frames={self.n_frames}, total_atoms={self.total_atoms}"
+            f"{_summary.atom_range(self.n_atoms)}, "
+            f"columns={_summary.mapping_repr(columns, str)}, "
+            f"metadata={_summary.mapping_repr(metadata, str)}, "
+            f"is_consistent={self.is_consistent})"
+        )
 
 
 def _column_schema(data: _rust.ColumnSchemaData) -> ColumnSchema:

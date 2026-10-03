@@ -307,6 +307,15 @@ def test_non_numeric_column_raises_clear_error(tmp_path: Path) -> None:
         source.per_atom("species")
 
 
+def test_source_repr_counts_frames_and_atoms(tmp_path: Path) -> None:
+    import oxyz.metatomic
+
+    source = oxyz.metatomic.SystemSource(DATA_DIR / "varying_atom_counts.xyz")
+    assert repr(source) == "SystemSource(n_frames=3, total_atoms=6, n_atoms=1..3)"
+    empty = oxyz.metatomic.SystemSource(_write(tmp_path, ""))
+    assert repr(empty) == "SystemSource(n_frames=0, total_atoms=0)"
+
+
 def test_extraction_on_empty_source_raises(tmp_path: Path) -> None:
     import oxyz.metatomic
 

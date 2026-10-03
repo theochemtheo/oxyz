@@ -90,10 +90,25 @@ def test_repr_reports_the_shape_of_a_two_dimensional_string_column() -> None:
 def test_batch_repr_names_the_layout_and_prints_no_data() -> None:
     text = repr(oxyz.read_batch(TWO_FRAME))
 
-    assert text.startswith("Batch(n_frames=2, total_atoms=4, ")
+    assert text.startswith("Batch(n_frames=2, total_atoms=4, n_atoms=2..2, ")
     assert "'pos': float64[4, 3]" in text
     assert "'energy': float64[2]" in text
     assert "-6.45" not in text
+
+
+def test_batch_repr_spans_uneven_frames_and_omits_an_empty_range(
+    tmp_path: Path,
+) -> None:
+    uneven = DATA_DIR / "varying_atom_counts.xyz"  # 3, 1, 2 atoms
+    empty = tmp_path / "empty.xyz"
+    empty.touch()
+
+    assert repr(oxyz.read_batch(uneven)).startswith(
+        "Batch(n_frames=3, total_atoms=6, n_atoms=1..3, "
+    )
+    assert repr(oxyz.read_batch(empty)) == (
+        "Batch(n_frames=0, total_atoms=0, columns={}, metadata={})"
+    )
 
 
 def test_reading_the_same_file_twice_gives_equal_frames() -> None:

@@ -135,6 +135,28 @@ class Writer:
             identical either way; peak extra memory is one batch.
         """
         self._inner = _rust.FrameWriter(str(path), compression, level, append, batch)
+        self._path = str(path)
+        options = {
+            "append": (append, False),
+            "compression": (compression, "infer"),
+            "level": (level, None),
+            "batch": (batch, None),
+        }
+        self._options = "".join(
+            f", {name}={value!r}"
+            for name, (value, default) in options.items()
+            if value != default
+        )
+        self._frames_written = 0
+        self._closed = False
+
+    def __repr__(self) -> str:
+        """Name the file, its non-default options, and progress so far."""
+        closed = ", closed=True" if self._closed else ""
+        return (
+            f"Writer({self._path!r}{self._options}, "
+            f"frames_written={self._frames_written}{closed})"
+        )
 
     def write(self, obj: Writable | Iterable[Writable]) -> None:
         """Write `obj` to the file.
@@ -147,10 +169,12 @@ class Writer:
         """
         for item in _items(obj):
             self._inner.write(_payload(item))
+            self._frames_written += 1
 
     def close(self) -> None:
         """Finalise the encoder and close the file. Idempotent."""
         self._inner.close()
+        self._closed = True
 
     def __enter__(self) -> Self:
         """Return `self`; writing happens via `write`."""

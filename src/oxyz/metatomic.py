@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, overload
 
 import numpy as np
 
+from oxyz import _summary
 from oxyz._convert import FieldError, MissingSpeciesError, UnknownSpeciesError, numbers
 from oxyz._convert import cell as _resolve_cell
 from oxyz._convert import pbc as _resolve_pbc
@@ -371,6 +372,14 @@ class SystemSource:
     def __len__(self) -> int:
         """Return the number of frames in the source."""
         return len(self._frames)
+
+    def __repr__(self) -> str:
+        """Count frames and atoms; the frames need not share columns to name."""
+        n_atoms = np.array([frame.n_atoms for frame in self._frames], dtype=np.intp)
+        return (
+            f"SystemSource(n_frames={len(self._frames)}, "
+            f"total_atoms={int(n_atoms.sum())}{_summary.atom_range(n_atoms)})"
+        )
 
     def systems(
         self,

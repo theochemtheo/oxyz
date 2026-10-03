@@ -344,6 +344,10 @@ class SimStateSource:
         """Return the number of frames in the source."""
         return self._batch.n_frames
 
+    def __repr__(self) -> str:
+        """Summarise the batch the source serves from, under its own name."""
+        return "SimStateSource" + repr(self._batch).removeprefix("Batch")
+
     def state(
         self,
         *,

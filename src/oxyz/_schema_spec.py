@@ -8,7 +8,14 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
 
-from oxyz._schema import Kind
+from oxyz import _summary
+from oxyz._schema import (
+    KIND_TO_LETTER,
+    LETTER_TO_KIND,
+    Kind,
+    column_sig,
+    metadata_sig,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -19,16 +26,6 @@ if TYPE_CHECKING:
 # Whether a schema validates (report only) or projects (reshape each frame to
 # the declared field set). See oxyz._project for what project mode compiles to.
 Mode = Literal["validate", "project"]
-
-LETTER_TO_KIND: dict[str, Kind] = {
-    "R": Kind.REAL,
-    "I": Kind.INT,
-    "L": Kind.BOOL,
-    "S": Kind.STR,
-}
-KIND_TO_LETTER: dict[Kind, str] = {
-    kind: letter for letter, kind in LETTER_TO_KIND.items()
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +68,10 @@ class ColumnRule:
     max: int | None = None
     fill: float | int | bool | str | None = None
 
+    def __repr__(self) -> str:
+        """Show the fields that differ from their defaults."""
+        return _summary.nondefault_repr(self)
+
 
 @dataclass(frozen=True, slots=True)
 class MetadataRule:
@@ -106,6 +107,10 @@ class MetadataRule:
     max: int | None = None
     fill: float | int | bool | str | None = None
 
+    def __repr__(self) -> str:
+        """Show the fields that differ from their defaults."""
+        return _summary.nondefault_repr(self)
+
 
 @dataclass(frozen=True, slots=True)
 class FrameRule:
@@ -124,6 +129,10 @@ class FrameRule:
     n_atoms_min: int | None = None
     n_atoms_max: int | None = None
     lattice_required: bool = False
+
+    def __repr__(self) -> str:
+        """Show the fields that differ from their defaults."""
+        return _summary.nondefault_repr(self)
 
 
 def _kind(letter: object) -> Kind:
@@ -197,6 +206,27 @@ class SchemaSpec:
     metadata: tuple[MetadataRule, ...] = ()
     frame: FrameRule | None = None
     mode: Mode = "validate"
+
+    def __repr__(self) -> str:
+        """Summarise each rule's type in extxyz letters; `?` marks optional.
+
+        `frame` and `mode` appear only when set; a rule's pattern bounds and
+        `fill` are in its own repr.
+        """
+        columns = {
+            r.name: column_sig(r.kind, r.width) + ("" if r.required else "?")
+            for r in self.columns
+        }
+        metadata = {
+            r.key: metadata_sig(r.kind, r.shape) + ("" if r.required else "?")
+            for r in self.metadata
+        }
+        frame = "" if self.frame is None else f", frame={self.frame!r}"
+        mode = "" if self.mode == "validate" else f", mode={self.mode!r}"
+        return (
+            f"SchemaSpec(columns={_summary.mapping_repr(columns, str)}, "
+            f"metadata={_summary.mapping_repr(metadata, str)}{frame}{mode})"
+        )
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> SchemaSpec:
