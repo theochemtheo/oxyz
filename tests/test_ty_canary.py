@@ -1,12 +1,6 @@
-"""Canary: fails when ty fixes the limitation we work around.
+"""Canary: fails once ty can narrow ``np.ndarray`` out of a union.
 
-The ``as_array`` helper in test_extxyz.py exists only because ty currently
-mis-handles isinstance-narrowing of ``np.ndarray`` out of a union: the
-narrowed type fails numpy's ``assert_allclose`` overloads even though a plain
-``np.ndarray`` parameter passes (observed in ty 0.0.44 and 0.0.46).
-
-When this test fails, ty has fixed the issue: delete this file and the
-``as_array`` helper.
+Then delete this file and ``as_array`` in test_extxyz.py.
 """
 
 from __future__ import annotations
@@ -33,10 +27,7 @@ def narrows_union(x: np.ndarray | list[str]) -> None:
 
 
 def test_ty_still_rejects_isinstance_narrowed_ndarray(tmp_path: Path) -> None:
-    # Skipped rather than failed when ty is absent: this is a type-checker
-    # canary, not a runtime contract, so it has no business failing a
-    # dependency tier that installs no lint tooling. The full `python` matrix
-    # runs under `uv sync`, which provides ty, so the canary still fires there.
+    # A type-checker canary, so a tier without ty skips rather than fails.
     ty = shutil.which("ty")
     if ty is None:
         pytest.skip("ty not on PATH; run via `uv run pytest`")
@@ -52,7 +43,6 @@ def test_ty_still_rejects_isinstance_narrowed_ndarray(tmp_path: Path) -> None:
     )
     output = result.stdout + result.stderr
 
-    # Guard against a broken run masquerading as "fixed".
     assert "unresolved-import" not in output, f"ty could not see numpy:\n{output}"
 
     assert "no-matching-overload" in output, (

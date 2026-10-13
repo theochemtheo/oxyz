@@ -9,9 +9,8 @@ from oxyz import ColumnVariant, Kind, MetadataVariant
 
 DATA_DIR = Path(__file__).parent / "data"
 
-# MACE-style drift: an isolated-atom frame with integer forces and energy and
-# no cell, then a bulk frame with the Real equivalents, a Lattice, and a
-# differently-sized stress.
+# MACE-style drift: an isolated atom with Int forces and no cell, then a bulk
+# frame with Real forces, a Lattice, and a different stress.
 MIXED = (
     "1\n"
     "Properties=species:S:1:pos:R:3:forces:I:3 energy=-158"
@@ -42,8 +41,6 @@ def test_schema_counts(mixed_schema: oxyz.Schema) -> None:
 
 
 def test_schema_distribution_stats_match_scan(tmp_path: Path) -> None:
-    # The single schema pass keeps the per-frame counts, so its distribution
-    # statistics agree with a separate scan -- no second read needed.
     path = tmp_path / "mixed.xyz"
     path.write_text(MIXED)
     schema = oxyz.infer_schema(path)
@@ -115,11 +112,8 @@ def test_report_matches_str(mixed_schema: oxyz.Schema) -> None:
     )
 
 
-# A MACE-style training set's two regimes: a couple of isolated-atom E0 frames
-# carrying config_type, then bulk frames carrying per-config training weights
-# instead. Which keys appear varies between real files; the general pattern is
-# that some metadata rides only one regime, and infer_schema should report each
-# key on exactly the frames that have it.
+# A MACE-style training set: isolated-atom E0 frames with config_type, then
+# bulk frames with training weights instead.
 MACE_REGIMES = (
     "1\n"
     'Lattice="15 0 0 0 15 0 0 0 15" Properties=species:S:1:pos:R:3:forces:R:3'
@@ -170,9 +164,7 @@ def test_stable_file_is_consistent() -> None:
 
 
 def test_duplicate_metadata_key_counts_once(tmp_path: Path) -> None:
-    # A repeated key collapses last-wins in Frame.metadata; the schema must
-    # match, counting one occurrence of the last value rather than pushing
-    # frames_present past n_frames (which would read as inconsistent).
+    # Last-wins within a frame: one occurrence, not two.
     path = tmp_path / "dupe.xyz"
     path.write_text(
         "1\nProperties=species:S:1:pos:R:3 energy=-1 energy=-2.5\nH 0 0 0\n"

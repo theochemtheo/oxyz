@@ -38,8 +38,6 @@ def test_to_file_rejects_toml(tmp_path: Path) -> None:
 
 
 def test_metadata_rule_identifier_is_key() -> None:
-    # The metadata identifier is `key` (columns use `name`), matching
-    # MetadataSchema.key so the concept is spelled the same across the model.
     rule = MetadataRule("energy", Kind.REAL)
     assert rule.key == "energy"
     assert not hasattr(rule, "name")

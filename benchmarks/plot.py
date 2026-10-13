@@ -10,16 +10,8 @@
 Usage:
     uv run benchmarks/plot.py [SAVE.json]
 
-Reads the same save JSON as report.py (newest under .benchmarks/ without
-an argument). Saves are first flattened into tidy rows so styling changes
-never touch data handling.
-
-Bars show atoms/s (higher is better) where the save records the row's
-workload shape — atoms/s compares across workloads where frames/s does
-not, since a frame is whatever size the file made it. Panels without
-shapes (first/last/scan) show mean time instead (lower is better, noted
-on the axis). Parallel rows say how many cores they used; the count
-comes from the machine the save was recorded on.
+Without an argument, the newest save under .benchmarks/ is used. Bars show
+atoms/s where the save records the workload shape, else mean time.
 """
 
 from __future__ import annotations
@@ -32,8 +24,7 @@ from typing import Any
 
 import matplotlib.pyplot as plt
 
-# Supplied by this script's inline metadata, not the project venv that ty
-# checks under.
+# Supplied by this script's inline metadata, not the venv ty checks under.
 import seaborn as sns
 from _style import (
     fmt_value,
@@ -47,9 +38,8 @@ from matplotlib.ticker import LogLocator, NullFormatter
 REPO = Path(__file__).resolve().parent.parent
 FIGURES = Path(__file__).resolve().parent / "figures"
 
-# Scenarios with one or two small groups share a figure; everything else
-# (read_all now, the store comparison later) gets its own, one panel per
-# group. scan is special-cased: its groups become columns of one panel.
+# Small scenarios share a figure; the rest get one panel per group. scan's
+# groups become columns of one panel.
 SHARED_SCENARIOS = ["selective", "batches", "read_first", "read_last"]
 
 
@@ -78,9 +68,7 @@ def flatten(data: dict[str, Any]) -> list[dict[str, Any]]:
         group = bench["group"] or "ungrouped"
         scenario, _, workload = group.partition("/")
         info = bench.get("extra_info", {})
-        # Swept rows record their thread count and carry a -Nt id suffix;
-        # stripping it folds them into one reader with a bar per count.
-        # Unswept parallel rows used every core the recording machine had.
+        # Swept rows carry a -Nt suffix; stripping it gives a bar per thread count.
         reader = row_id(bench)
         threads = info.get("threads")
         if threads is not None:
@@ -138,13 +126,9 @@ def finish_log_axis(
     ax, values: list[float], tick_labels: list[str], top: float = 3.0
 ) -> None:
     ax.set_yscale("log")
-    # Explicit limits: matplotlib otherwise zooms a log axis onto a sliver
-    # when bars are close, inflating small differences and cluttering the
-    # ticks with off-decade labels.
+    # matplotlib would otherwise zoom a log axis onto a sliver.
     ax.set_ylim(min(values) / 4, max(values) * top)
     ax.set_xticks(range(len(tick_labels)))
-    # rotation_mode="anchor" pivots each label at its right end, keeping it
-    # aligned under its tick once rotated.
     ax.set_xticklabels(
         tick_labels,
         rotation=20,
@@ -211,9 +195,7 @@ def metric_label(metric: str) -> str:
 def render_figure(
     name: str, rows: list[dict[str, Any]], groups: list[str] | None = None
 ) -> Path:
-    """One panel per group. Each panel picks its own metric, so throughput
-    and time panels can share a figure; the y label reappears whenever the
-    metric changes from the panel before."""
+    """One panel per group, each with its own metric."""
     if groups is None:
         groups = sorted({r["group"] for r in rows})
 
@@ -270,8 +252,7 @@ def sweep_size_rows(
         if not r["group"].startswith(prefix + "/"):
             continue
         size = int(r["group"].split("/")[1])
-        # Size-sweep param ids carry the size (e.g. "oxyz-1000"); strip it back
-        # to the base reader so a reader's points across sizes form one curve.
+        # Strip the size suffix so a reader's points form one curve.
         reader = r["reader"].removesuffix(f"-{size}")
         by_reader.setdefault(reader, []).append((size, r["mean"], r["n_atoms"]))
     for points in by_reader.values():
@@ -286,10 +267,7 @@ def size_curve_figure(
     xlabel: str,
     ncores: int | None = None,
 ) -> Path | None:
-    """Two panels: read time vs size (loglog) and speedup vs ase (semilogx),
-    overlaying every reader — the extxyz plot_bench shape. Legends name the
-    call each line measures; the all-core oxyz.read line gets a distinct
-    marker so it is tellable from the serial one."""
+    """Read time vs size (loglog) and speedup vs ase (semilogx), all readers."""
     by_reader = sweep_size_rows(rows, prefix)
     if not by_reader:
         return None
@@ -397,8 +375,7 @@ def main() -> None:
     rows = flatten(data)
     ncores = data["machine_info"].get("cpu", {}).get("count")
 
-    # "ticks" rather than "whitegrid" so tick marks (and the log subticks)
-    # actually draw; the grid comes back via rc, paler than either default.
+    # "ticks" so the log subticks draw; the grid returns via rc.
     sns.set_theme(
         style="ticks",
         context="paper",
@@ -423,15 +400,11 @@ def main() -> None:
     for r in rows:
         by_scenario.setdefault(r["scenario"], []).append(r)
 
-    # The scaling scenarios render as curves, not bars; keep them out of the
-    # bar loop.
     for scaling in ("scaling_dataset", "scaling_system", "scaling_threads"):
         by_scenario.pop(scaling, None)
 
     shared = [s for s in SHARED_SCENARIOS if s in by_scenario]
     scan_rows = by_scenario.pop("scan", None)
-    # The curve figures below return None when their scenario is absent from the
-    # run; the None entries are filtered out once every figure is collected.
     outputs: list[Path | None] = [
         render_figure(scenario, by_scenario[scenario])
         for scenario in sorted(set(by_scenario) - set(shared))

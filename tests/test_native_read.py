@@ -1,8 +1,5 @@
-"""The unified native reader surface: `oxyz.read` / `oxyz.iread` with an index.
-
-`read` materialises, `iread` streams; the index selects (int -> one Frame,
-slice/str/sequence -> a list). Replaces the old `read_frames`/`iter_frames`/
-`read_first`/`read_frames_sliced` split.
+"""`oxyz.read` and `oxyz.iread` with an index: an int gives one Frame, a slice,
+string or sequence a list.
 """
 
 from __future__ import annotations

@@ -1,6 +1,4 @@
-"""Reader palette, ordering, and number formatting shared by the bar-chart
-and scaling-curve renderers, so a reader keeps its colour and position
-across every figure."""
+"""Reader palette, ordering and number formatting shared by every figure."""
 
 from __future__ import annotations
 
@@ -8,9 +6,8 @@ from typing import Any
 
 import seaborn as sns
 
-# Reader order and colours are fixed globally so every reader keeps its
-# position and colour across panels and figures. oxyz rows share the
-# saturated base hue in fading shades; competitors stay muted.
+# Fixed so every reader keeps its position and colour across figures. oxyz
+# rows share fading shades of one hue; competitors stay muted.
 OXYZ_BASE = "#d95f02"
 OXYZ_ORDER = [
     "oxyz",
@@ -67,10 +64,8 @@ def fmt_value(value: float) -> str:
     return f"{value:.3g}"
 
 
-# Scaling-curve legends name the call each line measures rather than the
-# internal reader id — clearer for a reader comparing libraries.
-# All-core rows are spelled as a call whose thread count is filled in with the
-# recording machine's core count; the rest are fixed strings.
+# Legends name the call each line measures; all-core labels fill in the
+# recording machine's core count.
 ALL_CORE_LABELS = {
     "oxyz": "oxyz.read",
     "oxyz-to-ase": "oxyz.ase.read",
@@ -93,8 +88,7 @@ def reader_label(reader: str, ncores: int | None = None) -> str:
     return READER_LABELS.get(reader, reader)
 
 
-# The all-core oxyz.read line shares the orange hue with the serial line, so a
-# distinct marker keeps the two apart at a glance; everyone else uses a circle.
+# Tells the all-core oxyz.read line from the serial one, which shares its hue.
 MARKERS = {"oxyz": "s"}
 
 

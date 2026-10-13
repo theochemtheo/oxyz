@@ -1,16 +1,11 @@
-"""End-to-end write benchmarks: serialise an in-memory corpus back to disk.
+"""Write benchmarks: serialise an in-memory corpus back to disk.
 
 Record a run: uv run benchmarks/run.py --benchmark-autosave
 Smoke only:   uv run benchmarks/run.py --benchmark-disable
 Render:       uv run benchmarks/report.py
 
-The corpus is read once from a fixture, then each writer serialises it to
-a throwaway path. Only serialisation parallelises — the output stream and
-any compression stay serial — so the thread sweep measures the serialise
-win, identical output bytes at every count. The `@row(output, mode,
-threads)` tags and recorded n_frames/n_atoms drive report.py exactly as
-the read suite's do; there are no comparison libraries here (ASE writes
-serially through a different contract), so the rows are oxyz-only.
+Only serialisation parallelises, so the thread sweep measures that alone.
+Rows are oxyz-only.
 """
 
 from __future__ import annotations

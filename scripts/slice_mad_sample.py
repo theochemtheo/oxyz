@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """Slice every Nth frame of a large extxyz file into a small committed sample.
 
-Byte-level: frames are copied verbatim, so the sample keeps the source's exact
-formatting rather than a re-serialised approximation. Stdlib only; extxyz is
-self-delimiting (count line, comment line, then `count` atom rows).
+Frames are copied byte for byte, keeping the source's formatting.
 
 Usage: slice_mad_sample.py SOURCE DEST --stride N [--max-bytes B]
 """

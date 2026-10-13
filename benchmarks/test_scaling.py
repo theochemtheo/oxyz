@@ -1,6 +1,4 @@
-"""Scaling sweeps: throughput vs thread count, and time vs file size across
-two families. Recorded into the same save JSON as the scenario suite; the
-curve renderer in plot.py reads the scaling_* groups.
+"""Scaling sweeps: throughput vs thread count, and time vs file size.
 
 Record: uv run benchmarks/run.py --benchmark-autosave
 Smoke:  uv run benchmarks/run.py --benchmark-disable benchmarks/test_scaling.py
@@ -24,8 +22,7 @@ from test_read import (
 import conftest
 import oxyz
 
-# Competitors are far slower; cap them so the top sweep points (oxyz-only)
-# don't drag a full run past budget. The gap is already vast by the cap.
+# Caps the far slower competitors to keep a full run within budget.
 COMPETITOR_MAX_DATASET_FRAMES = 100_000
 COMPETITOR_MAX_SYSTEM_ATOMS = 100_000
 
@@ -33,8 +30,6 @@ COMPETITOR_MAX_SYSTEM_ATOMS = 100_000
 _CPU = os.cpu_count() or 8
 THREAD_POINTS = sorted({1, 2, 3, 4, 6, 8, _CPU})
 
-# Representative sizes for the thread sweep — large enough that parallelism
-# across frames (dataset) / within the file (system) actually shows.
 THREAD_DATASET_FRAMES = 100_000
 THREAD_SYSTEM_ATOMS = 200_000
 
@@ -65,8 +60,7 @@ def cextxyz_read(path: Path) -> list:
 def oxyz_to_ase(path: Path) -> list:
     from oxyz.ase import read
 
-    # slice(None) rather than ":" picks the precisely-typed overload. No
-    # `threads`, so the parse uses every core — as the legend's label says.
+    # slice(None) picks the precisely typed overload.
     return read(path, index=slice(None))
 
 
@@ -95,9 +89,7 @@ def _size_readers(size: int, cap: int):
         pytest.param(oxyz_serial, id="oxyz-serial"),
     ]
     if size <= cap:
-        # Capped with the competitors: building an Atoms per frame is far
-        # dearer than the numpy read, so this stays below the top oxyz-only
-        # points that carry the curve to 10^6.
+        # Capped with the competitors: an Atoms per frame is far dearer.
         readers += [
             pytest.param(oxyz_to_ase, id="oxyz-to-ase", marks=needs_ase),
             pytest.param(cextxyz_read, id="cextxyz", marks=needs_cextxyz),
@@ -107,9 +99,7 @@ def _size_readers(size: int, cap: int):
     return readers
 
 
-# --- size families: flat (reader, size) params so competitors drop above ---
-# their cap and each combination is its own benchmark row. `pytest.param`
-# carries the id and skip marks straight through.
+# Flat (reader, size) params, so competitors drop out above their cap.
 
 
 def _size_params(sizes, cap):

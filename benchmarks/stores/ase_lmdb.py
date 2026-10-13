@@ -1,9 +1,4 @@
-"""Hand-rolled LMDB of pickled `ase.Atoms` records, one per key.
-
-The pattern behind fairchem's `.aselmdb` files, without the fairchem
-(and so torch) dependency: this is what people deploy when they want
-Atoms back out of LMDB.
-"""
+"""LMDB of pickled `ase.Atoms`, the pattern behind fairchem's `.aselmdb`."""
 
 from __future__ import annotations
 

@@ -1,11 +1,4 @@
-"""Parity tests: oxyz.torch_sim must agree with atoms_to_state(ase.io.read).
-
-A batched `SimState`'s core fields (positions/masses/cell/pbc/atomic_numbers/
-system_idx) are compared against `torch_sim.io.atoms_to_state` fed by
-`ase.io.read(index=':')`, the path oxyz.torch_sim replaces. The few fixtures
-ASE's own reader rejects (its Voigt/stress-shape limitation) are excluded, as in
-the ase/metatomic golden sets.
-"""
+"""Parity tests: oxyz.torch_sim agrees with atoms_to_state(ase.io.read)."""
 
 from __future__ import annotations
 
@@ -25,12 +18,8 @@ pytestmark = pytest.mark.skipif(
 
 DATA_DIR = Path(__file__).parent / "data"
 
-# Files ase.io.read rejects (a stress shape ASE's reader will not accept), plus
-# the fixtures whose schema varies between frames on purpose — `magmom` width or
-# per-atom columns, or (for the MAD sample) `Lattice` present on periodic frames
-# and absent on molecular ones. A SimState is inherently a batch, and oxyz's
-# batch reader requires a uniform schema across frames, so these can't build a
-# reference either way.
+# Files ase.io.read rejects, and fixtures whose schema varies between
+# frames, which cannot form one batch.
 ASE_REJECTS = {
     "simple.extxyz",
     "nonorthogonal.extxyz",
@@ -128,8 +117,7 @@ def test_cell_is_column_convention_transpose_of_lattice(tmp_path: Path) -> None:
 
     import oxyz.torch_sim
 
-    # An asymmetric cell makes the transpose observable. extxyz Lattice is the
-    # ASE (row-vector) cell in Fortran order; torch_sim stores its transpose.
+    # An asymmetric cell makes the transpose observable.
     path = _write(
         tmp_path,
         '1\nLattice="1 2 3 4 5 6 7 8 9" Properties=species:S:1:pos:R:3\nH 0 0 0\n',
@@ -375,8 +363,7 @@ def test_default_dtype_infers_float64_like_atoms_to_state(tmp_path: Path) -> Non
 
     import oxyz.torch_sim
 
-    # dtype=None infers from the data (float64), as atoms_to_state does, rather
-    # than resolving to torch.get_default_dtype().
+    # dtype=None keeps float64, as atoms_to_state does.
     path = _write(
         tmp_path,
         '1\nLattice="1 0 0 0 1 0 0 0 1" Properties=species:S:1:pos:R:3\nH 0 0 0\n',

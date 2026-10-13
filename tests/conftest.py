@@ -10,10 +10,8 @@ if TYPE_CHECKING:
 
 
 class S3Fixture(NamedTuple):
-    """A per-test bucket on the moto server.
-
-    ``put(key, data)`` uploads bytes, ``url(key)`` is the ``s3://`` URL for that
-    key, and ``options`` is the storage_options dict for oxyz read functions.
+    """A per-test bucket: `put(key, data)` uploads, `url(key)` names it, `options`
+    is the storage_options dict.
     """
 
     put: Callable[[str, bytes], None]
@@ -23,11 +21,7 @@ class S3Fixture(NamedTuple):
 
 @pytest.fixture(scope="session")
 def s3_server():
-    """A local S3 endpoint via moto's threaded server.
-
-    Session-scoped: one server for the whole test run, created only when a
-    test that actually needs it is collected.
-    """
+    """A session-scoped local S3 endpoint, started only when a test needs it."""
     moto_server = pytest.importorskip("moto.server")
     server = moto_server.ThreadedMotoServer(ip_address="127.0.0.1", port=0)
     server.start()
@@ -39,11 +33,7 @@ def s3_server():
 
 @pytest.fixture
 def s3_store(s3_server: str) -> S3Fixture:
-    """A fresh, uniquely-named bucket on the moto server for one test.
-
-    Each test gets its own bucket, so objects never leak between tests sharing
-    the session-scoped server.
-    """
+    """A fresh bucket for one test, so objects never leak between tests."""
     boto3 = pytest.importorskip("boto3")
     pytest.importorskip("obstore")
 
@@ -54,8 +44,7 @@ def s3_store(s3_server: str) -> S3Fixture:
         "access_key_id": "test",
         "secret_access_key": "test",
         "virtual_hosted_style_request": False,
-        # ClientConfig key — must be separated by _build_store before passing
-        # to obstore's from_url; moto speaks plain HTTP.
+        # Moto speaks plain HTTP.
         "allow_http": True,
     }
 

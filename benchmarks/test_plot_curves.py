@@ -24,10 +24,7 @@ def _row(group, reader, mean, n_atoms, threads=1):
     }
 
 
-# flatten() leaves the size-sweep param id (e.g. "oxyz-1000") on the reader —
-# unlike thread rows, whose -Nt suffix it strips. sweep_size_rows must strip the
-# size back off so a reader's points form one curve, so the test rows carry the
-# suffix a real save would.
+# Real saves keep the size suffix on the reader; sweep_size_rows strips it.
 def _size_row(group, base_reader, mean, n_atoms):
     size = group.split("/")[1]
     return _row(group, f"{base_reader}-{size}", mean, n_atoms)

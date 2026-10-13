@@ -1,9 +1,7 @@
 """Reading compressed sources through the Python surface.
 
-The fixtures under `data/compressed/` are compressed twins of
-`two_frame_same_schema.xyz`; each codec must read back to the same frames as the
-plain file. Random-access strategies, which cannot seek a stream, must refuse a
-compressed source with a clear error.
+Fixtures under `data/compressed/` are compressed twins of
+`two_frame_same_schema.xyz`.
 """
 
 from __future__ import annotations
@@ -105,9 +103,7 @@ def test_unknown_compression_raises() -> None:
 
 
 def test_tar_codecs_are_forceable(tmp_path: Path) -> None:
-    # Copy each fixture to an unrecognised name first: detect_by_extension
-    # cannot rescue a ".bin" file, so a passing result proves the forced
-    # codec did the decoding, not extension inference.
+    # A blind `.bin` name, so only the forced codec can decode it.
     plain = oxyz.read(DATA_DIR / "two_frame_same_schema.xyz")
     cases: list[tuple[str, oxyz.Compression]] = [
         ("two_frame.tar", "tar"),
@@ -149,12 +145,8 @@ class TestBatching:
             list(oxyz.iread_batch(gz, **kwargs))  # ty: ignore[invalid-argument-type]
 
 
-# Guarded on `ase` itself rather than with importorskip("oxyz.ase"): pytest 9.1
-# narrowed importorskip's default exc_type to ModuleNotFoundError, and oxyz.ase
-# is importable — it raises a plain ImportError carrying the install hint — so
-# importorskip propagates that as a failure instead of skipping. Guarding on the
-# dependency also keeps a genuine ImportError from inside oxyz.ase a failure,
-# which is what `exc_type=ImportError` would have swallowed.
+# importorskip("oxyz.ase") would fail rather than skip: oxyz.ase imports and
+# raises a plain ImportError.
 @pytest.mark.skipif(importlib.util.find_spec("ase") is None, reason="ase not installed")
 class TestAse:
     def test_default_index_reads_last_frame(self) -> None:

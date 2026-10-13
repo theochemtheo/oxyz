@@ -1,28 +1,10 @@
-"""oxyz against database-style stores, on one 100k-frame dataset.
+"""oxyz on extxyz text against binary stores converted up front.
 
-The reader-vs-reader suite (test_read.py) compares parsers on the same
-text input. This suite asks a different question: how does parsing
-extxyz text compare with reading from a binary store that was converted
-up front? The stores hold pre-decoded arrays and an index; oxyz gets the
-text file and nothing else. oxyz losing here is expected — the margin is
-the result.
-
-One stated reason per baseline:
-
-- atompack: the specialised binary molecule store (mmap, rayon).
-- lmdb-pickle: the hand-rolled LMDB-of-arrays pattern dataloader
-  repositories write themselves.
-- ase-sqlite / ase-lmdb: the common ASE ecosystem paths, queryable
-  database and pickled-Atoms LMDB.
-
-Groups are split by output contract: `stores/...` rows hand back numpy
-arrays (oxyz batches, atompack arrays, unpickled dicts), `stores-ase/...`
-rows materialise ase.Atoms. The two are never compared in one table.
-Every row streams or gathers its frames and returns a total atom count.
-
-Stores are ingested once into benchmarks/.cache/ during fixture setup
-(ase.db commits per row, so the first run takes minutes); ingest is
-setup, never a benchmark.
+oxyz is expected to lose; the margin is the result. Baselines: atompack
+(specialised store), lmdb-pickle (the hand-rolled dataloader pattern), and
+ase-sqlite / ase-lmdb (the ASE ecosystem paths). `stores/...` rows return
+numpy arrays and `stores-ase/...` rows `ase.Atoms`; the two are never
+compared. Stores are ingested once into benchmarks/.cache/.
 """
 
 from __future__ import annotations
@@ -52,8 +34,7 @@ needs_ase_lmdb = pytest.mark.skipif(
 
 TOTAL_ATOMS = STORE_N_FRAMES * STORE_ATOMS_PER_FRAME
 
-# The access patterns. Shuffled draws a seeded sample without replacement
-# (a dataloader epoch slice); strided is the classic every-Nth subsample.
+# A seeded sample without replacement, and every Nth frame.
 SHUFFLED_INDICES = random.Random(0x5A3D).sample(range(STORE_N_FRAMES), 2048)
 STRIDED_INDICES = range(0, STORE_N_FRAMES, 50)
 

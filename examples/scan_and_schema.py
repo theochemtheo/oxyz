@@ -1,8 +1,4 @@
-"""Ask an unfamiliar file what it contains, and whether its schema is consistent.
-
-The cheap first question before training on a dataset: which columns and
-metadata keys appear, with what types, and do they agree across every frame.
-"""
+"""Ask an unfamiliar file what it contains, and whether its schema is consistent."""
 
 from __future__ import annotations
 

@@ -1,10 +1,5 @@
-"""The `Frame`/`Batch` surface that is not the read path: repr, equality,
-`len`, and the derived well-known-field accessors.
-
-The two dataclasses hold dicts of numpy arrays, so the generated `__repr__`
-would print the data and the generated `__eq__` would raise on an array. Both
-are replaced; these tests pin the replacements and the accessors that resolve
-`pos`/`Z`/`species`/`Lattice`/`pbc` without touching what the frame stores.
+"""The `Frame`/`Batch` surface beyond reading: repr, equality, `len`, and the
+derived well-known-field accessors.
 """
 
 from __future__ import annotations
@@ -43,7 +38,6 @@ def test_repr_summarises_shape_and_prints_no_data() -> None:
     assert "'species': str[2]" in text
     assert "'pos': float64[2, 3]" in text
     assert "'Lattice': float64[9]" in text
-    # The fixture's coordinates and cell lengths; none may appear in the repr.
     assert "1.5" not in text
     assert "3.0" not in text
 
@@ -56,8 +50,7 @@ def test_repr_is_bounded_for_a_huge_frame() -> None:
         metadata={"Lattice": np.zeros(9)},
     )
 
-    # A dataclass repr of the same frame is ~500 KB; the summary form is ~120
-    # chars, so this bound also fails anything that starts printing elements.
+    # A dataclass repr of this frame is ~500 KB.
     assert len(repr(huge)) < 200
 
 
@@ -167,8 +160,7 @@ def test_equality_ignores_key_order() -> None:
 
 def test_equality_is_false_rather_than_raising_on_hostile_values() -> None:
     """`__eq__` must return a bool for anything a hand-built frame can hold."""
-    # Same key on both sides, so the comparison reaches the value itself: numpy
-    # cannot coerce a ragged list at all, and it must not escape as an error.
+    # numpy cannot coerce a ragged list; the comparison must not raise.
     ragged = Frame(
         n_atoms=2, columns={}, metadata={"odd": cast("MetadataValue", [[1, 2], [3]])}
     )
@@ -274,9 +266,7 @@ def test_symbols_round_trip_from_a_z_only_frame() -> None:
 
 
 def test_cell_transposes_a_triclinic_lattice_into_row_vectors() -> None:
-    # A symmetric Lattice cannot tell the two conventions apart; this one can.
-    # extxyz stores the ASE cell flattened in Fortran order, so the row vectors
-    # come back as consecutive triples of the flat array.
+    # An asymmetric Lattice distinguishes row from column vectors.
     triclinic = frame(Lattice=np.arange(9.0))
 
     assert_array_equal(triclinic.cell, [[0, 1, 2], [3, 4, 5], [6, 7, 8]])
@@ -412,8 +402,7 @@ def test_writing_a_long_column_is_refused(tmp_path: Path) -> None:
 
 
 def test_a_zero_dimensional_column_is_one_row(tmp_path: Path) -> None:
-    # `_rust.pyi` documents scalar-width-1 arrays as a legal column, and the
-    # encoder writes one from a 0-D value, so it is legal at n_atoms == 1.
+    # The encoder writes one row from a 0-D value.
     out = tmp_path / "out.extxyz"
     single = Frame(
         n_atoms=1,

@@ -11,17 +11,13 @@
 # ///
 """Peak-memory measurements for the read paths, written to MEMORY.md.
 
-pytest-benchmark measures time only, and tracemalloc cannot see the
-parser's allocations (they happen in Rust), so this measures peak RSS via
-`getrusage` instead. Each case runs in a fresh child process; the read
-delta is the growth in peak RSS attributable to the read itself, after
-imports and fixture I/O have already peaked.
+The parser allocates in Rust, out of tracemalloc's sight, so each case
+measures peak RSS growth in a fresh child process.
 
     uv run benchmarks/memory.py
 
-Numbers are only comparable within one run on one machine. The streamed
-rows (`oxyz-iter`, `ase-iread`) discard frames as they go — their delta is
-the constant-memory claim; the read-all rows keep every frame alive.
+Numbers compare only within one run on one machine. The streamed rows
+(`oxyz-iter`, `ase-iread`) discard frames as they go.
 """
 
 from __future__ import annotations

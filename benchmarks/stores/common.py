@@ -12,8 +12,7 @@ import oxyz
 
 
 def key(index: int) -> bytes:
-    """LMDB key for a frame index: fixed-width big-endian, so lexicographic
-    cursor order is frame order."""
+    """LMDB key for a frame index, big-endian so cursor order is frame order."""
     return index.to_bytes(8, "big")
 
 
@@ -39,8 +38,6 @@ def frame_record(frame: oxyz.Frame) -> dict[str, Any]:
     actually consumes, with species as atomic numbers."""
     from ase.data import atomic_numbers
 
-    # The column and metadata types are unions over everything extxyz can
-    # hold; the generated dataset pins them (species strings, float energy).
     metadata = frame.metadata
     return {
         "numbers": np.array(

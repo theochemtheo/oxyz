@@ -1,8 +1,4 @@
-"""End-to-end remote reads against a local moto S3 server.
-
-All tests skip cleanly when moto/boto3/obstore are absent, so the base install
-(no s3 extra) continues to pass CI without a running object store.
-"""
+"""End-to-end remote reads against a local moto S3 server."""
 
 from __future__ import annotations
 
@@ -111,8 +107,7 @@ def test_missing_object_raises(s3_store):
         oxyz.read(s3_store.url("nope.xyz"), storage_options=s3_store.options)
 
 
-# A mixed-schema body: frame 0 carries 'charge', frame 1 does not — the case
-# projection reshapes into a uniform, batchable set (charge filled with NaN).
+# Frame 0 carries 'charge' and frame 1 does not.
 MIXED_BODY = (
     b"1\nProperties=species:S:1:pos:R:3:charge:R:1\nH 0 0 0 0.5\n"
     b"1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
@@ -205,9 +200,7 @@ def test_ase_read_projected_remote(s3_store):
     assert len(both) == 2
 
 
-# The Hub is a live third-party service, so this test is opt-in: CI stays
-# offline and deterministic, while `OXYZ_TEST_HF=1 uv run pytest` checks that
-# the URL translation still matches what the Hub actually serves.
+# Opt-in with OXYZ_TEST_HF=1, as the Hub is a live service.
 hf_live = pytest.mark.skipif(
     not os.environ.get("OXYZ_TEST_HF"),
     reason="set OXYZ_TEST_HF=1 to exercise the live HuggingFace Hub",

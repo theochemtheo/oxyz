@@ -20,6 +20,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `rust-toolchain` re-pinned to the current tip of `stable`.
 - The CI zizmor job runs `scripts/zizmor.sh`, so it and the pre-push hook
   share one zizmor version, now 1.30.1.
+- Comments and docstrings cut back to what the code cannot say, following a
+  rule now in `AGENTS.md`.
 
 ## [1.2.0] - 2026-10-03
 

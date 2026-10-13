@@ -1,15 +1,8 @@
-"""System / target benchmarks: oxyz.metatomic vs the ASE path it replaces.
+"""oxyz.metatomic against systems_to_torch(ase.io.read(...)).
 
-Two workloads, mirroring test_read.py's tagging and `run` helper:
-
-- `systems/*`  builds `metatomic.torch.System`s — oxyz.metatomic.read (thread
-  sweep) and iread, against systems_to_torch(ase.io.read(...)), the conversion
-  metatrain uses today.
-- `targets/metadata_heavy`  extracts energy + forces + stress as torch tensors.
-  oxyz parses once via SystemSource; the ASE baseline re-reads the file per
-  quantity (metatrain's pattern), so this row measures the repeat-read saving.
-
-Gated on torch + metatomic-torch; the env in run.py supplies CPU wheels.
+`systems/*` builds `metatomic.torch.System`s. `targets/metadata_heavy`
+extracts energy, forces and stress: oxyz parses once via SystemSource,
+while the ASE baseline re-reads the file per quantity, as metatrain does.
 """
 
 from __future__ import annotations
@@ -146,10 +139,8 @@ def ase_targets(path):
 )
 def test_targets_metadata_heavy(benchmark, extract, metadata_heavy):
     energy, forces, stress = run(benchmark, extract, metadata_heavy)
-    # The two paths return different containers by design — oxyz's array-native
-    # one-pass (stacked tensors) vs metatrain's per-frame per-quantity reads — so
-    # forces (atom-major tensor vs per-frame list) can't share a length check;
-    # energy and stress are per-config, so both expose one entry per frame.
+    # Forces differ in container (atom-major tensor vs per-frame list), so only
+    # the per-config quantities share a length check.
     assert len(energy) == 2_000
     assert len(stress) == 2_000
     assert forces is not None

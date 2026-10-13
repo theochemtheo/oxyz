@@ -1,9 +1,6 @@
 """Notebook rendering: `_repr_html_` tables with a bounded preview of values.
 
-Parsed back with `html.parser`, so the assertions read cell text rather than
-markup. The contract: 3 preview rows, arrays in full up to 12 elements, cells
-cut at 80 characters, floats to 4 decimal places independent of numpy's global
-printoptions, and every name and value escaped.
+Parsed back with `html.parser`, so assertions read cell text, not markup.
 """
 
 from __future__ import annotations

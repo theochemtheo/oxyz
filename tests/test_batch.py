@@ -77,8 +77,7 @@ VARYING_DENSITY = DATA_DIR / "varying_density.extxyz"
 
 
 def test_memory_binning_by_n_atoms_balances_best_fit() -> None:
-    # VARYING has 3/1/2 atoms. Best-fit-decreasing at budget 3 packs the
-    # 3-atom frame alone, then the 2- and 1-atom frames together.
+    # 3/1/2 atoms at budget 3: the 3-atom frame alone, then the other two together.
     batches = list(
         oxyz.iread_batch(VARYING, memory_scales_with="n_atoms", max_scaler=3)
     )
@@ -88,10 +87,8 @@ def test_memory_binning_by_n_atoms_balances_best_fit() -> None:
 
 
 def test_memory_binning_by_density_separates_dense_from_sparse() -> None:
-    # varying_density: three 2-atom frames. Frame 0 is dense (vol 1 -> weight 4),
-    # frames 1 and 2 sparse (vol 1000 -> ~0.004). By density the dense frame is
-    # isolated and the two sparse frames share a bin; by raw atom count (all
-    # weigh 2) the packing differs, proving the density weight is in play.
+    # Frame 0 is dense (weight 4), frames 1 and 2 sparse (~0.004 each). By
+    # density the sparse two share a bin; by atom count (all 2) they would not.
     by_density = [
         sorted(b.frame_indices)
         for b in oxyz.iread_batch(
@@ -109,9 +106,8 @@ def test_memory_binning_by_density_separates_dense_from_sparse() -> None:
 
 
 def test_density_weight_falls_back_to_atom_count_for_molecules() -> None:
-    # A frame with no Lattice has NaN volume; its weight is the atom count, the
-    # torch_sim where(volume > 0, n**2/v, n) fallback. Pinned at the weight
-    # helper because a bin may not mix Lattice and Lattice-free schemas.
+    # No Lattice: NaN volume, so the weight is the atom count. Tested at the
+    # helper, as a bin cannot mix Lattice and Lattice-free schemas.
     from oxyz._batch import _memory_weights
 
     n_atoms = np.array([2, 3], dtype=np.intp)
@@ -169,8 +165,6 @@ def test_shuffled_batches_are_seeded_and_partition_the_file() -> None:
 
 
 def test_read_batch_index_shares_the_read_selection_grammar() -> None:
-    # read_batch's `index` takes the same forms as read: ':' (all), an int,
-    # a slice or slice string, or an explicit sequence.
     frames = oxyz.read(VARYING)
     whole = oxyz.read_batch(VARYING, ":")
     assert whole.n_frames == len(frames)
@@ -314,8 +308,6 @@ def test_read_batch_out_of_range_raises_index_error(tmp_path: Path) -> None:
 
 
 def test_read_batch_negative_index_raises_index_error() -> None:
-    # Negative indices are not supported; they raise the documented
-    # IndexError rather than leaking pyo3's OverflowError.
     with pytest.raises(IndexError, match="frame index -1 out of range"):
         oxyz.read_batch(VARYING, [0, -1])
 
@@ -448,8 +440,7 @@ def test_batch_mode_without_schema_errors(tmp_path):
 
 
 def _assert_batches_identical(a, b):
-    # assert_array_equal treats same-position NaNs as equal, so the NaN fills
-    # are compared directly rather than masked away.
+    # assert_array_equal treats same-position NaNs as equal.
     assert a.frame_indices.tolist() == b.frame_indices.tolist()
     assert_array_equal(a.offsets, b.offsets)
     assert sorted(a.columns) == sorted(b.columns)
@@ -485,8 +476,7 @@ def test_projected_batch_parity_with_warn_drops(tmp_path):
     from oxyz._schema_match import SchemaWarning
     from oxyz._schema_spec import ColumnRule, SchemaSpec
 
-    # frames 0,2 carry id; frame 1 does not -> frame 1 drops under warn. Serial
-    # and parallel must drop the *same* frame and agree on survivors/columns.
+    # Frame 1 lacks id, so it drops under warn, in both serial and parallel.
     f = tmp_path / "drops.xyz"
     f.write_text(
         "1\nProperties=species:S:1:pos:R:3:id:I:1\nH 0 0 0 10\n"
@@ -509,8 +499,6 @@ def test_projected_batch_parity_which_error_wins(tmp_path):
     from oxyz._schema import Kind
     from oxyz._schema_spec import ColumnRule, SchemaSpec
 
-    # A malformed frame 1: the serial and parallel reads must fail with the same
-    # error (the parity promise covers which error wins on a bad file).
     f = tmp_path / "bad.xyz"
     f.write_text(
         "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
@@ -670,8 +658,6 @@ def test_project_batch_frame_rule_lattice_warn(tmp_path):
         frame=FrameRule(lattice_required=True),
         mode="project",
     )
-    # No frame carries a Lattice: under warn the batch survives but every frame
-    # warns (the lattice-missing frame-rule branch).
     with pytest.warns(SchemaWarning, match="Lattice"):
         batch = oxyz.read_batch(f, schema=spec, conformance="warn")
     assert batch.n_frames == 2

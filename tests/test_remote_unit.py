@@ -55,8 +55,7 @@ def test_is_remote_huggingface(path, expected):
             "hf://spaces/o/r@abc123/a.extxyz",
             "https://huggingface.co/spaces/o/r/resolve/abc123/a.extxyz",
         ),
-        # no prefix (and the explicit `models` prefix) means a model repo, which
-        # the Hub serves straight off the root
+        # a model repo is served off the root
         ("hf://o/r/a.extxyz", "https://huggingface.co/o/r/resolve/main/a.extxyz"),
         (
             "hf://models/o/r@dev/a.extxyz",
@@ -173,12 +172,7 @@ class _FakeObstore:
 
 
 def _capture_open_source(monkeypatch, url, storage_options=None):
-    """Run `open_source` against fakes; return what reached the store layer.
-
-    Asserting on the captured `(bucket_url, key, storage_options)` tests the
-    promise that matters — what oxyz actually asks obstore for — rather than
-    the shape of a helper's return value.
-    """
+    """Run `open_source` against fakes; return what reached the store layer."""
     seen = {}
 
     def fake_build_store(bucket_url, options):
@@ -290,7 +284,6 @@ def test_scan_and_schema_route_remote(monkeypatch):
     path = Path("tests/data/minimal_periodic.extxyz")
     blob = path.read_bytes()
 
-    # Baselines computed before patching so the local reads take the normal path.
     local_idx = oxyz.scan(str(path))
     local_sch = oxyz.infer_schema(str(path))
 
@@ -411,8 +404,7 @@ def test_cli_storage_option_parsing(monkeypatch, capsys):
 
 
 def test_import_obstore_missing_raises(monkeypatch):
-    # A None entry in sys.modules makes `import obstore` raise ImportError,
-    # exercising the real _import_obstore body (not the monkeypatched stub).
+    # A None entry in sys.modules makes the import raise ImportError.
     monkeypatch.setitem(sys.modules, "obstore", None)
     with pytest.raises(ImportError, match=r"oxyz\[s3\]"):
         _remote._import_obstore()
@@ -447,9 +439,7 @@ def test_read_frames_routes_remote_tar_zstd(monkeypatch):
 
 
 def test_open_source_dispatches_tar_zst_to_callable_factory(monkeypatch):
-    # A tar has no central directory, so the tar codecs need a 0-arg callable
-    # that produces a fresh bytes-iterator per call (one pass to enumerate
-    # members, another to stream them) rather than a plain, single-use one.
+    # Tar codecs need a fresh bytes-iterator per pass.
     class FakeGetResult:
         @staticmethod
         def stream(*, min_chunk_size):

@@ -106,9 +106,7 @@ def test_enforce_clean_frame_kept_silently():
 
 
 def test_enforce_strict_dropped_without_deviation_still_raises():
-    # A drop always carries a deviation in practice; the defensive guard raises
-    # rather than silently lose the frame if the core ever dropped one with an
-    # empty report under strict/required.
+    # Raise rather than silently lose a frame dropped without a deviation.
     with pytest.raises(SchemaError, match="dropped by projection") as exc:
         enforce_projection([], "required", frame_index=7, dropped=True)
     assert exc.value.frame_index == 7

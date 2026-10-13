@@ -1,8 +1,4 @@
-"""Golden tests: oxyz.ase.read must agree with ase.io.read.
-
-The fixture corpus is read by both readers and compared field by field;
-documented divergences (Voigt stress) get their own explicit tests.
-"""
+"""Golden tests: oxyz.ase.read agrees with ase.io.read field by field."""
 
 from __future__ import annotations
 
@@ -28,10 +24,8 @@ def test_ase_read_accepts_threads() -> None:
     assert [len(a) for a in serial] == [len(a) for a in parallel]
 
 
-# Documented divergences from ase.io.read, each asserted explicitly below:
-# Voigt stress (ASE rejects it), new-style string arrays (ASE leaves them as
-# one raw string), and single-quoted values (ASE strips the quotes; oxyz keeps
-# them per the grammar). See the "Divergences from ASE" section of the README.
+# Documented divergences from ase.io.read, each asserted below; see the
+# README's "Divergences from ASE".
 VOIGT_STRESS = {"simple.extxyz", "nonorthogonal.extxyz", "stress_voigt6.extxyz"}
 DIVERGENT = VOIGT_STRESS | {
     "newstyle_array_metadata.extxyz",
@@ -101,9 +95,7 @@ def test_trailing_blank_line_matches_ase(tmp_path: Path) -> None:
 
     import oxyz.ase
 
-    # Built at runtime: a committed trailing blank would be stripped by the
-    # end-of-file hook, silently voiding the test (a clean file reads the
-    # same one frame).
+    # Built at runtime: the end-of-file hook would strip a committed trailing blank.
     clean = (DATA_DIR / "minimal_periodic.extxyz").read_text()
     path = tmp_path / "trailing.extxyz"
     path.write_text(clean + "\n")
@@ -149,9 +141,7 @@ def test_newstyle_string_array_diverges_from_ase() -> None:
 
 
 def test_singlequote_values_diverge_from_ase() -> None:
-    """`"` is the only quote character in the grammar, so single quotes are
-    ordinary bare characters: oxyz keeps them, while ASE treats `'` as a quote,
-    stripping it and reading `it's` as `its`."""
+    """Only `"` quotes, so oxyz keeps single quotes that ASE strips."""
     import ase.io
 
     import oxyz.ase
@@ -215,8 +205,6 @@ def test_read_negative_and_out_of_range_indices() -> None:
         oxyz.ase.read(path, index=5)
 
 
-# The full grammar a drop-in must accept: ints, int strings, slice strings
-# (with negatives and steps), and slice objects.
 @pytest.mark.parametrize(
     "index",
     [0, 2, -1, "1", "1:", ":2", ":-1", "-2:", "::2", "1::2", slice(-2, None)],
@@ -261,9 +249,7 @@ def test_non_chemical_species_is_strict_error(tmp_path: Path) -> None:
 
 
 def test_non_scalar_species_is_strict_error(tmp_path: Path) -> None:
-    # A multi-component `species:S:2` column parses to unhashable per-atom
-    # cells; the symbol mapping must reject it via ToAseError rather than leak
-    # the TypeError the cached lookup raises on an unhashable key.
+    # Unhashable `species:S:2` cells must raise ToAseError, not TypeError.
     import oxyz.ase
 
     path = tmp_path / "wide_species.extxyz"
@@ -292,8 +278,7 @@ def test_read_rejects_other_formats() -> None:
 
 
 def test_explicit_z_wins_over_species(tmp_path: Path) -> None:
-    # A `Z` column present alongside `species` takes precedence, as ASE's
-    # reader has it: H mapped to 1 is overridden by Z=26.
+    # A `Z` column wins over `species`, as in ASE's reader.
     import oxyz.ase
 
     path = tmp_path / "species_and_z.extxyz"
@@ -384,8 +369,7 @@ def test_ase_read_missing_pos_raises_not_zeros(tmp_path):
 
 
 def test_schema_slice_enforcement_is_consistent(tmp_path: Path) -> None:
-    """A schema error outside the requested slice aborts the read the same way
-    regardless of the slice's shape (previously '1:' and '1:3' diverged)."""
+    """A schema error outside the slice aborts the read whatever the slice's shape."""
     import pytest
 
     import oxyz.ase

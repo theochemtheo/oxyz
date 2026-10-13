@@ -1,9 +1,5 @@
-"""Writing frames out: lossless round-trips, the imposed order, append, stdout,
-the codecs, and ASE equivalence through `oxyz.ase.from_atoms`.
-
-The corpus round-trip is the central promise: every frame that has both a
-`species` and a `pos` column survives `write` then `read` bit for bit;
-those without are rejected, since the result would not be valid extxyz.
+"""Writing frames: lossless round-trips, order, append, stdout, codecs, and
+ASE equivalence through `oxyz.ase.from_atoms`.
 """
 
 from __future__ import annotations
@@ -28,12 +24,7 @@ has_ase = importlib.util.find_spec("ase") is not None
 
 
 def assert_frames_equivalent(originals: list[Frame], rewritten: list[Frame]) -> None:
-    """Every rewritten frame equals the one it came from.
-
-    `Frame.__eq__` is the promise under test: same atom count, same name->value
-    pairs, values bit-exact with NaN equal to NaN. Key order is not compared —
-    `write` imposes its own.
-    """
+    """Every rewritten frame equals the one it came from, ignoring key order."""
     assert len(originals) == len(rewritten)
     for index, (original, frame) in enumerate(zip(originals, rewritten, strict=True)):
         assert original == frame, f"frame {index}"
@@ -49,8 +40,6 @@ def test_corpus_round_trips_losslessly(name: str, tmp_path: Path) -> None:
     out = tmp_path / "out.extxyz"
 
     if not has_species_and_pos(frames):
-        # extxyz needs species and pos; a frame without them must be refused,
-        # not written into something unreadable.
         with pytest.raises(ValueError, match=r"species|pos"):
             oxyz.write(out, frames)
         return
@@ -121,8 +110,6 @@ def test_unsupported_object_is_rejected(tmp_path: Path) -> None:
 
 
 def test_string_array_column_is_written(tmp_path: Path) -> None:
-    # A species column handed in as a numpy string array (not a list) must cross
-    # as a list and read back unchanged.
     frame = Frame(
         n_atoms=2,
         columns={"species": np.array(["O", "H"]), "pos": np.zeros((2, 3))},
@@ -197,11 +184,8 @@ def test_writer_matches_one_shot(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("suffix", ["xyz", "xyz.gz", "xyz.zip", "tar.gz"])
 def test_threads_produce_identical_bytes(suffix: str, tmp_path: Path) -> None:
-    # The parity promise at the Python surface: output is independent of the
-    # thread count, byte for byte, for every codec.
     frames = oxyz.read(DATA_DIR / "two_frame_same_schema.xyz") * 60
-    # One path, reused: the archive codecs embed the file name in their header,
-    # so byte-identity is only meaningful for the same path.
+    # Archive headers embed the file name, so the path is reused.
     out = tmp_path / f"frames.{suffix}"
     oxyz.write(out, frames, threads=1)
     reference = out.read_bytes()
@@ -339,7 +323,6 @@ def test_from_atoms_fixatoms_becomes_move_mask() -> None:
     atoms = Atoms("H3", positions=[[0.0, 0, 0], [1.0, 0, 0], [2.0, 0, 0]])
     atoms.set_constraint(FixAtoms(indices=[0, 2]))
     mask = np.asarray(oxyz.ase.from_atoms(atoms).columns["move_mask"])
-    # move_mask is True where free, so the two fixed atoms are False.
     assert mask.tolist() == [False, True, False]
 
 

@@ -16,11 +16,7 @@ CORPUS = sorted(path for ext in ("*.xyz", "*.extxyz") for path in DATA_DIR.glob(
 def as_array(value: object) -> np.ndarray:
     """Assert that ``value`` is an ndarray and re-type it for ty.
 
-    Exists only because of a current ty limitation: isinstance-narrowing
-    ``np.ndarray`` out of a union yields a type that fails numpy's
-    ``assert_allclose`` overloads, even though a plain ``np.ndarray`` passes.
-    Delete this helper (plain ``assert isinstance`` is enough) once
-    test_ty_canary.py fails.
+    A ty workaround; delete it once test_ty_canary.py fails.
     """
     assert isinstance(value, np.ndarray)
     return value
@@ -88,8 +84,7 @@ def test_parse_error_locates_the_offending_column(tmp_path: Path) -> None:
 
 
 def test_parse_error_location_attributes(tmp_path: Path) -> None:
-    # A count-line error pins the frame and the line, but has no single token
-    # to point a column at.
+    # A count-line error has no single token to point a column at.
     path = tmp_path / "badcount.xyz"
     path.write_text("not-a-count\ncomment\n")
 
@@ -207,8 +202,7 @@ _FRAME = "1\nProperties=species:S:1:pos:R:3\nH 0.0 0.0 0.0\n"
 
 
 def test_trailing_blank_line_is_tolerated(tmp_path: Path) -> None:
-    # ASE tolerates a trailing blank line where a count is expected; oxyz
-    # reads the file's one frame across every entry point rather than raising.
+    # As in ASE, trailing blank lines are tolerated.
     for suffix in ("\n", "\n\n", "   \n", "\t\n"):
         path = tmp_path / "trailing.xyz"
         path.write_text(_FRAME + suffix)
@@ -261,8 +255,6 @@ def test_read_first_simple_extxyz() -> None:
     assert frame.metadata["energy"] == -1.0
     assert isinstance(frame.metadata["energy"], float)
 
-    # Lattice arrives flat, in as-written order; reshaping and reordering are
-    # the normalisation layer's job.
     lattice = as_array(frame.metadata["Lattice"])
     assert lattice.shape == (9,)
     assert_allclose(lattice, np.array([15.0, 0.0, 0.0, 0.0, 15.0, 0.0, 0.0, 0.0, 15.0]))
@@ -367,8 +359,7 @@ def test_2d_bracket_array_metadata(tmp_path: Path) -> None:
 
 
 def test_2d_bracket_array_metadata_single_row_or_column(tmp_path: Path) -> None:
-    # A single-column or single-row 2-D array must stay 2-D on read, not
-    # collapse to a 1-D ndarray — it is `[[...]]` metadata, not a plain array.
+    # `[[...]]` metadata stays 2-D even with a single row or column.
     props = "Properties=species:S:1:pos:R:3"
     text = (
         f'1\ncol=[[1],[2],[3]] row=[[1,2,3]] strcol=[["a"],["b"]] {props}\n'
@@ -390,8 +381,6 @@ def test_2d_bracket_array_metadata_single_row_or_column(tmp_path: Path) -> None:
 
 
 def test_2d_bracket_array_metadata_write_round_trip(tmp_path: Path) -> None:
-    # read -> write -> read must be lossless for every 2-D metadata kind,
-    # numeric shapes and the nested string form alike.
     props = "Properties=species:S:1:pos:R:3"
     text = (
         f"1\nint2d=[[1,2],[3,4]] real2d=[[1.5,2.5],[3.5,4.5]] "

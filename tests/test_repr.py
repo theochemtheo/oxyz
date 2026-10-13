@@ -1,9 +1,6 @@
-"""Every public object's `repr`: one line, data-free, bounded, constructor-shaped.
+"""Every public object's `repr` is one line, data-free, and constructor-shaped.
 
-Objects that hold data (`Frame`, `Batch`, the converter sources) describe values
-in numpy terms; objects that describe a file (`Schema`, `SchemaSpec`) use the
-extxyz letters written in `Properties=` and in YAML specs. `Frame`/`Batch` are
-pinned in `test_frame_api.py`; the rest are pinned here as exact strings.
+`Frame` and `Batch` are covered in `test_frame_api.py`.
 """
 
 from __future__ import annotations

@@ -1,14 +1,8 @@
 """Deterministic trajectory fixtures, generated once and cached on disk.
 
-Shapes mirror crates/oxyz-core/benches/parse.rs (many small frames vs few
-large frames) so PyO3 binding overhead can be read off against the cargo
-bench numbers for the same workload.
-
-The store-comparison suite adds a much larger dataset (`store_dataset`,
-100k frames of 64 atoms, ~0.4 GB of text): random reads on the 2k-frame
-fixtures measure fixed overheads, not the stores. Each store backend
-ingests it once into benchmarks/.cache/ as well — expect ~2 GB of cache
-and a slow first run.
+Shapes mirror crates/oxyz-core/benches/parse.rs, so binding overhead reads
+off against the cargo numbers. `store_dataset` (100k frames, ~0.4 GB) and
+the stores built from it need ~2 GB of cache and a slow first run.
 """
 
 from __future__ import annotations
@@ -57,9 +51,7 @@ def pytest_benchmark_update_machine_info(config, machine_info) -> None:
 
 CACHE_DIR = Path(__file__).parent / ".cache"
 
-# The one workload that is not generated: a 303.5 MiB real dataset on a
-# gitignored local path (see .gitignore `/data/`). Absent on most machines, so
-# every row reading it skips rather than fails.
+# A 303.5 MiB real dataset at a gitignored path; rows skip without it.
 MAD_PATH = Path(__file__).parent.parent / "data" / "mad-1.5-r2scan-train.xyz"
 MAD_N_FRAMES = 180_184
 
@@ -123,12 +115,11 @@ def _write_metadata_heavy_frame(out, rng: random.Random, n_atoms: int) -> None:
 
 
 def _write_mace_mixed(out, rng: random.Random) -> None:
-    """MACE-style training file: a handful of isolated-atom E0 frames first,
-    then the bulk training frames, with deliberate schema drift between the
-    two kinds. ``config_type`` rides only the isolated-atom frames; per-config
-    training weights (``config_*_weight``) and ``stress`` ride only the bulk
-    frames. Real training sets vary in which other keys appear, so this
-    captures the shape of the drift, not any one file's exact columns."""
+    """MACE-style training file: isolated-atom E0 frames, then bulk frames.
+
+    ``config_type`` rides only the isolated-atom frames; training weights and
+    ``stress`` ride only the bulk ones.
+    """
     for species in SPECIES:
         out.write("1\n")
         out.write(
@@ -157,20 +148,13 @@ def _write_mace_mixed(out, rng: random.Random) -> None:
         _write_atom_lines(out, rng, n_atoms, a)
 
 
-# --- Scaling sweep fixtures -------------------------------------------------
-#
-# The dataset-size family mirrors a real MACE-style training corpus
-# (Combined_MatPES-R2SCAN-2025-1_MP-ALOE, measured 2026-07-12): 1.3M frames,
-# mean 6.9 atoms/frame, a long tail (p50 6, p90 12, p99 30, max 240), with
-# REF_* metadata and a string entry_id. We reproduce the *statistics*, not the
-# file, so the fixture is deterministic and lives in-repo. The system-size
-# family is the orthogonal axis: a few frames whose atom count is swept large,
-# for the "vs system size" curve.
+# The dataset-size family reproduces the statistics of a MACE-style corpus
+# (Combined_MatPES-R2SCAN-2025-1_MP-ALOE): mean 6.9 atoms/frame, p50 6, p90 12,
+# p99 30, max 240. The system-size family sweeps a few frames' atom count.
 
 SWEEP_GENERATOR_VERSION = 1
 
-# Lognormal shaped to the corpus: exp(mu)=median=6, sigma set so p90/p50~=2,
-# clamped to the observed [1, 240] range.
+# Lognormal with median 6 and p90/p50 ~= 2, clamped to [1, 240].
 _DATASET_LOGNORM_MU = 1.79
 _DATASET_LOGNORM_SIGMA = 0.55
 _DATASET_ATOMS_MIN = 1
@@ -180,10 +164,8 @@ _DATASET_ATOMS_MAX = 240
 def dataset_frame_atoms(n_frames: int, *, seed: int = 0x5EEDB) -> list[int]:
     """Deterministic per-frame atom counts for a dataset fixture of n_frames.
 
-    Kept separate from writing so a caller can total the atoms without
-    re-scanning the file. The same seed reproduces the same sequence, and a
-    prefix of a longer run equals a shorter run (draws are sequential), so the
-    cached largest file's counts cover every smaller point.
+    A prefix of a longer run equals a shorter run, so the largest file's
+    counts cover every smaller point.
     """
     rng = random.Random(seed)
     counts = []
@@ -210,9 +192,6 @@ def _write_realistic_frame(out, rng: random.Random, n_atoms: int) -> None:
     _write_atom_lines(out, rng, n_atoms, a)
 
 
-# Sweep points. Dataset frames reach the corpus scale (~10^6). System atoms
-# reach a large single-frame size. Endpoints are validated for runtime in
-# Task 3's calibration step; adjust here if a full recorded run exceeds budget.
 DATASET_SIZE_FRAMES = [1_000, 10_000, 100_000, 1_000_000]
 SYSTEM_SIZE_ATOMS = [100, 1_000, 10_000, 100_000, 1_000_000]
 SYSTEM_SIZE_FRAMES = 3
@@ -290,8 +269,7 @@ def mad_full() -> Path:
     return MAD_PATH
 
 
-# The store-comparison dataset. Fixed frame size keeps the maths obvious:
-# every read of k frames is k * 64 atoms.
+# A fixed frame size keeps the maths obvious: k frames are k * 64 atoms.
 STORE_N_FRAMES = 100_000
 STORE_ATOMS_PER_FRAME = 64
 
