@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-13
+
 ### Added
 
 - Python 3.15 support. `oxyz.torch_sim` is untested on 3.15, as h5py and
@@ -504,6 +506,7 @@ for reading atomistic-simulation datasets into numpy or ASE.
 - abi3 wheels for CPython 3.11 and newer on Linux (x86_64, aarch64), macOS
   (arm64, x86_64), and Windows (x64).
 
+[1.2.1]: https://github.com/theochemtheo/oxyz/releases/tag/v1.2.1
 [1.2.0]: https://github.com/theochemtheo/oxyz/releases/tag/v1.2.0
 [1.1.0]: https://github.com/theochemtheo/oxyz/releases/tag/v1.1.0
 [1.0.0]: https://github.com/theochemtheo/oxyz/releases/tag/v1.0.0
