@@ -191,7 +191,7 @@ jobs:
           subject-path: "wheels-*/*"
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          version: "0.12.17"
+          version: "0.13.0"
           # This job only runs `uv publish`, which installs nothing, so there
           # is nothing to cache against.
           enable-cache: false

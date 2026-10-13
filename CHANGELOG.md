@@ -6,6 +6,19 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Python 3.15 support. `oxyz.torch_sim` is untested on 3.15, as h5py and
+  numexpr publish no cp315 wheels yet.
+
+### Internal
+
+- uv pinned to 0.13.0.
+- torch comes from PyTorch's CPU index on macOS too, the only source of cp315
+  wheels.
+- Lockfile: torch 2.14.1 and its dependants, scipy 1.18.1.
+- `rust-toolchain` re-pinned to the current tip of `stable`.
+
 ## [1.2.0] - 2026-10-03
 
 ### Added
