@@ -12,11 +12,7 @@ on:
 permissions: {}
 
 jobs:
-  # Does this change touch anything that can alter the built wheel? Non-build
-  # PRs skip the matrix below but still reach `wheels-gate`, the one required
-  # check, so a docs- or Python-only PR is not blocked waiting on builds it
-  # never triggers, while a build-affecting PR must pass them. Runs on every
-  # event; the output is only consulted for pull requests.
+  # Lets non-build PRs skip the matrix yet still pass `wheels-gate`.
   changes:
     runs-on: ubuntu-latest
     permissions:
@@ -146,10 +142,7 @@ jobs:
           name: wheels-sdist
           path: dist
 
-  # Always-running fan-in: the single required status check for the build
-  # matrix. Passes when every build job succeeded or was skipped (a non-build
-  # PR), fails if any did not — so the matrix can stay conditional without the
-  # branch ruleset waiting forever on contexts that never report.
+  # The one required check; skipped builds count as passing.
   wheels-gate:
     needs: [changes, linux, macos, windows, sdist]
     if: always()
@@ -176,7 +169,6 @@ jobs:
     needs: [linux, macos, windows, sdist]
     environment: pypi
     permissions:
-      # Trusted publishing (OIDC) and artifact attestation
       id-token: write
       contents: write
       attestations: write
@@ -192,15 +184,10 @@ jobs:
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.13.0"
-          # This job only runs `uv publish`, which installs nothing, so there
-          # is nothing to cache against.
           enable-cache: false
       - name: Publish to PyPI
         run: uv publish --trusted-publishing always 'wheels-*/*'
       - name: Create GitHub Release
-        # Notes come from the tag's CHANGELOG section; the built wheels and
-        # sdist are attached. Runs after the PyPI publish, so a release only
-        # appears once the artifacts are live. Tagging is the only manual step.
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

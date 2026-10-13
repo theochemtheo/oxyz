@@ -49,41 +49,19 @@ Issues = "https://github.com/theochemtheo/oxyz/issues"
 oxyz = "oxyz._cli:main"
 
 [project.optional-dependencies]
-# >=3.23: the first ase with set_calc_and_arrays and numpy 2 support; the
-# oxyz.ase golden tests pass from 3.23 up. <4: ASEv4 may change the data
-# model; new majors are opted into deliberately.
+# 3.23: set_calc_and_arrays and numpy 2. ase 4 may change the data model.
 ase = ["ase>=3.23,<4"]
-# torch>=2: the metatomic.torch System API and stable torch.from_numpy
-# semantics oxyz.metatomic relies on. CPU wheels are pinned via the uv index
-# below so CI never pulls a CUDA build.
 metatomic = ["torch>=2", "metatomic-torch"]
-# torch>=2 for the tensor API; torch-sim-atomistic is the PyPI name of the
-# `torch_sim` package whose `SimState` oxyz.torch_sim targets. Heavier than the
-# other extras (it pulls h5py/tables); only installed when this target is used.
+# torch-sim-atomistic provides the `torch_sim` package.
 torch-sim = ["torch>=2", "torch-sim-atomistic"]
-# obstore is the only runtime dep for remote reading; kept optional so the base
-# install stays numpy-only. Floor: 0.11, first release with stable get().stream()
-# and provider config TypedDicts used by this library.
+# 0.11 stabilises get().stream() and the provider config TypedDicts.
 s3 = ["obstore>=0.11"]
 
 [dependency-groups]
-# Benchmark dependencies live in benchmarks/run.py (PEP 723), not here:
-# the comparison parsers need CPython <3.14, which that script pins.
-#
-# `test` and `s3-test` are split out of `dev` so CI can build a deliberately
-# incomplete environment — see the `tiers` job in test.yml. The optional-target
-# import guards, and the install hints their ImportErrors carry, are only
-# exercised when the optional dependency is genuinely missing, which never
-# happens in an environment that has everything. The optional dependencies
-# themselves need no group: they are already the `ase`/`s3`/`metatomic`/
-# `torch-sim` extras above, so a tier installs them the way a user would.
-#
-# `dev` includes both groups, so a plain `uv sync` — what humans run, and what
-# the coverage job needs — resolves to exactly what it did before the split.
+# Benchmark dependencies are pinned in benchmarks/run.py (PEP 723).
+# `test` and `s3-test` stand apart from `dev` so CI tiers can omit the extras.
 test = ["pytest>=9.0.3", "pytest-cov>=6"]
-# moto and boto3 drive the local S3 endpoint that tests/conftest.py stands up.
-# obstore is absent deliberately: it is the `s3` extra, the code under test
-# rather than a test dependency, so the s3 tier installs it as the extra.
+# obstore comes from the `s3` extra, as a user would install it.
 s3-test = ["boto3>=1.35", "moto[s3,server]>=5"]
 dev = [
     "ase>=3.28.0",
@@ -105,12 +83,10 @@ dev = [
 ]
 
 [tool.uv]
-# Pinned exactly, and matched by the `version:` on every setup-uv step: the
-# lockfile is written by one uv version, so CI must not float onto another.
+# Keep in step with `version:` on every setup-uv step.
 required-version = "==0.13.0"
 sources = { torch = { index = "pytorch-cpu" } }
-# Rebuild the editable extension (release, via maturin PEP517) whenever the
-# Rust sources change, so `uv run` never tests or benchmarks a stale build.
+# Rebuild the extension whenever the Rust sources change.
 cache-keys = [
     { file = "pyproject.toml" },
     { file = "Cargo.toml" },
@@ -127,18 +103,11 @@ explicit = true
 [tool.ruff]
 target-version = "py312"
 src = ["src", "tests"]
-# ruff formats Python code blocks in Markdown. The README's blocks align their
-# trailing comments into columns to be read as a table; the formatter collapses
-# that alignment. Anchored with `./`: a bare `README.md` matches by basename and
-# would quietly exempt the fixture READMEs under tests/data/ as well.
+# The formatter would collapse the README's column-aligned code comments. `./`
+# stops a basename match exempting the READMEs under tests/data/.
 extend-exclude = ["./README.md"]
 
 [tool.ruff.lint]
-# Everything on, then opted out of deliberately. Each entry below is a decision
-# with a reason attached, which a hand-picked select list cannot express: a rule
-# absent from such a list might have been rejected, or might simply never have
-# been read. ruff is pinned in uv.lock, so a new release's rules arrive on a
-# deliberate bump rather than by surprise.
 select = ["ALL"]
 ignore = [
     "COM812",  # trailing commas are the formatter's business, not the linter's
@@ -160,29 +129,14 @@ max-complexity = 12
 convention = "numpy"
 
 [tool.ruff.lint.per-file-ignores]
-# lazy imports are the deliberate optional-target design; asserts and magic
-# values are the idiom of these tests, not a smell.
-# S: security lints target shipped code, not the test harness (fake creds, the
-# ty subprocess canary); PT011: these tests assert the error class deliberately.
-# D: docstring rules target the shipped public surface, not tests.
 # FBT: the _rust extension's PyO3 signatures take their flags positionally.
 "tests/**" = ["ANN", "S", "PLR2004", "SLF001", "ARG", "PT011", "D", "FBT"]
-# print() is the CLI's output mechanism.
 "src/oxyz/_cli.py" = ["T201"]
-# the obstore adapter is the boundary to an optional, loosely-typed dependency;
-# Any is deliberate there rather than a missing annotation.
+# obstore is loosely typed.
 "src/oxyz/_remote.py" = ["ANN401"]
-# `format` is ASE's own keyword argument; shadowing the builtin is what makes
-# oxyz.ase.read a drop-in for ase.io.read.
+# `format` mirrors ase.io.read's signature.
 "src/oxyz/ase.py" = ["A002"]
-# the .pyi stubs are the user-facing docs for the Rust extension's symbols, so
-# they carry docstrings by design; pydocstyle rules do not apply to stubs.
 "**/*.pyi" = ["PYI021", "D"]
-# benchmarks are PEP 723 measurement scripts, not shipped surface: they print
-# results, use pickle/random/subprocess to drive comparisons, and need no
-# annotations or docstrings. Keep the real checks (F/E/B/…); relax the
-# standards groups. They also reach into private module state to report on it,
-# and carry the plotting flags and axis sizes of throwaway analysis code.
 "benchmarks/**" = [
     "ANN",
     "S",
@@ -197,22 +151,11 @@ convention = "numpy"
     "FBT",
     "PLR2004",
 ]
-# utility scripts print their results and are not an importable package.
 "scripts/**" = ["T20", "INP", "D"]
-# doc examples print their output for a reader to eyeball and are not an
-# importable package; their module docstring is the doc, mirroring scripts/**.
 "examples/**" = ["T20", "INP", "D"]
 
 [tool.pytest.ini_options]
-# `--doctest-modules` collects the doctests in `src/oxyz`. The output-target
-# doctests (oxyz.metatomic, oxyz.torch_sim) import torch, so they need the `dev`
-# group's torch stack installed — the default `uv sync` provides it. A run in an
-# environment without it errors on those imports rather than skipping, so the
-# doctests are a full-dependency surface by design: the `tiers` job in test.yml
-# runs `pytest tests -o addopts=""` to stay off this path, and the full `python`
-# matrix is what covers the doctests.
-# They read `examples/data/` via the absolute `DATA` path injected by
-# src/oxyz/conftest.py, so they resolve regardless of the working directory.
+# The doctests need every optional target installed; the CI tiers skip them.
 testpaths = ["tests", "src/oxyz"]
 addopts = "--doctest-modules"
 doctest_optionflags = ["NORMALIZE_WHITESPACE", "ELLIPSIS"]
@@ -240,6 +183,4 @@ manifest-path = "crates/oxyz-py/Cargo.toml"
 module-name = "oxyz._rust"
 python-source = "src"
 features = ["extension-module"]
-# conftest.py is test-only (it provides the doctest `DATA` fixture); keep it out
-# of the built sdist/wheel.
 exclude = ["src/oxyz/conftest.py"]

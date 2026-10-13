@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
-# Print the CHANGELOG.md body for one version — the lines between its heading
-# and the next version heading, used as the GitHub Release notes. Run it to
-# preview what a tag will publish:
-#
-#     scripts/changelog-section.sh 0.2.0
-#
+# Print one version's CHANGELOG section, as used for the release notes:
+#     scripts/changelog-section.sh 1.2.0
 set -euo pipefail
 
 version="${1:?usage: changelog-section.sh <version>}"

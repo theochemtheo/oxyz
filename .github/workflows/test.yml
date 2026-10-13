@@ -37,14 +37,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Every other pin here names the exact version its SHA carries, so a
-      # moving major tag cannot drift off it. This one cannot: dtolnay ships
-      # the toolchain channels as force-pushed branches rather than tags, so
-      # `stable` is a branch and each Rust release orphans whatever commit we
-      # pinned — zizmor then fails every run with impostor-commit until all
-      # five uses below are re-pinned to the branch's new tip. Expect that
-      # roughly every six weeks; see
-      # https://github.com/theochemtheo/oxyz/pull/32.
+      # dtolnay publishes `stable` as a force-pushed branch, so each Rust release
+      # orphans this pin and zizmor fails until all five uses are re-pinned.
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           components: clippy, rustfmt
@@ -92,20 +86,12 @@ jobs:
           version: "0.13.0"
           python-version: ${{ matrix.python }}
       - run: uv sync --extra ase
-      # OXYZ_TEST_TIER asserts this environment really is complete (see the
-      # tier canary in tests/test_optional_deps.py). Without it, an optional
-      # dependency silently failing to install turns golden tests into skips and
-      # the matrix stays green over less than it appears to cover.
+      # Fails the run if an optional dependency is missing rather than skipping.
       - run: uv run pytest
         env:
           OXYZ_TEST_TIER: full
 
-  # One wheel, built once, for every tier below. The tiers install this artifact
-  # instead of building their own, which is what lets them run with no Rust
-  # toolchain at all, and means they exercise the same abi3 wheel a user gets.
-  # The cp312-abi3 tag comes from the `abi3-py312` feature rather than from the
-  # interpreter that builds it, so this single file installs on every version in
-  # the tier matrix.
+  # Built once: the tiers need no Rust toolchain and test the wheel users get.
   build-wheel:
     runs-on: ubuntu-latest
     permissions:
@@ -126,24 +112,11 @@ jobs:
           name: tier-wheel
           path: dist
 
-  # Deliberately incomplete dependency environments. The optional-target import
-  # guards, and the tests asserting the messages they raise, only mean anything
-  # where the optional dependency is genuinely absent — which never happens in
-  # the `python` matrix above, so those guards went years without being
-  # exercised in the state they exist for. Backed by the `test`/`s3-test` groups
-  # in pyproject.toml, with the optional dependencies themselves installed as
-  # the published extras, the way a user would get them.
-  #
-  # `include:` rather than a cross-product: a tier varies the dependency axis,
-  # and the OS/version axis is already covered above. Every tier sits on 3.12,
-  # the abi3 floor, so a red tier means a dependency-surface bug rather than a
-  # version bug. The last entry is the one exception — base on the newest
-  # supported interpreter, which is what tests that the single cp312-abi3 wheel
-  # really does load above its own floor.
+  # Deliberately incomplete environments, so the optional-target import guards
+  # run with their dependency absent. Tiers sit on the abi3 floor, except `base`
+  # on the newest Python to check the wheel loads above it.
   tiers:
-    # Named explicitly: without this the `sync` matrix value is appended to the
-    # generated job name, so the status check reads
-    # `tiers (s3, 3.12, --group s3-test --extra s3)`.
+    # Keeps `sync` out of the generated check name.
     name: tiers (${{ matrix.tier }}, ${{ matrix.python }})
     needs: build-wheel
     runs-on: ubuntu-latest
@@ -177,21 +150,13 @@ jobs:
         with:
           name: tier-wheel
           path: dist
-      # --no-install-project leaves the extension unbuilt: uv's cache-keys watch
-      # the Rust sources and would rebuild it, making the artifact pointless.
-      # Dependency versions still come from uv.lock, so a tier cannot drift onto
-      # a different pytest than the rest of CI — which is exactly how pytest
-      # 9.1's importorskip change would have slipped in unnoticed.
+      # --no-install-project: cache-keys would otherwise rebuild the extension.
       - run: uv sync --no-default-groups --group test $SYNC_ARGS --no-install-project
         env:
           SYNC_ARGS: ${{ matrix.sync }}
-      # --no-deps: the wheel must not drag in the optional dependencies this
-      # tier omits on purpose.
+      # --no-deps: the wheel must not pull in extras this tier omits.
       - run: uv pip install --no-deps dist/*.whl
-      # --no-sync: `uv run` re-syncs by default, which would reinstall the
-      # project over the wheel just installed. The explicit path and empty
-      # addopts drop --doctest-modules and the src/oxyz testpath, which are a
-      # full-dependency surface (see [tool.pytest.ini_options]).
+      # --no-sync keeps the installed wheel; the empty addopts skip the doctests.
       - run: uv run --no-sync pytest tests -o addopts=""
         env:
           OXYZ_TEST_TIER: ${{ matrix.tier }}
@@ -217,13 +182,7 @@ jobs:
         with:
           version: "0.13.0"
           python-version: "3.13"
-      # The full dependency set, deliberately, and load-bearing: the floors in
-      # scripts/coverage.sh are calibrated against a run where every optional
-      # target is importable. Trimming this to a leaner group selection would
-      # stop measuring those modules and drop the number, inviting the floors to
-      # be lowered to match. The tiers deliberately do not contribute here —
-      # they never pass --cov, because a partial run is not a coverage figure.
-      # OXYZ_TEST_TIER=full makes an incomplete environment fail loudly instead.
+      # The full set: the coverage floors are calibrated against it.
       - run: uv sync --extra ase
       - run: bash scripts/coverage.sh
         env:
@@ -242,23 +201,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh pr comment "${{ github.event.pull_request.number }}" --edit-last --create-if-none --body-file coverage/summary.md
 
-  # Always-running fan-in: the single required status check for this workflow,
-  # mirroring `wheels-gate` in wheels.yml. A ruleset that names matrix contexts
-  # directly has to be hand-edited for every reshape, and gets it wrong in both
-  # directions — a renamed entry strands a required check that will never report
-  # again, and a new one arrives unprotected. Behind this gate the matrices are
-  # free to change shape, so adding a Python version or a tier stays a one-line
-  # change to this file.
-  #
-  # `needs` is now the one place where "is this job protected?" is answered, so
-  # a new job must be added here to be gated at all. Skipped counts as passing
-  # (that is what lets conditional jobs work), which means a job skipped by a
-  # broken `if:` also passes — the same trade-off wheels-gate already accepts.
-  #
-  # That is also why `build-wheel` is listed even though nothing here inspects
-  # it directly: a job whose `needs` dependency fails is reported as *skipped*,
-  # not failed, so listing only `tiers` would let a broken wheel build through
-  # as a pass. Every job in this file belongs here, upstream ones included.
+  # The one required check. Every job in this file must be in `needs`: a job
+  # whose dependency fails reports as skipped, which this gate counts as passing.
   test-gate:
     needs:
       [zizmor, pre-push-suite, rust, python, build-wheel, tiers, coverage]

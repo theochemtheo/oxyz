@@ -106,10 +106,7 @@ stages = ["pre-commit", "pre-push"]
 [[repos.hooks]]
 id = "stubtest"
 name = "stubtest (_rust.pyi vs compiled module)"
-# Compares the hand-written _rust stub against the compiled extension, catching
-# stub drift (a wrong signature/default) that ty cannot see. Needs the built
-# module, so it runs at pre-push alongside the other compiled-module hooks; the
-# allowlist holds only irreducible PyO3/stubtest mismatches.
+# Catches stub drift ty cannot see; needs the built module.
 language = "system"
 entry = "uv run python -m mypy.stubtest oxyz._rust --allowlist stubtest-allowlist.txt"
 pass_filenames = false
@@ -119,8 +116,7 @@ stages = ["pre-push"]
 [[repos.hooks]]
 id = "zizmor"
 name = "zizmor (GitHub Actions audit)"
-# Mirrors the CI zizmor job; the wrapper supplies a GitHub token so the online
-# audits (which catch drifted action pins) run locally, not CI-only.
+# The wrapper supplies a GitHub token for the online audits.
 language = "system"
 entry = "bash scripts/zizmor.sh"
 pass_filenames = false
@@ -158,8 +154,6 @@ stages = ["pre-push"]
 id = "python-test"
 name = "python tests"
 language = "system"
-# No explicit rebuild: uv cache-keys (see pyproject.toml) rebuild the
-# extension in release whenever Rust sources change — one writer, one profile.
 entry = "uv run pytest"
 pass_filenames = false
 always_run = true
