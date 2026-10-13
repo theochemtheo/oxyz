@@ -25,4 +25,4 @@ else
         "login'); online audits are skipped locally — CI runs them with a token." >&2
 fi
 
-exec uvx zizmor@1.26.1 .github/
+exec uvx zizmor@1.30.1 .github/
