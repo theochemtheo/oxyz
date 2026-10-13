@@ -29,6 +29,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Programming Language :: Rust",
     "Topic :: Scientific/Engineering :: Chemistry",
     "Topic :: Scientific/Engineering :: Physics",
@@ -106,12 +107,8 @@ dev = [
 [tool.uv]
 # Pinned exactly, and matched by the `version:` on every setup-uv step: the
 # lockfile is written by one uv version, so CI must not float onto another.
-required-version = "==0.12.17"
-# Pull torch from PyPI's CPU index everywhere except macOS, whose PyPI wheels
-# are already CPU-only; this keeps Linux/Windows CI off the default CUDA build.
-sources = { torch = [
-    { index = "pytorch-cpu", marker = "sys_platform != 'darwin'" },
-] }
+required-version = "==0.13.0"
+sources = { torch = { index = "pytorch-cpu" } }
 # Rebuild the editable extension (release, via maturin PEP517) whenever the
 # Rust sources change, so `uv run` never tests or benchmarks a stale build.
 cache-keys = [
