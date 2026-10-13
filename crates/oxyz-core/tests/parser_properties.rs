@@ -1,7 +1,5 @@
-//! Property tests: the parser must never panic, whatever the input.
-//! Malformed input must surface as `Err`, not as a crash or an absurd
-//! allocation. Both the streaming parser and the structural scan are driven,
-//! since they read count lines independently.
+//! Property tests: no input makes the parser or the scans panic or
+//! over-allocate.
 
 use std::io::Cursor;
 
@@ -17,8 +15,6 @@ fn parse_all(input: &str) {
 }
 
 fn scan_all(input: &str) {
-    // Both scan paths read count lines the same way; the volume path also reads
-    // each comment line. Neither may panic, whatever the input.
     let _ = scan_frames(Cursor::new(input.as_bytes()));
     let _ = scan_frames_with_volume(Cursor::new(input.as_bytes()));
 }
@@ -30,9 +26,7 @@ proptest! {
         scan_all(&input);
     }
 
-    /// The volume scan is the plain scan plus per-frame volumes: it must agree
-    /// on the structural entries (offsets, lines, counts) for any input that
-    /// scans at all, succeeding or failing identically.
+    /// The volume scan agrees with the plain scan on structure, and fails alike.
     #[test]
     fn volume_scan_entries_match_plain_scan(input in ".*") {
         let plain = scan_frames(Cursor::new(input.as_bytes()));
@@ -55,9 +49,8 @@ proptest! {
         }
     }
 
-    /// The declared atom count is untrusted: huge values (up to usize::MAX,
-    /// the `n_atoms + 1` overflow site) must not panic or pre-allocate
-    /// proportionally, in either the parser or the scan.
+    /// A huge declared atom count, up to usize::MAX, neither panics nor
+    /// pre-allocates.
     #[test]
     fn never_panics_on_declared_atom_counts(count in any::<u64>(), body in "[ -~\n]{0,200}") {
         let input = format!("{count}\nProperties=species:S:1:pos:R:3\n{body}");
@@ -81,8 +74,7 @@ proptest! {
 }
 
 proptest! {
-    // Projection never panics and always yields exactly the plan's column shape
-    // (never over-allocating): each output column has n_atoms * width cells.
+    // Projection yields exactly the plan's shape: n_atoms * width cells per column.
     #[test]
     fn projection_yields_plan_shape_without_panic(
         n_atoms in 0usize..8,
@@ -115,10 +107,8 @@ proptest! {
 }
 
 proptest! {
-    // Projection of a frame with arbitrary columns (names that may or may not
-    // match the plan, and any kind/width) never panics and still yields exactly
-    // the plan's shape. Every plan column is optional and REAL-fillable, so the
-    // frame is never dropped, whatever the input columns were.
+    // Any input columns project to the plan's shape. Every plan column is
+    // optional and fillable, so no frame drops.
     #[test]
     fn projection_arbitrary_frame_never_panics(
         n_atoms in 0usize..6,
@@ -167,9 +157,7 @@ proptest! {
     }
 }
 
-/// A plausible comment line: some well-formed key=value pairs, then one
-/// corrupted token spliced in. Exercises the KV parser's error paths, not
-/// just uniform-random bytes.
+/// Well-formed key=value pairs with one corrupted token spliced in.
 fn corrupt_comment_line() -> impl Strategy<Value = String> {
     let good_pair = prop_oneof![
         Just("energy=-1.0".to_string()),
@@ -193,8 +181,7 @@ fn corrupt_comment_line() -> impl Strategy<Value = String> {
 }
 
 proptest! {
-    /// Corrupt comment lines never panic the parser or the scans. When a frame
-    /// errors, the error names its frame index (never a bare, frame-less error).
+    /// Corrupt comment lines never panic, and errors name their frame.
     #[test]
     fn corrupt_comment_lines_never_panic(comment in corrupt_comment_line()) {
         let input = format!("1\n{comment}\nH 0.0 0.0 0.0\n");
@@ -209,8 +196,7 @@ proptest! {
     }
 }
 
-/// A structured Properties descriptor: valid-ish triples plus injected
-/// malformations (bad kind letter, non-numeric width, missing field).
+/// Properties triples with injected malformations.
 fn malformed_descriptor() -> impl Strategy<Value = String> {
     let triple = prop_oneof![
         Just("species:S:1".to_string()),
@@ -224,9 +210,8 @@ fn malformed_descriptor() -> impl Strategy<Value = String> {
 }
 
 proptest! {
-    /// Malformed descriptors and ragged atom rows surface as Err (never a
-    /// panic), and any error names frame 0. Row width is chosen independently
-    /// of the declared widths, so column-count mismatches are covered.
+    /// Malformed descriptors and ragged rows are errors naming frame 0. Row width
+    /// is independent of the declared widths.
     #[test]
     fn malformed_descriptors_and_ragged_rows_never_panic(
         descriptor in malformed_descriptor(),
@@ -242,8 +227,7 @@ proptest! {
         for result in FrameIter::new(Cursor::new(input.as_bytes())) {
             if let Err(error) = result {
                 prop_assert_eq!(error.frame_index(), Some(0));
-                // A located error also carries a line; a descriptor error may
-                // land on the comment line (2) or an atom row (>=3).
+                // Line 2 is the comment; atom rows start at 3.
                 if let Some(line) = error.line() {
                     prop_assert!(line >= 2);
                 }
@@ -281,8 +265,7 @@ fn build_frame(n_atoms: usize, schema: &[(char, u8)]) -> Frame {
 }
 
 proptest! {
-    /// Pushing frames whose schemas disagree yields a BatchError that names the
-    /// offending frame index — never a panic, never a silent accept.
+    /// Pushing a frame with a different schema names that frame, never panics.
     #[test]
     fn ragged_batch_push_errors_name_the_frame(
         first in frame_schema(),
@@ -297,8 +280,6 @@ proptest! {
             match builder.push(build_frame(n_atoms, schema)) {
                 Ok(()) => {}
                 Err(error) => {
-                    // Every BatchError variant carries the frame position; it
-                    // must be the frame we just pushed (i + 1, after the first).
                     let named = match error {
                         BatchError::ColumnMismatch { frame, .. }
                         | BatchError::MissingColumn { frame, .. }

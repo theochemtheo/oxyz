@@ -1,16 +1,12 @@
-//! The `invalid/` corpus: every malformed fixture must fail to parse with the
-//! right frame index, the file-absolute line, the column where pinpointable,
-//! and actionable wording. Not "an error was raised": the coordinates and
-//! wording are asserted per fixture, so the deterministic regression bank
-//! also guards the error surface.
+//! The `invalid/` corpus: each malformed fixture fails with the expected frame,
+//! line, column where pinpointable, and wording.
 
 use std::path::PathBuf;
 
 use oxyz_core::read_frames;
 
-/// One malformed fixture and its expected error. `column: None` means the
-/// failure has no single pinpointable token (e.g. a short atom row); the
-/// harness then only asserts frame + line + wording.
+/// One malformed fixture and its expected error. `column: None` means no
+/// single token is at fault.
 struct InvalidCase {
     file: &'static str,
     frame_index: usize,
@@ -19,14 +15,8 @@ struct InvalidCase {
     wording: &'static str,
 }
 
-/// Explicit, like `corpus_smoke.rs`: adding a fixture without an entry (or an
-/// entry without a fixture) fails loudly.
-///
-/// Several fixtures share the same `expected 'key=value' pairs` wording: the
-/// comment-line tokeniser reports every malformed key-value shape through one
-/// error variant. That is deliberate — they are distinguished here by their
-/// line and column, so the wording assertion guards message stability while the
-/// coordinates guard that each malformation is located where expected.
+/// Explicit, so a fixture without an entry, or an entry without a fixture,
+/// fails. Several share one message; line and column tell them apart.
 const INVALID: &[InvalidCase] = &[
     InvalidCase {
         file: "dangling_metadata_value.extxyz",

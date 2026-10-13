@@ -1,14 +1,8 @@
 //! Opening a read source through a decompressing layer.
 //!
-//! [`open_decoded`] turns a path into a streaming [`BufRead`], detecting the
-//! codec from the extension (with a magic-byte fallback) or honouring an
-//! explicit [`Compression`]. Everything streams: nothing is decompressed to a
-//! temporary file or held whole in memory.
-//!
-//! Random access is out of scope — a compressed stream is not seekable, so the
-//! seek-based [`IndexedFrames`](crate::extxyz::IndexedFrames) path stays on raw
-//! files. The streaming and parallel readers consume a `BufRead` and so work
-//! unchanged over a decoded source.
+//! Everything streams: nothing is decompressed to a temporary file or held
+//! whole in memory. Compressed sources are not seekable, so random access
+//! stays on raw files.
 
 use std::{
     fs::File,
@@ -27,16 +21,14 @@ use ruzstd::decoding::{FrameDecoder, StreamingDecoder};
 
 use crate::extxyz::{ExtxyzError, Result};
 
-/// A decoded, streaming read source. Boxed so a single type spans every codec.
-/// `Sync` as well as `Send` so the binding can hold one in a `#[pyclass]`.
+/// A decoded, streaming read source. `Sync` so a `#[pyclass]` can hold one.
 pub type DecodedReader = Box<dyn BufRead + Send + Sync>;
 
-/// A raw, undecoded byte source — a file, or a remote stream from the binding.
-/// `Send + Sync` so it can cross into the codec wrappers and the pyclass.
+/// A raw, undecoded byte source: a file, or a remote stream from the binding.
 pub type ByteSource = Box<dyn Read + Send + Sync>;
 
-/// How to interpret a read source. `Infer` reads the extension, falling back to
-/// a magic-byte sniff; the rest force a codec regardless of the name.
+/// How to interpret a read source. `Infer` reads the extension, then sniffs
+/// magic bytes; the rest force a codec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Compression {
     #[default]
@@ -51,9 +43,8 @@ pub enum Compression {
     TarZstd,
 }
 
-/// The concrete codec, after inference. Archive codecs (`Zip`, `Tar`,
-/// `TarGzip`, `TarZstd`) carry members and accept a `member` selector; the
-/// rest are single streams and reject one.
+/// The concrete codec, after inference. Only the archive codecs accept a
+/// `member` selector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Codec {
     Plain,
@@ -86,8 +77,7 @@ impl Codec {
     }
 }
 
-/// The decompressor applied to a tar's byte stream. `Codec::Tar`/`TarGzip`/
-/// `TarZstd` are the only sources of these; nothing else is representable.
+/// The decompressor applied to a tar's byte stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TarInner {
     Plain,
@@ -95,9 +85,8 @@ pub enum TarInner {
     Zstd,
 }
 
-/// Resolve the codec for *writing*. Unlike [`detect`], there are no bytes to
-/// sniff (the file may not exist yet), so `Infer` reads the extension only and
-/// falls back to [`Codec::Plain`] — including for stdout (`-`), which has none.
+/// Resolve the codec for writing: there are no bytes to sniff, so `Infer`
+/// reads the extension only, defaulting to [`Codec::Plain`].
 pub(crate) fn detect_for_write(path: &Path, compression: Compression) -> Codec {
     match compression {
         Compression::None => Codec::Plain,
@@ -113,10 +102,8 @@ pub(crate) fn detect_for_write(path: &Path, compression: Compression) -> Codec {
 
 /// Open `path` as a streaming reader, decompressing per `compression`.
 ///
-/// `member` names one entry inside an archive (`.zip`, `.tar`, `.tar.gz`,
-/// `.tar.zst`); it is rejected for single-stream sources. With no `member`, an
-/// archive must hold exactly one extxyz-looking member (`.xyz`/`.extxyz`),
-/// else the call errors and lists what it found.
+/// `member` names an archive entry and is rejected for single streams. Without
+/// it, an archive must hold exactly one `.xyz`/`.extxyz` member.
 pub fn open_decoded(
     path: &Path,
     compression: Compression,
@@ -160,9 +147,8 @@ pub fn open_decoded(
     }
 }
 
-/// Wrap an already-opened raw byte source in a single-stream codec. Archive
-/// codecs (`Zip`/`Tar`/`TarGzip`/`TarZstd`) are not streams and are rejected —
-/// use [`wrap_zip`] / [`wrap_tar`].
+/// Wrap a raw byte source in a single-stream codec. Archive codecs are
+/// rejected; use [`wrap_zip`] or [`wrap_tar`].
 pub fn wrap_stream(source: ByteSource, codec: Codec) -> Result<DecodedReader> {
     match codec {
         Codec::Plain => Ok(Box::new(BufReader::new(source))),
@@ -176,9 +162,7 @@ pub fn wrap_stream(source: ByteSource, codec: Codec) -> Result<DecodedReader> {
     }
 }
 
-/// Whether `path`, read under `compression`, needs decompression — i.e. is not
-/// a plain seekable file. The random-access reader uses this to refuse a
-/// compressed source up front.
+/// Whether `path`, read under `compression`, needs decompression.
 pub fn is_compressed(path: &Path, compression: Compression) -> Result<bool> {
     Ok(detect(path, compression)? != Codec::Plain)
 }
@@ -217,8 +201,7 @@ pub(crate) fn detect_by_extension(path: &Path) -> Option<Codec> {
     })
 }
 
-/// Magic-byte codec for a head slice (no tar detection — a tar has no magic;
-/// a bare-gzip read of a `.tar.gz` surfaces as a parse error, not corruption).
+/// Magic-byte codec for a head slice. A tar has no magic, so none is detected.
 fn sniff_bytes(head: &[u8]) -> Codec {
     if head.starts_with(&[0x1f, 0x8b]) {
         Codec::Gzip
@@ -231,18 +214,16 @@ fn sniff_bytes(head: &[u8]) -> Codec {
     }
 }
 
-/// Magic-byte fallback for a file whose extension says nothing. A bare `.gz`
-/// magic is reported as `Gzip`, not `TarGzip`: a tar inside cannot be told from
-/// the first bytes, and a plain-gzip read of a tar would surface as a parse
-/// error, not silent corruption.
+/// Magic-byte fallback for an uninformative extension. Gzip is reported as
+/// `Gzip`, not `TarGzip`: a tar inside would surface as a parse error, not
+/// silent corruption.
 fn sniff(path: &Path) -> Result<Codec> {
     let mut head = [0u8; 4];
     let read = File::open(path)?.read(&mut head)?;
     Ok(sniff_bytes(&head[..read]))
 }
 
-/// Codec for a filename and optional leading bytes — the no-I/O detection the
-/// binding uses for a remote source it cannot cheaply reopen.
+/// Codec for a filename and optional leading bytes, without I/O.
 pub fn detect_codec_name(name: &str, head: Option<&[u8]>) -> &'static str {
     let path = Path::new(name);
     if let Some(codec) = detect_by_extension(path) {
@@ -251,14 +232,11 @@ pub fn detect_codec_name(name: &str, head: Option<&[u8]>) -> &'static str {
     head.map_or(Codec::Plain, sniff_bytes).name()
 }
 
-/// Source for the zstd decoder: boxed so the leftover stream can be re-wrapped
-/// (with the peeked byte prepended) to start the next frame.
+/// Boxed so the leftover stream can be re-wrapped with the peeked byte.
 type ZstdSource = Box<dyn Read + Send + Sync>;
 
-/// Streams every frame of a `.zst` file. ruzstd's [`StreamingDecoder`] stops at
-/// the first frame, but a zstd file may concatenate several (`zstd` does this,
-/// as does `cat a.zst b.zst`); this re-creates the decoder at each frame
-/// boundary, mirroring how [`MultiGzDecoder`] reads concatenated gzip members.
+/// Streams every frame of a `.zst` file. ruzstd's [`StreamingDecoder`] stops
+/// after one frame, so the decoder is recreated at each frame boundary.
 struct MultiFrameZstd {
     decoder: Option<StreamingDecoder<ZstdSource, FrameDecoder>>,
 }
@@ -268,8 +246,7 @@ impl MultiFrameZstd {
         Ok(Self::from_source_io(source)?)
     }
 
-    /// The `io::Error` variant, for callers inside the tar pipe whose errors
-    /// travel down an `io::Result` channel.
+    /// The `io::Error` variant, for the tar pipe's `io::Result` channel.
     fn from_source_io(source: ZstdSource) -> io::Result<Self> {
         Ok(MultiFrameZstd {
             decoder: Some(zstd_decoder(source)?),
@@ -283,9 +260,7 @@ fn zstd_decoder(source: ZstdSource) -> io::Result<StreamingDecoder<ZstdSource, F
 
 impl Read for MultiFrameZstd {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
-        // A zero-length read returns 0 without reading; without this guard it
-        // would be read as frame-exhaustion and wrongly advance to the next
-        // frame, dropping a byte.
+        // Otherwise a zero-length read looks like frame exhaustion and drops a byte.
         if out.is_empty() {
             return Ok(0);
         }
@@ -297,8 +272,7 @@ impl Read for MultiFrameZstd {
             if read > 0 {
                 return Ok(read);
             }
-            // Current frame is exhausted. Peek one byte off the leftover source:
-            // nothing left is clean EOF, otherwise another frame follows.
+            // Frame exhausted: one more byte means another frame follows.
             let mut source = self.decoder.take().expect("checked above").into_inner();
             let mut peek = [0u8; 1];
             if source.read(&mut peek)? == 0 {
@@ -315,8 +289,7 @@ pub(crate) fn is_extxyz(name: &str) -> bool {
     lower.ends_with(".xyz") || lower.ends_with(".extxyz")
 }
 
-/// Pick the member to read: the named one if given (else `MemberNotFound`), or
-/// the sole extxyz-looking member (else `NoExtxyzMember` / `AmbiguousArchive`).
+/// Pick the member to read: the named one, or the sole extxyz-looking one.
 fn resolve_member(names: &[String], member: Option<&str>) -> Result<String> {
     if let Some(wanted) = member {
         return names
@@ -341,8 +314,8 @@ fn resolve_member(names: &[String], member: Option<&str>) -> Result<String> {
     }
 }
 
-/// Stream one member of a zip from a seekable source (the central directory is
-/// at the end, so `Seek` is required — a plain stream cannot back this).
+/// Stream one member of a zip. The central directory is at the end, so the
+/// source must seek.
 pub fn wrap_zip<R>(source: R, member: Option<&str>) -> Result<DecodedReader>
 where
     R: Read + Seek + Send + 'static,
@@ -370,10 +343,8 @@ where
     }))
 }
 
-/// Stream one member of a tar, decompressing `inner` first if the tar itself
-/// is wrapped (gzip or zstd). `factory` yields a fresh *raw* tar byte stream on
-/// each call; enumeration and streaming each open one (two passes — a tar has
-/// no central directory).
+/// Stream one member of a tar, decompressing it by `inner` first. `factory`
+/// yields a fresh raw stream per pass: one to enumerate, one to read.
 pub fn wrap_tar<F>(factory: F, member: Option<&str>, inner: TarInner) -> Result<DecodedReader>
 where
     F: Fn() -> io::Result<ByteSource> + Send + 'static,
@@ -452,7 +423,6 @@ fn zip_error(error: zip::result::ZipError) -> ExtxyzError {
     ExtxyzError::Io(io::Error::other(error.to_string()))
 }
 
-/// 64 KiB per chunk handed across the producer/consumer boundary.
 const CHUNK: usize = 64 * 1024;
 
 /// Copy `reader` to the channel in chunks, stopping if the consumer hangs up.
@@ -474,10 +444,8 @@ fn pump<R: Read>(reader: &mut R, tx: &SyncSender<io::Result<Vec<u8>>>) {
     }
 }
 
-/// Run `producer` on its own thread, streaming its bytes back through a bounded
-/// channel. Archive readers (`zip`, `tar`) borrow their archive, so they cannot
-/// be returned directly; the producer owns the archive for its whole lifetime
-/// and the bounded channel gives back-pressure, keeping memory flat.
+/// Run `producer` on its own thread, streaming bytes back over a bounded
+/// channel. Archive readers borrow their archive, so the producer owns it.
 fn spawn_pipe<F>(producer: F) -> DecodedReader
 where
     F: FnOnce(&SyncSender<io::Result<Vec<u8>>>) + Send + 'static,
@@ -487,9 +455,8 @@ where
     let producer_finished = Arc::clone(&finished);
     thread::spawn(move || {
         producer(&tx);
-        // Set before `tx` drops (the consumer only wakes once the channel
-        // closes). A panic in `producer` skips this, turning the otherwise
-        // silent truncation into a surfaced error rather than a short read.
+        // Set before `tx` drops, so a panicking producer surfaces as an error
+        // rather than a short read.
         producer_finished.store(true, Ordering::Release);
     });
     Box::new(BufReader::new(PipeReader {
@@ -500,15 +467,13 @@ where
     }))
 }
 
-/// The consumer end of [`spawn_pipe`]: serves the current chunk, then blocks on
-/// the next. A producer error surfaces here; a closed channel is clean EOF. The
-/// `Receiver` sits behind a `Mutex` only to make the reader `Sync` (single
-/// consumer, so the lock is never contended).
+/// The consumer end of [`spawn_pipe`]. A producer error surfaces here; a
+/// closed channel is EOF. The `Mutex` only makes the reader `Sync`.
 struct PipeReader {
     rx: Mutex<Receiver<io::Result<Vec<u8>>>>,
     current: Cursor<Vec<u8>>,
-    /// Set by the producer thread once it returns normally. A closed channel
-    /// with this unset means the producer aborted (panicked) mid-stream.
+    /// Set when the producer returns normally; unset on a closed channel means
+    /// it panicked.
     finished: Arc<AtomicBool>,
     done: bool,
 }

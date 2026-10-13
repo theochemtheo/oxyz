@@ -1,9 +1,7 @@
-//! Parser throughput baseline. Run with `cargo bench -p oxyz-core`.
+//! Parser throughput. Run with `cargo bench -p oxyz-core`.
 //!
-//! Input is generated in memory from a fixed seed: identical bytes every run
-//! (comparable numbers), but varied within the file so the parser doesn't
-//! benchmark against one frame repeated. Parsing from memory keeps disk I/O
-//! out of the measurement.
+//! Input is generated in memory from a fixed seed, so runs are comparable and
+//! disk I/O is excluded.
 
 use std::{fmt::Write as _, hint::black_box, io::Cursor};
 
@@ -12,8 +10,7 @@ use oxyz_core::{FrameIter, read_frames_parallel, scan_frames};
 
 const SPECIES: &[&str] = &["H", "C", "N", "O", "Si"];
 
-/// Deterministic xorshift64 PRNG; enough for data generation, no `rand`
-/// dependency needed.
+/// Deterministic xorshift64, avoiding a `rand` dependency.
 struct XorShift64(u64);
 
 impl XorShift64 {
@@ -91,15 +88,14 @@ fn scan_all(text: &str) -> usize {
 fn bench_parse(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse");
 
-    // Many small frames: stresses per-frame overhead (header parsing,
-    // metadata typing, column setup).
+    // Many small frames: per-frame overhead.
     let small = trajectory(2_000, 16, 64, 0x5EED);
     group.throughput(Throughput::Bytes(small.len() as u64));
     group.bench_function("many_small_frames", |b| {
         b.iter(|| black_box(parse_all(&small)))
     });
 
-    // Few large frames: stresses the per-atom hot loop.
+    // Few large frames: the per-atom loop.
     let large = trajectory(4, 100_000, 100_001, 0x5EED2);
     group.throughput(Throughput::Bytes(large.len() as u64));
     group.bench_function("large_frames", |b| b.iter(|| black_box(parse_all(&large))));
@@ -107,8 +103,7 @@ fn bench_parse(c: &mut Criterion) {
     group.finish();
 }
 
-/// The structural scan must stay far above parse throughput to earn its
-/// keep; this is the measurement gate for reaching for `memchr`.
+/// The structural scan, which must stay well above parse throughput.
 fn bench_scan(c: &mut Criterion) {
     let mut group = c.benchmark_group("scan");
 
@@ -125,10 +120,7 @@ fn bench_scan(c: &mut Criterion) {
     group.finish();
 }
 
-/// Thread-count scaling of the parallel bulk read (includes the scan).
-/// This is the measurement gate for mmap and scan/parse pipelining: it
-/// shows where per-worker buffered reads or the serial scan become the
-/// bottleneck.
+/// Thread-count scaling of the parallel bulk read, scan included.
 fn bench_parallel(c: &mut Criterion) {
     let mut group = c.benchmark_group("parallel_read");
 

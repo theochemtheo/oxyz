@@ -1,18 +1,11 @@
 //! Byte-offset frame index: the result of a structural scan.
-//!
-//! An index records where each frame starts and how many atoms it declares —
-//! nothing else is parsed. It is the foundation for random access, negative
-//! indexing, batch preallocation, and (later) parallel parsing. Statistics
-//! are derived from the stored entries on demand, never accumulated during
-//! the scan. In-memory only; an on-disk cache is a separate, future feature.
 
 /// One frame's structural facts: where it starts, what its count line says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrameEntry {
     /// Byte offset of the frame's count line.
     pub offset: u64,
-    /// 1-based file line number of the count line, so seek-based parses can
-    /// report the same line numbers as a streamed read.
+    /// 1-based file line of the count line, for seek-based diagnostics.
     pub line: usize,
     pub n_atoms: usize,
 }
@@ -20,10 +13,8 @@ pub struct FrameEntry {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct FrameIndex {
     entries: Vec<FrameEntry>,
-    /// Per-frame cell volume `|det(Lattice)|`, present only for a scan run with
-    /// volume on (see `scan_frames_with_volume`); `NaN` for a frame with no
-    /// `Lattice`. `None` means volume was not requested. Held parallel to
-    /// `entries` rather than on `FrameEntry`, which stays `Copy + Eq`.
+    /// Per-frame `|det(Lattice)|` when the scan measured it; `NaN` for a frame
+    /// with no `Lattice`. Kept outside `FrameEntry` so that stays `Copy + Eq`.
     volumes: Option<Vec<f64>>,
 }
 

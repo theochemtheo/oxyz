@@ -1,6 +1,4 @@
-//! Random-access reads through `IndexedFrames`: the batch, projected-batch,
-//! volume-scan, and error paths beyond the streamed-parity check in
-//! `index_scan.rs`.
+//! Random-access reads through `IndexedFrames`.
 
 use std::path::PathBuf;
 
@@ -8,9 +6,8 @@ use oxyz_core::model::ColumnKind;
 use oxyz_core::project::{Fill, PlanColumn, ProjectionPlan};
 use oxyz_core::{BatchBuilder, ExtxyzError, IndexedFrames, read_frames};
 
-// Three frames, atom counts 2/1/3, cubic cells of volume 8/27/64, and a
-// `charge` column that rides frames 0 and 2 but not 1 — so a plain batch of
-// {0,2} is well-formed while a projection over all three fills frame 1.
+// `charge` is in frames 0 and 2 only, so {0, 2} batches and a projection
+// over all three fills frame 1.
 const TRAJ: &str = "\
 2
 Lattice=\"2 0 0 0 2 0 0 0 2\" Properties=species:S:1:pos:R:3:charge:R:1 energy=-1.0 pbc=\"T T T\"
@@ -38,8 +35,7 @@ fn data(name: &str) -> PathBuf {
         .join(name)
 }
 
-// A projection keeping pos and charge, charge filled with a concrete value so
-// a filled column compares equal across serial/parallel (NaN != NaN).
+// A concrete fill, as NaN != NaN would break the serial/parallel comparison.
 fn charge_plan() -> ProjectionPlan {
     ProjectionPlan {
         columns: vec![

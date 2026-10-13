@@ -1,12 +1,8 @@
 //! Projecting a frame onto a fixed, declared schema.
 //!
-//! A validation gate (does this file match what I expect) can only report;
-//! projection *transforms* — every output frame ends up with exactly the plan's
-//! declared fields, in declaration order: undeclared fields dropped, absent
-//! optionals filled, wrong-kind fields flagged. Policy (raise / warn / drop)
-//! lives in the Python surface; this module is policy-free — it reshapes and
-//! reports what it saw, and marks a frame `dropped` when a required field has no
-//! fill to hold the fixed shape.
+//! Each output frame has exactly the plan's fields, in declaration order. The
+//! module reshapes and reports; policy (raise, warn, drop) is the Python
+//! layer's. A frame is marked `dropped` when a required field has no fill.
 
 use crate::model::{Column, ColumnData, ColumnKind, Frame, Value};
 use compact_str::CompactString;
@@ -27,8 +23,7 @@ pub struct PlanColumn {
     pub kind: ColumnKind,
     pub width: usize,
     pub required: bool,
-    /// `Some` when the field can be filled if absent/wrong; `None` marks a
-    /// required field with no null (drop rather than fabricate one).
+    /// `None` marks a required field with no fill: drop rather than fabricate.
     pub fill: Option<Fill>,
 }
 
@@ -72,8 +67,7 @@ pub struct Deviation {
     pub found: Option<String>,
 }
 
-/// The outcome of projecting one frame. When `dropped`, `frame` is incomplete
-/// and the caller discards it (having consumed `deviations` for reporting).
+/// The outcome of projecting one frame. When `dropped`, `frame` is incomplete.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Projected {
     pub frame: Frame,
@@ -96,9 +90,7 @@ fn materialise_column(kind: ColumnKind, width: usize, n_atoms: usize, fill: &Fil
         (ColumnKind::Str, Fill::Str(x)) => {
             ColumnData::Str(vec![CompactString::from(x.as_str()); count])
         }
-        // The compiler in Python pairs kind with a like-kinded fill; a mismatch
-        // here is a plan-construction bug, so fall back to the declared kind's
-        // zero rather than panicking on hostile input.
+        // A kind/fill mismatch is a plan bug; fall back rather than panic.
         (ColumnKind::Real, _) => ColumnData::Real(vec![f64::NAN; count]),
         (ColumnKind::Int, _) => ColumnData::Int(vec![0; count]),
         (ColumnKind::Bool, _) => ColumnData::Bool(vec![false; count]),
@@ -117,8 +109,7 @@ fn value_kind_shape(value: &Value) -> (ColumnKind, Option<usize>) {
         Value::IntArray(v) => (ColumnKind::Int, Some(v.len())),
         Value::BoolArray(v) => (ColumnKind::Bool, Some(v.len())),
         Value::StrArray(v) => (ColumnKind::Str, Some(v.len())),
-        // Flattened length, matching the batch's own treatment of 2-D
-        // metadata: shape is not part of this typing contract, only width.
+        // Flattened, as in the batch: only width is typed, not shape.
         Value::RealArray2D { rows, cols, .. } => (ColumnKind::Real, Some(rows * cols)),
         Value::IntArray2D { rows, cols, .. } => (ColumnKind::Int, Some(rows * cols)),
         Value::BoolArray2D { rows, cols, .. } => (ColumnKind::Bool, Some(rows * cols)),
@@ -146,8 +137,7 @@ fn materialise_value(kind: ColumnKind, shape: Option<usize>, fill: &Fill) -> Val
         (Some(n), ColumnKind::Str, Fill::Str(x)) => {
             Value::StrArray(vec![CompactString::from(x.as_str()); n])
         }
-        // Kind/fill mismatch is a plan-construction bug; produce a like-kinded
-        // zero rather than panic (see materialise_column).
+        // A kind/fill mismatch is a plan bug; fall back rather than panic.
         (None, ColumnKind::Real, _) => Value::Real(f64::NAN),
         (None, ColumnKind::Int, _) => Value::Int(0),
         (None, ColumnKind::Bool, _) => Value::Bool(false),
@@ -206,10 +196,8 @@ fn project_metadata(
     metadata
 }
 
-/// Outcome of looking a plan field up in a frame that may hold the name more
-/// than once (the model preserves duplicate keys): a conforming occurrence if
-/// any, else the first non-conforming one, else absent. Preferring a conforming
-/// occurrence stops a stray duplicate from spuriously reporting a mismatch.
+/// A plan field looked up in a frame that may repeat the name: a conforming
+/// occurrence if any, so a stray duplicate does not report a mismatch.
 enum Lookup<T> {
     Conforming(T),
     Mismatch(T),
@@ -242,14 +230,9 @@ fn lookup_metadata<'a>(frame: &'a Frame, pm: &PlanMetadata) -> Lookup<&'a Value>
     mismatch.map_or(Lookup::Absent, Lookup::Mismatch)
 }
 
-/// Project `frame` onto `plan`: every output field is exactly the plan's, in
-/// declaration order. Undeclared fields dropped; absent optionals filled;
-/// absent-required and wrong-kind/width fields reported (filled if the plan
-/// carries a fill, else the frame is marked `dropped`).
-///
-/// Fill widths (`n_atoms * width`, and array `shape`) come from the plan, which
-/// Python builds from a `SchemaSpec`; the core trusts them (a hostile plan with
-/// an absurd width could over-allocate, but no *file* can produce one).
+/// Project `frame` onto `plan`: undeclared fields dropped, absent optionals
+/// filled, and missing or wrong-kind fields reported. Fill widths come from the
+/// plan and are trusted.
 pub fn project_frame(frame: &Frame, plan: &ProjectionPlan) -> Projected {
     let mut deviations = Vec::new();
     let mut dropped = false;
@@ -261,9 +244,7 @@ pub fn project_frame(frame: &Frame, plan: &ProjectionPlan) -> Projected {
         match lookup_column(frame, pc) {
             Lookup::Conforming(existing) => columns.push(existing.clone()),
             found => {
-                // Absent, or present with the wrong kind/width. Record the
-                // divergence (required-absent = Missing, present-wrong =
-                // Mismatch); optional-absent is silent.
+                // Optional-absent is silent.
                 match found {
                     Lookup::Mismatch(existing) => deviations.push(Deviation {
                         axis: Axis::Column,

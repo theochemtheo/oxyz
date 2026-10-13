@@ -21,9 +21,8 @@ use oxyz_core::{
     wrap_tar, wrap_zip, write_frames, write_frames_parallel,
 };
 
-/// Map the Python `compression` string to the core selector. The tar spellings
-/// match `Codec::name()`, so a value a caller passes here is the value oxyz
-/// prints when it reports a detected codec.
+/// Map the Python `compression` string to the core selector; tar spellings
+/// match `Codec::name()`.
 fn parse_compression(name: &str) -> PyResult<Compression> {
     Ok(match name {
         "infer" => Compression::Infer,
@@ -48,10 +47,8 @@ fn open_reader(path: &Path, compression: &str, member: Option<&str>) -> PyResult
     open_decoded(path, parse_compression(compression)?, member).map_err(extxyz_error_to_py)
 }
 
-/// Streaming iterator: one frame parsed and converted per `__next__`.
-///
-/// Owns the file handle; it closes when the object is dropped. The inner
-/// iterator is fused — after an error or EOF it only raises StopIteration.
+/// Streaming iterator: one frame parsed and converted per `__next__`. Owns
+/// the file handle; fused after an error or EOF.
 #[pyclass]
 struct FrameIter {
     inner: oxyz_core::FrameIter<DecodedReader>,
@@ -72,8 +69,7 @@ impl FrameIter {
     }
 
     fn __next__<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
-        // Parse with the interpreter detached (GIL released, or the
-        // free-threaded equivalent) — only the numpy conversion needs it.
+        // Only the numpy conversion needs the interpreter.
         match py.detach(|| self.inner.next()) {
             None => Ok(None),
             Some(Ok(frame)) => frame_to_pydict(py, frame).map(Some),
@@ -94,9 +90,8 @@ impl FrameIter {
     }
 }
 
-/// Structurally scan the file: `{"offsets": ndarray, "n_atoms": ndarray}`.
-/// With `with_volume=True` the result also carries `"volumes"`: per-frame
-/// `|det(Lattice)|`, `NaN` where a frame has no `Lattice`.
+/// Structurally scan the file: `{"offsets", "n_atoms"}` arrays, plus
+/// `"volumes"` (`NaN` without a `Lattice`) when `with_volume=True`.
 #[pyfunction]
 #[pyo3(signature = (path, with_volume=false, compression="infer", member=None))]
 fn scan<'py>(
@@ -124,8 +119,7 @@ fn scan_index_to_pydict<'py>(
     index: &oxyz_core::index::FrameIndex,
 ) -> PyResult<Bound<'py, PyDict>> {
     let offsets: Vec<u64> = index.entries().iter().map(|entry| entry.offset).collect();
-    // Atom counts as isize (np.intp) so user arithmetic with them does not
-    // promote to float64 the way an unsigned dtype would; byte offsets stay u64.
+    // isize (np.intp): an unsigned dtype would promote user arithmetic to float64.
     let n_atoms: Vec<isize> = index
         .entries()
         .iter()
@@ -200,8 +194,7 @@ fn read_batch_reader<'py>(
     batch_to_pydict(py, batch)
 }
 
-/// Random-access reader: scans on construction, then `get(i)` seeks and
-/// parses single frames in any order.
+/// Random-access reader: scans on construction, then `get(i)` parses one frame.
 #[pyclass]
 struct IndexedFrames {
     inner: oxyz_core::IndexedFrames,
@@ -228,9 +221,8 @@ impl IndexedFrames {
         self.inner.len()
     }
 
-    /// Per-frame cell volume `|det(Lattice)|` from the scan, or `None` when the
-    /// reader was opened without `with_volume`. `NaN` for a frame with no
-    /// `Lattice`.
+    /// Per-frame `|det(Lattice)|`, or `None` unless opened `with_volume`. `NaN`
+    /// for a frame with no `Lattice`.
     #[getter]
     fn volumes<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<f64>>> {
         self.inner
@@ -239,8 +231,7 @@ impl IndexedFrames {
             .map(|volumes| volumes.to_vec().into_pyarray(py))
     }
 
-    /// Declared atom count per frame, from the scan done at construction.
-    /// Batch planning reads this instead of scanning the file again.
+    /// Declared atom count per frame, from the construction scan.
     #[getter]
     fn n_atoms<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<isize>> {
         let counts: Vec<isize> = self
@@ -367,11 +358,8 @@ fn read_first_frame<'py>(
     frame_to_pydict(py, frame)
 }
 
-/// Read every frame, as a list of per-frame dicts.
-///
-/// `threads=None` parses on every core; `threads=1` is the exact serial
-/// streaming read. Either way the file is read in a single pass; output and
-/// errors are identical.
+/// Read every frame, as a list of per-frame dicts. `threads=None` parses on
+/// every core, `threads=1` serially; output and errors are identical.
 #[pyfunction]
 #[pyo3(signature = (path, threads=None, compression="infer", member=None))]
 fn read_frames<'py>(
@@ -397,11 +385,8 @@ fn read_frames<'py>(
     PyList::new(py, dicts)
 }
 
-/// Assemble a batch from already-parsed frame dicts (the inverse of reading a
-/// batch from a file). Backs the Python surface's validate-mode batch path,
-/// which parses and validates frames itself, then concatenates the lot. An
-/// empty list yields the empty batch; a non-uniform set raises `ParseError`,
-/// exactly as the file-backed batch readers do.
+/// Assemble a batch from parsed frame dicts. An empty list yields the empty
+/// batch; a non-uniform set raises `ParseError`, as the file readers do.
 #[pyfunction]
 fn build_batch<'py>(
     py: Python<'py>,
@@ -419,8 +404,7 @@ fn build_batch<'py>(
             }
             match builder.finish() {
                 Ok(batch) => Ok(batch),
-                // An empty set is "no frames", not an error (matches the
-                // whole-file readers); a real assembly error propagates.
+                // An empty set is no frames, not an error, as in the whole-file readers.
                 Err(oxyz_core::BatchError::Empty) => Ok(Batch {
                     offsets: vec![0],
                     columns: Vec::new(),
@@ -432,15 +416,6 @@ fn build_batch<'py>(
         .map_err(extxyz_error_to_py)?;
     batch_to_pydict(py, batch)
 }
-
-// ---- Schema projection -------------------------------------------------------
-//
-// A projection plan crosses the binding as a Python tuple `(columns, metadata)`;
-// `build_plan` reads it into the core `ProjectionPlan`. Each projected read
-// entry mirrors its plain counterpart but returns `(FrameData | None,
-// deviations)` per frame — `None` data marks a dropped frame, which the Python
-// surface turns into raise / warn / drop policy. The plain read paths are left
-// byte-for-byte unchanged.
 
 fn kind_from_letter(letter: &str) -> PyResult<ColumnKind> {
     match letter {
@@ -471,10 +446,9 @@ fn opt_fill(kind: ColumnKind, obj: Bound<'_, PyAny>) -> PyResult<Option<Fill>> {
     }
 }
 
-/// Read a projection plan from the crossing tuple `(columns, metadata)`. Each
-/// column is `(name, letter, width, required, fill | None)`; each metadata entry
-/// is `(name, letter, shape, required, fill | None)` where shape `()` is a
-/// scalar and `(n,)` an array of length n.
+/// Read a projection plan from `(columns, metadata)`. A column is `(name,
+/// letter, width, required, fill | None)`; a metadata entry is `(name, letter,
+/// shape, required, fill | None)`, with shape `()` for a scalar.
 fn build_plan(py_plan: &Bound<'_, PyTuple>) -> PyResult<ProjectionPlan> {
     let columns_obj = py_plan.get_item(0)?;
     let metadata_obj = py_plan.get_item(1)?;
@@ -556,9 +530,8 @@ fn deviations_to_py<'py>(
     Ok(list)
 }
 
-/// Build the `(FrameData | None, deviations)` tuple from an already-projected
-/// frame (projection runs with the GIL released; only this conversion needs it).
-/// A `None` first element marks a dropped frame.
+/// The `(FrameData | None, deviations)` tuple for a projected frame; `None`
+/// marks a dropped frame.
 fn projected_to_py(py: Python<'_>, projected: Projected) -> PyResult<Bound<'_, PyTuple>> {
     let devs = deviations_to_py(py, &projected.deviations)?;
     let data: Bound<'_, PyAny> = if projected.dropped {
@@ -732,14 +705,12 @@ impl FrameIterProjected {
     }
 }
 
-/// Gather frames into one batch. `indices=None` reads the whole file in file
-/// order; a list gathers those frames (request order, repeats allowed).
+/// Gather frames into one batch: the whole file when `indices=None`, else
+/// those frames (request order, repeats allowed).
 ///
-/// Single pass: the file is read once, and (for a selection) only as far as
-/// the last requested frame — bytes past it are never inspected. `threads=None`
-/// parses on every core; `threads=1` is fully serial. The resulting batch is
-/// identical either way (on a malformed whole-file read the two may report
-/// different frames' errors).
+/// Reads nothing past the last requested frame. `threads=None` parses on every
+/// core, `threads=1` serially; the batch is identical, though a malformed
+/// whole-file read may report a different frame's error.
 #[pyfunction]
 #[pyo3(signature = (path, indices=None, threads=None, compression="infer", member=None))]
 fn read_batch<'py>(
@@ -762,9 +733,8 @@ fn read_batch<'py>(
     batch_to_pydict(py, batch)
 }
 
-/// Convert a `ProjectedBatch` to the Python triple `(BatchData, survivors,
-/// reports)`: the surviving frames' batch, their file indices, and a
-/// `(index, deviations)` report per requested frame.
+/// `(BatchData, survivors, reports)`: the surviving frames' batch, their file
+/// indices, and an `(index, deviations)` report per requested frame.
 fn projected_batch_to_py<'py>(
     py: Python<'py>,
     projected: oxyz_core::ProjectedBatch,
@@ -904,9 +874,8 @@ impl BatchIterProjected {
     }
 }
 
-/// Infer the file's schema as one nested dict — counts, per-column and
-/// per-key variant lists with unification verdicts, consistency, and the
-/// rendered report — for the Python `Schema` dataclasses to wrap.
+/// Infer the file's schema as one nested dict for the Python `Schema`
+/// dataclasses to wrap.
 #[pyfunction]
 #[pyo3(signature = (path, compression="infer", member=None))]
 fn infer_schema<'py>(
@@ -922,9 +891,8 @@ fn infer_schema<'py>(
     schema_to_pydict(py, &schema)
 }
 
-/// Whether `path` would be read through a decompressing layer (`True`) or as a
-/// plain file (`False`), under the given `compression`. The Python layer uses
-/// this to refuse random-access batch strategies on a non-seekable source.
+/// Whether `path` would be read through a decompressing layer under
+/// `compression`, so random-access batch strategies can refuse it.
 #[pyfunction]
 #[pyo3(signature = (path, compression="infer"))]
 fn is_compressed(path: PathBuf, compression: &str) -> PyResult<bool> {
@@ -965,7 +933,7 @@ fn schema_to_pydict<'py>(py: Python<'py>, schema: &Schema) -> PyResult<Bound<'py
     data.set_item("total_atoms", schema.total_atoms)?;
     data.set_item("min_atoms", schema.min_atoms)?;
     data.set_item("max_atoms", schema.max_atoms)?;
-    // intp (isize), matching scan()'s FrameIndex.n_atoms — see the note there.
+    // intp, as in scan().
     let n_atoms: Vec<isize> = schema.n_atoms.iter().map(|&n| n as isize).collect();
     data.set_item("n_atoms", n_atoms.into_pyarray(py))?;
     data.set_item("is_consistent", schema.is_consistent())?;
@@ -1043,9 +1011,8 @@ fn metadata_schema_to_pydict<'py>(
 }
 
 /// Convert one frame to `{"n_atoms": int, "columns": {...}, "metadata": {...}}`.
-///
-/// Numeric and boolean columns become numpy arrays (2-D when width > 1);
-/// string columns become `list[str]`. Both inner dicts preserve file order.
+/// Numeric and boolean columns become numpy arrays (2-D when width > 1),
+/// string columns `list[str]`. Both dicts keep file order.
 fn frame_to_pydict(py: Python<'_>, frame: Frame) -> PyResult<Bound<'_, PyDict>> {
     let data = PyDict::new(py);
     data.set_item("n_atoms", frame.n_atoms)?;
@@ -1065,9 +1032,7 @@ fn frame_to_pydict(py: Python<'_>, frame: Frame) -> PyResult<Bound<'_, PyDict>> 
             Value::StrArray(values) => {
                 metadata.set_item(key, values.iter().map(|s| s.as_str()).collect::<Vec<_>>())?
             }
-            // 2-D metadata is always a 2-D ndarray, even a single row or
-            // column — unlike a per-atom column (`array_from_flat`), there is
-            // no width == 1 case that means "really 1-D".
+            // Unlike a per-atom column, 2-D metadata stays 2-D even for one row or column.
             Value::RealArray2D { rows, cols, data } => {
                 metadata.set_item(key, array2d_from_flat(py, data, rows, cols)?)?
             }
@@ -1091,9 +1056,8 @@ fn frame_to_pydict(py: Python<'_>, frame: Frame) -> PyResult<Bound<'_, PyDict>> 
     Ok(data)
 }
 
-/// Convert a batch to `{"offsets": ndarray, "columns": {...}, "metadata":
-/// {...}}` — columns atom-major, metadata frame-major, both as dense arrays
-/// (string columns as lists).
+/// Convert a batch to `{"offsets", "columns", "metadata"}`: columns
+/// atom-major, metadata frame-major.
 fn batch_to_pydict(py: Python<'_>, batch: Batch) -> PyResult<Bound<'_, PyDict>> {
     let data = PyDict::new(py);
     let offsets: Vec<i64> = batch.offsets.iter().map(|&offset| offset as i64).collect();
@@ -1103,9 +1067,8 @@ fn batch_to_pydict(py: Python<'_>, batch: Batch) -> PyResult<Bound<'_, PyDict>> 
     Ok(data)
 }
 
-/// Numeric and boolean columns become numpy arrays (2-D when width > 1);
-/// string columns become `list[str]` (nested when width > 1). Preserves
-/// order.
+/// Numeric and boolean columns become numpy arrays (2-D when width > 1),
+/// string columns `list[str]` (nested when width > 1).
 fn columns_to_pydict(py: Python<'_>, columns: Vec<Column>) -> PyResult<Bound<'_, PyDict>> {
     let dict = PyDict::new(py);
     for column in columns {
@@ -1140,11 +1103,9 @@ fn columns_to_pydict(py: Python<'_>, columns: Vec<Column>) -> PyResult<Bound<'_,
 
 /// Write a list of `{"n_atoms", "columns", "metadata"}` dicts to `path`.
 ///
-/// Frames are converted to the core model while the GIL is held, then the encode
-/// and I/O run with it released. `level` is `0..=9` (codec default when `None`);
-/// `append` adds to an existing file where the codec allows it. `threads`
-/// spreads serialisation over workers (`None`: every core, `1`: serial); output
-/// bytes are identical regardless.
+/// Encoding and I/O run without the GIL. `level` is `0..=9` (`None`: codec
+/// default). `threads=None` uses every core, `1` is serial; the bytes are
+/// identical either way.
 #[pyfunction]
 #[pyo3(signature = (path, frames, compression="infer", level=None, append=false, threads=None))]
 fn write(
@@ -1168,16 +1129,12 @@ fn write(
     .map_err(extxyz_error_to_py)
 }
 
-/// Incremental writer: build it, `write` frames as they come, then `close`.
-/// Backs the `oxyz.Writer` context manager.
-///
-/// `batch=None` streams each frame straight to the sink in constant memory.
-/// `batch=Some(n)` buffers up to `n` frames and serialises each full batch in
-/// parallel before writing it — bounded extra memory (one batch), output bytes
-/// unchanged.
+/// Incremental writer behind `oxyz.Writer`. `batch=None` streams each frame
+/// in constant memory; `batch=Some(n)` buffers `n` frames and serialises each
+/// full batch in parallel. The bytes are identical either way.
 #[pyclass]
 struct FrameWriter {
-    // `None` once closed, so a double close or a write-after-close is caught.
+    // `None` once closed, so a write after close is caught.
     sink: Option<FrameSink>,
     batch: Option<usize>,
     buffer: Vec<Frame>,
@@ -1240,8 +1197,7 @@ impl FrameWriter {
             .ok_or_else(|| PyValueError::new_err("write on a closed Writer"))
     }
 
-    /// Serialise and write any buffered frames (batch mode), then clear the
-    /// buffer. A no-op when nothing is buffered.
+    /// Serialise and write any buffered frames, then clear the buffer.
     fn flush(&mut self, py: Python<'_>) -> PyResult<()> {
         if self.buffer.is_empty() {
             return Ok(());
@@ -1253,10 +1209,9 @@ impl FrameWriter {
     }
 }
 
-/// Build a core `Frame` from a `{"n_atoms", "columns", "metadata"}` dict — the
-/// inverse of [`frame_to_pydict`]. Numeric columns arrive as numpy arrays
-/// (already coerced to f64/i64/bool by the Python layer), string columns as
-/// lists; both inner dicts keep their order.
+/// Build a core `Frame` from a `{"n_atoms", "columns", "metadata"}` dict,
+/// the inverse of [`frame_to_pydict`]. Numeric columns arrive already coerced
+/// to f64/i64/bool.
 fn pydict_to_frame(data: &Bound<'_, PyDict>) -> PyResult<Frame> {
     let n_atoms: usize = item(data, "n_atoms")?.extract()?;
     let columns = item(data, "columns")?;
@@ -1285,8 +1240,8 @@ fn item<'py>(data: &Bound<'py, PyDict>, key: &str) -> PyResult<Bound<'py, PyAny>
         .ok_or_else(|| PyValueError::new_err(format!("frame dict is missing {key:?}")))
 }
 
-/// One per-atom column. A numpy array is numeric (its dtype picks the kind, its
-/// second dimension the width); a list is a string column (nested for width > 1).
+/// One per-atom column: a numpy array is numeric, its dtype picking the kind;
+/// a list is a string column (nested for width > 1).
 fn py_to_column(name: String, value: &Bound<'_, PyAny>) -> PyResult<Column> {
     if value.is_instance_of::<PyList>() {
         let (data, width) = str_column(value.cast::<PyList>()?)?;
@@ -1331,9 +1286,8 @@ fn str_column(list: &Bound<'_, PyList>) -> PyResult<(ColumnData, usize)> {
     ))
 }
 
-/// Extract `list[list[str]]`, checking every row is the same length as the
-/// first (a ragged nested list is a `ValueError`, not a panic). `default_width`
-/// is returned for an empty list, where there is no first row to measure.
+/// Extract `list[list[str]]`, raising `ValueError` if ragged. An empty list
+/// has `default_width`.
 fn rectangular_string_rows(
     list: &Bound<'_, PyList>,
     default_width: usize,
@@ -1357,9 +1311,8 @@ fn numeric_array(value: &Bound<'_, PyAny>) -> Option<(ColumnData, usize)> {
         .or_else(|| flat_array::<bool>(value).map(|(v, w)| (ColumnData::Bool(v), w)))
 }
 
-/// Flatten a 1-D or 2-D numpy array of `T` (row-major) into a buffer plus its
-/// width (the trailing dimension, 1 when 1-D). `None` if the dtype or rank
-/// does not match.
+/// Flatten a 1-D or 2-D numpy array of `T` into a buffer and its width (1
+/// when 1-D). `None` if the dtype or rank does not match.
 fn flat_array<T: Element + Clone>(value: &Bound<'_, PyAny>) -> Option<(Vec<T>, usize)> {
     let array = value.cast::<PyArrayDyn<T>>().ok()?;
     let readonly = array.readonly();
@@ -1372,11 +1325,8 @@ fn flat_array<T: Element + Clone>(value: &Bound<'_, PyAny>) -> Option<(Vec<T>, u
     Some((view.iter().cloned().collect(), width))
 }
 
-/// A 2-D numpy array of `T` (row-major), as its flat buffer plus `(rows,
-/// cols)`. `None` if the dtype doesn't match or the array isn't rank 2 —
-/// unlike `flat_array`, a 1-D array is not treated as width 1 here, since
-/// metadata needs to keep 1-D and 2-D apart (`Value::XArray` vs
-/// `Value::XArray2D`), not fold one into the other.
+/// A 2-D numpy array of `T` as its flat buffer and `(rows, cols)`. Unlike
+/// `flat_array`, a 1-D array does not match: metadata keeps 1-D and 2-D apart.
 fn flat_array_2d<T: Element + Clone>(value: &Bound<'_, PyAny>) -> Option<(Vec<T>, usize, usize)> {
     let array = value.cast::<PyArrayDyn<T>>().ok()?;
     let readonly = array.readonly();
@@ -1388,11 +1338,8 @@ fn flat_array_2d<T: Element + Clone>(value: &Bound<'_, PyAny>) -> Option<(Vec<T>
     Some((view.iter().cloned().collect(), shape[0], shape[1]))
 }
 
-/// A 2-D numeric metadata array, or `None` if `value` is not a 2-D f64/i64/bool
-/// numpy array. Mirrors `numeric_array`'s dtype dispatch order (float, then
-/// int, then bool — a numpy bool array never matches the float/int dtype
-/// casts, so the order does not actually create ambiguity, but keeping it
-/// consistent avoids surprises).
+/// A 2-D numeric metadata array, or `None` if `value` is not a 2-D
+/// f64/i64/bool numpy array.
 fn numeric_array_2d(value: &Bound<'_, PyAny>) -> Option<Value> {
     if let Some((data, rows, cols)) = flat_array_2d::<f64>(value) {
         return Some(Value::RealArray2D { rows, cols, data });
@@ -1406,9 +1353,8 @@ fn numeric_array_2d(value: &Bound<'_, PyAny>) -> Option<Value> {
     None
 }
 
-/// A metadata string value from `list[str]` (`StrArray`) or `list[list[str]]`
-/// (`StrArray2D`) — the same nested convention `str_column` uses for string
-/// columns. A ragged nested list is a `ValueError`, not a panic.
+/// A metadata string value from `list[str]` or `list[list[str]]`, raising
+/// `ValueError` if ragged.
 fn str_metadata(list: &Bound<'_, PyList>) -> PyResult<Value> {
     let nested = list
         .get_item(0)
@@ -1428,10 +1374,7 @@ fn str_metadata(list: &Bound<'_, PyList>) -> PyResult<Value> {
     })
 }
 
-/// One metadata value. Strings stay strings; numpy arrays become the matching
-/// 1-D or 2-D array variant (rank picked by `ndim`); Python lists become
-/// string arrays, nested for `list[list[str]]`; bool is tried before int (a
-/// Python bool is an int subclass).
+/// One metadata value. bool is tried before int, as a Python bool is an int.
 fn py_to_value(value: &Bound<'_, PyAny>) -> PyResult<Value> {
     if value.is_instance_of::<PyString>() {
         return Ok(Value::Str(value.extract::<String>()?.into()));
@@ -1465,11 +1408,9 @@ fn py_to_value(value: &Bound<'_, PyAny>) -> PyResult<Value> {
     )))
 }
 
-/// A Rust `Read` over a Python iterator of `bytes` (e.g. obstore's
-/// `GetResult.stream()`). Each refill calls `__next__` under the GIL; the parser
-/// runs with the GIL released and reacquires here per chunk — negligible against
-/// network latency. `Send + Sync` because `Py<PyAny>` is, and the single
-/// consumer means the reacquire is never contended.
+/// A Rust `Read` over a Python iterator of `bytes`, such as obstore's
+/// `GetResult.stream()`. Each refill takes the GIL, which is negligible
+/// against network latency.
 struct PyChunkReader {
     iter: Py<PyAny>,
     current: Cursor<Vec<u8>>,
@@ -1515,9 +1456,8 @@ impl Read for PyChunkReader {
     }
 }
 
-/// A Rust `Read + Seek` over a Python file-like with `read(n)` and
-/// `seek(offset, whence)` (obstore's `ReadableFile`). Used for `.zip`, whose
-/// central directory is at the end of the object.
+/// A Rust `Read + Seek` over a Python file-like (obstore's `ReadableFile`),
+/// for `.zip`, whose central directory is at the end.
 struct PySeekReader {
     file: Py<PyAny>,
 }
@@ -1563,11 +1503,9 @@ impl Seek for PySeekReader {
     }
 }
 
-/// Assemble a `DecodedReader` from a Python source object and a resolved codec.
-/// `"plain"/"gzip"/"zstd"` → `source` is a bytes-iterator.
-/// `"tar"/"tar.gz"/"tar.zst"` → `source` is a 0-arg callable returning a fresh
-/// bytes-iterator.
-/// `"zip"` → `source` is a seekable file-like.
+/// Assemble a `DecodedReader` from a Python source and a resolved codec.
+/// `source` is a bytes-iterator for plain, gzip and zstd; a callable returning
+/// a fresh one for the tar codecs; a seekable file-like for zip.
 fn build_decoded(
     source: &Bound<'_, PyAny>,
     codec: &str,
@@ -1619,11 +1557,8 @@ fn build_decoded(
     }
 }
 
-/// Read every frame from a Python bytes-iterator source, as a list of per-frame dicts.
-///
-/// `source` must be an iterator yielding `bytes` objects. `codec` is one of
-/// `"plain"`, `"gzip"`, `"zstd"`. `threads=None` parses on every core;
-/// `threads=1` is the exact serial path. Output is identical either way.
+/// Read every frame from a bytes-iterator `source`, as per-frame dicts.
+/// `codec` is `"plain"`, `"gzip"` or `"zstd"`.
 #[pyfunction]
 #[pyo3(signature = (source, codec, member=None, threads=None))]
 fn read_frames_reader<'py>(
@@ -1647,10 +1582,8 @@ fn read_frames_reader<'py>(
     PyList::new(py, dicts)
 }
 
-/// Read the first frame from a Python bytes-iterator source.
-///
-/// `source` must be an iterator yielding `bytes` objects. `codec` is one of
-/// `"plain"`, `"gzip"`, `"zstd"`.
+/// Read the first frame from a bytes-iterator `source`. `codec` is
+/// `"plain"`, `"gzip"` or `"zstd"`.
 #[pyfunction]
 #[pyo3(signature = (source, codec, member=None))]
 fn read_first_frame_reader<'py>(
@@ -1707,20 +1640,16 @@ fn extxyz_error_to_py(error: ExtxyzError) -> PyErr {
         inner = source;
     }
 
-    // I/O and out-of-range keep their natural stdlib exception types; the
-    // rest are content errors the caller may want to locate structurally.
+    // I/O and out-of-range keep their stdlib exception types.
     match inner {
         ExtxyzError::Io(io_error) => return PyOSError::new_err(io_error.to_string()),
         ExtxyzError::FrameOutOfRange { .. } => return PyIndexError::new_err(error.to_string()),
-        // Source/archive selection errors are about the request, not the
-        // contents — plain ValueErrors, no frame location to attach.
+        // Request errors, not content errors: no frame location to attach.
         ExtxyzError::MemberNotFound { .. }
         | ExtxyzError::AmbiguousArchive { .. }
         | ExtxyzError::NoExtxyzMember { .. }
         | ExtxyzError::MemberOnNonArchive
         | ExtxyzError::RandomAccessUnsupported
-        // Write-side request errors: the data or options are wrong, not the
-        // file contents, so they carry no frame location to attach.
         | ExtxyzError::MissingRequiredColumn { .. }
         | ExtxyzError::AppendUnsupported { .. }
         | ExtxyzError::ZstdWriteUnsupported
@@ -1735,8 +1664,7 @@ fn extxyz_error_to_py(error: ExtxyzError) -> PyErr {
     let column = error.column();
     let err = ParseError::new_err(error.to_string());
     Python::attach(|py| {
-        // Set every field so access is uniform; instance values shadow the
-        // `None` class-level defaults registered in the module init.
+        // Instance values shadow the class-level `None` defaults.
         let value = err.value(py);
         let _ = value.setattr("frame_index", frame_index);
         let _ = value.setattr("line", line);
@@ -1745,8 +1673,7 @@ fn extxyz_error_to_py(error: ExtxyzError) -> PyErr {
     err
 }
 
-/// Turn a flat width-strided buffer into a 1-D (width == 1) or 2-D numpy
-/// array.
+/// Turn a flat width-strided buffer into a 1-D (width 1) or 2-D numpy array.
 fn array_from_flat<T: Element>(
     py: Python<'_>,
     values: Vec<T>,
@@ -1755,9 +1682,7 @@ fn array_from_flat<T: Element>(
     if width == 1 {
         return Ok(values.into_pyarray(py).into_any());
     }
-    // Guard the width == 0 case explicitly — the parser never emits a 2-D
-    // value with zero columns, but `values.len() / width` below would panic
-    // on divide-by-zero if it ever did.
+    // The parser never emits width 0, but it would divide by zero below.
     if width == 0 {
         return Ok(Array2::<T>::from_shape_vec((0, 0), values)
             .map_err(|error| PyValueError::new_err(error.to_string()))?
@@ -1765,8 +1690,6 @@ fn array_from_flat<T: Element>(
             .into_any());
     }
 
-    // The parser upholds `values.len() == n_rows * width`; keep the error
-    // path anyway rather than unwrap at the Python boundary.
     let n_rows = values.len() / width;
     let array = Array2::from_shape_vec((n_rows, width), values)
         .map_err(|error| PyValueError::new_err(error.to_string()))?;
@@ -1774,9 +1697,7 @@ fn array_from_flat<T: Element>(
     Ok(array.into_pyarray(py).into_any())
 }
 
-/// Turn a flat row-major buffer with an explicit `(rows, cols)` shape into a
-/// 2-D numpy array. Unlike `array_from_flat`, this never collapses to 1-D —
-/// 2-D metadata reads back as 2-D even for a single row or column.
+/// Turn a flat row-major buffer into a 2-D numpy array of shape `(rows, cols)`.
 fn array2d_from_flat<T: Element>(
     py: Python<'_>,
     values: Vec<T>,
@@ -1799,8 +1720,7 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
             "release"
         },
     )?;
-    // Class-level `None` defaults so the location attributes always resolve,
-    // even on a `ParseError` a user constructs directly.
+    // So the location attributes resolve even on a user-built `ParseError`.
     m.add("OxyzError", m.py().get_type::<OxyzError>())?;
     let parse_error = m.py().get_type::<ParseError>();
     parse_error.setattr("frame_index", m.py().None())?;

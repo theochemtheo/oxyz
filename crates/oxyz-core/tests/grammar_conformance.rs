@@ -1,22 +1,13 @@
-//! Conformance against the extxyz comment-line value grammar, as specified by
-//! libAtoms/extxyz `kv_tests.md`. The cases here encode that document's
-//! "should work" and "should fail" sections; the permalink pins the exact
-//! revision they were taken from:
+//! Conformance with the extxyz comment-line value grammar in libAtoms/extxyz
+//! `kv_tests.md`, at this revision:
 //!
 //! <https://github.com/libAtoms/extxyz/blob/c8c705814b208837ede7d4072f20fe8d40bb20df/kv_tests.md>
-//!
-//! Every "should work" form parses to its canonical typed value. Axes are
-//! grouped by scalar kind (integer, float, boolean) so each section stands
-//! alone. Intentional divergences from a literal reading of the grammar are
-//! called out inline with the reasoning, not just asserted silently.
 
 use std::io::Cursor;
 
 use oxyz_core::{ExtxyzError, Value, iter_frames_from};
 
-/// Read a single comment-line value by wrapping it in a one-atom frame.
-/// `Properties` is required on every comment line, so the harness supplies a
-/// minimal fixed descriptor alongside the `key` under test.
+/// Read one comment-line value through a one-atom frame.
 fn read_value(src: &str) -> Result<Value, ExtxyzError> {
     let input = format!("1\nProperties=species:S:1:pos:R:3 key={src}\nX 0.0 0.0 0.0\n");
     let frame = iter_frames_from(Cursor::new(input.into_bytes()))
@@ -29,9 +20,7 @@ fn read_value(src: &str) -> Result<Value, ExtxyzError> {
         .clone())
 }
 
-/// Scalar integer forms: sign x digit-shape, plus the quoted and
-/// brace-wrapped whitespace variants. All parse to Int(3) (or the signed
-/// value) — leading zeros are decimal, never octal.
+/// Scalar integer forms. Leading zeros are decimal, not octal.
 fn integer_cases() -> Vec<(String, Value)> {
     let signs = ["", "+", "-"];
     let digits = ["1", "12", "012"];
@@ -59,11 +48,8 @@ fn should_work_integers() {
     }
 }
 
-/// Scalar float forms: a decimal point or an exponent. Fortran `d`/`D`
-/// exponents are accepted and normalised like `e`/`E`. Bare integer-shaped
-/// values are deliberately excluded here — a bare integer types as Int, not
-/// Real: the number is identical, but the type is finer and the distinction
-/// is preserved rather than collapsed.
+/// Scalar float forms: a point or an exponent, Fortran `d`/`D` included. A
+/// bare integer stays Int.
 fn float_cases() -> Vec<(String, Value)> {
     let mut cases = Vec::new();
     for (src, val) in [
@@ -103,10 +89,8 @@ fn should_work_floats() {
     }
 }
 
-/// Quoting preserves a string's interior whitespace: a quoted single word
-/// keeps its padding as a `Str`, while a quoted number still trims and types
-/// numerically. Classification runs on the trimmed token, but the string
-/// fallback keeps the original quote-stripped content.
+/// Quoting keeps a string's interior whitespace; a quoted number still types
+/// numerically.
 #[test]
 fn quoted_strings_preserve_padding_but_numbers_still_trim() {
     assert_eq!(
@@ -116,8 +100,6 @@ fn quoted_strings_preserve_padding_but_numbers_still_trim() {
     assert_eq!(read_value("\" 3 \"").unwrap(), Value::Int(3));
 }
 
-/// Scalar boolean forms: t/T/true/True/TRUE -> true; f/F/false/False/FALSE
-/// -> false.
 #[test]
 fn should_work_booleans() {
     for src in ["t", "T", "true", "True", "TRUE"] {
@@ -132,9 +114,7 @@ fn should_work_booleans() {
     }
 }
 
-/// kv_tests "scalar string": bare strings from the printable set, and quoted
-/// strings. Single quotes are ordinary bare characters (only `"` quotes; see
-/// the singlequote_metadata.extxyz fixture), so 'abc' is a valid bare string.
+/// Bare and quoted strings. Only `"` quotes, so `'abc'` is a bare string.
 #[test]
 fn should_work_strings() {
     for src in ["TRuE", "1.3k7", "-2.75e", "+2.75e-"] {
@@ -164,9 +144,7 @@ fn should_work_1d_arrays() {
         read_value("{1 2 3}").unwrap(),
         Value::IntArray(vec![1, 2, 3])
     );
-    // Bare (unquoted) interior whitespace would split into further key=value
-    // pairs on a real comment line, so this form is only reachable quoted —
-    // matching the quoted int case above.
+    // Bare interior whitespace would split the pair, so only the quoted form exists.
     assert_eq!(
         read_value("\"1.0 2.0 3.0\"").unwrap(),
         Value::RealArray(vec![1.0, 2.0, 3.0])
@@ -188,10 +166,7 @@ fn should_work_1d_arrays() {
         read_value("[ T, F, bob ]").unwrap(),
         Value::StrArray(vec!["T".into(), "F".into(), "bob".into()])
     );
-    // A `[` *inside* a quoted string element is part of the string, not a
-    // nested row: the array stays 1-D. The 1-D/2-D decision runs on the
-    // quote-aware split, so a quoted element like `"a[b"` starts with `"`,
-    // never `[`.
+    // A `[` inside a quoted element does not make the array 2-D.
     assert_eq!(
         read_value("[ \"a[b\", \"c\" ]").unwrap(),
         Value::StrArray(vec!["a[b".into(), "c".into()])
@@ -221,9 +196,7 @@ fn should_work_2d_arrays() {
             data: vec![1.0, 2.0, 3.0, 4.0]
         }
     );
-    // A literal `[` inside a quoted string *cell* of a 2-D array is part of
-    // that string, not a nested (3-D) row — the row-level guard must be as
-    // quote-aware as the top-level 1-D/2-D one.
+    // Nor does a `[` inside a quoted cell of a 2-D array make it 3-D.
     assert_eq!(
         read_value("[[\"a[b\",\"c\"],[\"d\",\"e\"]]").unwrap(),
         Value::StrArray2D {
@@ -234,9 +207,7 @@ fn should_work_2d_arrays() {
     );
 }
 
-/// kv_tests "ones that should fail": malformed values must be Err. Cases that
-/// oxyz intentionally accepts (single-quoted bare strings, bare-int-as-int) are
-/// asserted as their conformant value elsewhere, with a decision on record.
+/// kv_tests "ones that should fail".
 #[test]
 fn should_fail_cases() {
     // These are malformed *values* — the strict typer must reject them.
@@ -256,10 +227,8 @@ fn should_fail_cases() {
     assert!(read_value("[1, 2").is_err());
 }
 
-/// kv_tests "almost bare string" (should-fail): `abc<char>def` for `<char>`
-/// in `" = , \ [ ] { }`. A bare value containing one of the grammar's
-/// reserved characters is malformed, not a string with unusual content —
-/// quoting the value is how a real `,`, `[`, or `=` gets into a string.
+/// kv_tests "almost bare string": a bare value may not contain
+/// `" = , \ [ ] { }`.
 #[test]
 fn should_fail_almost_bare_string() {
     for src in [
@@ -269,8 +238,7 @@ fn should_fail_almost_bare_string() {
     }
 }
 
-/// A quoted value may contain any of the grammar's reserved characters —
-/// quoting is exactly what lifts the bare-value restriction.
+/// Quoting permits the reserved characters.
 #[test]
 fn quoted_value_permits_excluded_characters() {
     assert_eq!(
@@ -279,9 +247,8 @@ fn quoted_value_permits_excluded_characters() {
     );
 }
 
-/// The "no key-value =" fail class (a comment token with no `=`) is a splitter
-/// concern, not a value-typer one — `read_value` always supplies `key=`, so it
-/// cannot express it. Assert it directly against the splitter.
+/// The "no key-value =" case is the splitter's, as `read_value` always
+/// supplies `key=`.
 #[test]
 fn should_fail_bare_key_without_equals() {
     use std::io::Cursor;

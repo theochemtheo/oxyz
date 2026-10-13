@@ -1,11 +1,8 @@
-//! The parse-error location contract: every parse error reports the frame it
-//! occurred in, the file-absolute line, and — where a token is pinpointable —
-//! the 1-based character column, both structurally (accessors) and in the message.
+//! Every parse error reports its frame, file-absolute line, and, where a
+//! token is at fault, its 1-based character column.
 
 use oxyz_core::ExtxyzError;
 
-/// A hand-built `InFrame(Located(inner))` reports each coordinate and renders
-/// them ahead of the inner message.
 #[test]
 fn located_error_exposes_and_renders_coordinates() {
     let inner = ExtxyzError::InvalidAtomValue {
@@ -59,8 +56,6 @@ fn first_error(input: &str) -> ExtxyzError {
         .expect("expected a parse error")
 }
 
-/// A non-numeric atom value reports its frame, its file-absolute line, and the
-/// 1-based character column where the bad token starts.
 #[test]
 fn bad_atom_value_locates_line_and_column() {
     // Line 1: count, line 2: comment, line 3: atom row. "abc" starts at col 3.
@@ -71,13 +66,10 @@ fn bad_atom_value_locates_line_and_column() {
     assert_eq!(error.column(), Some(3));
 }
 
-/// A non-numeric value in a NON-first cell of a multi-width column (the 2nd
-/// `pos:R:3` cell here) reports that cell's own column, not the column's
-/// first-cell offset.
+/// A bad value in a later cell of a multi-width column reports that cell.
 #[test]
 fn bad_atom_value_in_non_first_cell_locates_that_cell() {
-    // Line 1: count, line 2: comment, line 3: atom row. "abc" is the 2nd of
-    // three `pos` cells: H=1, ' '=2, 0.0=3-5, ' '=6, abc=7-9.
+    // "abc" is the second `pos` cell, at characters 7-9.
     let input = "1\nProperties=species:S:1:pos:R:3\nH 0.0 abc 0.0\n";
     let error = first_error(input);
     assert_eq!(error.frame_index(), Some(0));
@@ -85,8 +77,6 @@ fn bad_atom_value_in_non_first_cell_locates_that_cell() {
     assert_eq!(error.column(), Some(7));
 }
 
-/// A malformed comment (`=` with no value) reports the comment line and the
-/// character column of the failure.
 #[test]
 fn bad_metadata_locates_comment_line_and_column() {
     let input = "1\nProperties=species:S:1:pos:R:3 bad=\nH 0.0 0.0 0.0\n";
@@ -96,20 +86,11 @@ fn bad_metadata_locates_comment_line_and_column() {
     assert!(error.column().is_some());
 }
 
-/// A malformed *value* — not just a malformed `key=` pair — also locates the
-/// comment line and a column at or after the value's start. This is the
-/// value-typer's error-location contract: `parse_array_value` reports a byte
-/// index relative to the raw value it was given, and `offset_value_error`
-/// (in `parse_comment_line`) shifts it by the value's byte offset within the
-/// whole comment line so `comment_column` lands on the right place. Array
-/// typing is strict enough to fail on a malformed value (a trailing comma
-/// leaves an empty element), so this is a live `Err` exercising that path,
-/// not just a hand-built error.
+/// A malformed value is located within the comment line, not at the value's
+/// own offset.
 #[test]
 fn bad_array_value_locates_comment_line_and_column_at_the_value() {
-    // Line 1: count, line 2: comment. "key=[1,2,]" starts at character 34
-    // (1-based) on the comment line; the trailing comma leaves an empty
-    // element, which is `Err`.
+    // "key=[1,2,]" starts at character 34; the trailing comma is the error.
     let input = "1\nProperties=species:S:1:pos:R:3 key=[1,2,]\nH 0.0 0.0 0.0\n";
     let error = first_error(input);
     let comment = "Properties=species:S:1:pos:R:3 key=[1,2,]";
@@ -123,8 +104,7 @@ fn bad_array_value_locates_comment_line_and_column_at_the_value() {
     );
 }
 
-/// A short atom row (too few columns) reports the atom line; no single token to
-/// pin a column on.
+/// A short atom row has no single token to blame, so only the line is given.
 #[test]
 fn wrong_column_count_locates_line_only() {
     let input = "1\nProperties=species:S:1:pos:R:3\nH 0.0 0.0\n";
@@ -142,14 +122,12 @@ fn bad_atom_count_locates_line() {
     assert_eq!(error.line(), Some(1));
 }
 
-/// The parallel intra-frame atom path locates a bad value identically to the
-/// serial loop, even when the bad row falls inside a worker's split range.
+/// The intra-frame parallel path locates a bad value as the serial loop does.
 #[cfg(feature = "parallel")]
 #[test]
 fn parallel_bad_atom_value_matches_serial_location() {
     use oxyz_core::read_frames_parallel_from;
-    // A frame large enough to take the intra-frame parallel path (>256 KB),
-    // with one bad value on a known line.
+    // Over 256 KB, so the intra-frame parallel path runs.
     let mut input = String::from("20000\nProperties=species:S:1:pos:R:3\n");
     for _ in 0..9999 {
         input.push_str("H 0.0 0.0 0.0\n");
@@ -165,15 +143,12 @@ fn parallel_bad_atom_value_matches_serial_location() {
     assert_eq!(error.column(), Some(3));
 }
 
-/// The parallel intra-frame atom path also locates a bad value in a
-/// NON-first cell of a multi-width column at that cell, not the column's
-/// first cell — matching the serial loop exactly.
+/// ...including a bad value in a later cell of a multi-width column.
 #[cfg(feature = "parallel")]
 #[test]
 fn parallel_bad_atom_value_in_non_first_cell_matches_serial_location() {
     use oxyz_core::read_frames_parallel_from;
-    // A frame large enough to take the intra-frame parallel path (>256 KB),
-    // with the bad value in the 2nd of three `pos` cells on a known line.
+    // Over 256 KB, so the intra-frame parallel path runs.
     let mut input = String::from("20000\nProperties=species:S:1:pos:R:3\n");
     for _ in 0..9999 {
         input.push_str("H 0.0 0.0 0.0\n");
@@ -199,17 +174,13 @@ fn parallel_bad_atom_value_in_non_first_cell_matches_serial_location() {
     assert_eq!(parallel_error.line(), serial_error.line());
 }
 
-/// The parallel intra-frame path locates a bad *comment* line identically to
-/// the serial reader — not just a bad atom value. This is the cross-layer
-/// parity invariant: `parse_raw_parallel` must wrap the count-line,
-/// missing-comment, and comment-line parse errors with `Located` exactly as
-/// `FrameIter::parse_frame` does, not just with `InFrame`.
+/// The intra-frame parallel path locates a bad comment line as the serial
+/// reader does.
 #[cfg(feature = "parallel")]
 #[test]
 fn parallel_bad_comment_line_matches_serial_location() {
     use oxyz_core::read_frames_parallel_from;
-    // A frame large enough to take the intra-frame parallel path (>256 KB),
-    // whose comment line (an unknown Properties kind) is malformed.
+    // Over 256 KB, so the intra-frame parallel path runs.
     let mut input = String::from("20000\nProperties=species:Q:1:pos:R:3\n");
     for _ in 0..20000 {
         input.push_str("H 0.0 0.0 0.0\n");
@@ -237,13 +208,11 @@ fn parallel_bad_comment_line_matches_serial_location() {
 
 use oxyz_core::read_batch_from;
 
-/// A truncated second frame, surfaced through `read_batch_from` (which drives
-/// `RawFrames::selecting` directly, not `FrameIter`), reports the missing
-/// line's exact file-absolute number — not just that it errored.
+/// A truncated frame read through `read_batch_from` reports the missing
+/// line's file-absolute number.
 #[test]
 fn batch_truncated_frame_locates_exact_line() {
-    // Frame 0: 1 atom, complete (lines 1-3). Frame 1: declares 2 atoms but
-    // supplies only 1 before EOF (lines 4-6, then truncated).
+    // Frame 1 declares 2 atoms but has 1.
     let input = "1\ncomment\nH 0.0 0.0 0.0\n2\ncomment\nH 0.0 0.0 0.0\n";
     let error =
         read_batch_from(Cursor::new(input.as_bytes()), &[0, 1]).expect_err("truncated frame");

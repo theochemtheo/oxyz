@@ -32,8 +32,7 @@ fn write_temp(name: &str, text: &str) -> PathBuf {
     path
 }
 
-/// A frame whose bytes exceed the intra-frame threshold (~2 MiB) so its atom
-/// rows are split across workers. `bad_row`, if set, gets an extra column.
+/// Frames past the intra-frame threshold; `bad_row` gets an extra column.
 fn large_frame_text(n_frames: usize, n_atoms: usize, bad_row: Option<usize>) -> String {
     let mut text = String::new();
     for _ in 0..n_frames {
@@ -53,9 +52,7 @@ fn large_frame_text(n_frames: usize, n_atoms: usize, bad_row: Option<usize>) -> 
     text
 }
 
-/// ~2.6 MiB per frame engages the intra-frame parallel parser; the split and
-/// concatenation must reproduce the serial frame exactly, at every thread
-/// count and across a frame boundary.
+/// The intra-frame split reproduces the serial frame at every thread count.
 #[test]
 fn large_frame_parallel_matches_serial() {
     let path = write_temp("large_frame.extxyz", &large_frame_text(2, 50_000, None));
@@ -71,9 +68,8 @@ fn large_frame_parallel_matches_serial() {
     std::fs::remove_file(path).ok();
 }
 
-/// A malformed row deep inside a large frame must raise the identical error —
-/// same message and file-absolute line number — as a serial read, regardless
-/// of which worker's range it landed in.
+/// A bad row deep in a large frame raises the serial error, whichever worker
+/// reads it.
 #[test]
 fn large_frame_error_matches_serial() {
     let path = write_temp(
@@ -115,8 +111,7 @@ fn parallel_get_batch_matches_serial() {
     assert_eq!(parallel, serial);
 }
 
-/// With several broken frames racing, the reported error must be the first
-/// in request order — the same one a serial read raises.
+/// The first broken frame in request order is reported, as in a serial read.
 #[test]
 fn first_error_in_request_order_wins() {
     let mut text = String::new();

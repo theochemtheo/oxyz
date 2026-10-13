@@ -1,7 +1,4 @@
-//! Detailed spot-checks of parsed frames against the columnar model.
-//!
-//! `corpus_smoke.rs` asserts that every fixture parses; these tests assert
-//! *what* a representative handful parse into.
+//! Spot-checks of what representative fixtures parse into.
 
 use std::{io::Cursor, path::PathBuf};
 
@@ -62,9 +59,7 @@ fn reads_simple_extxyz_fixture() {
 fn preserves_lattice_in_as_written_order() {
     let frame = read_first_frame(fixture("nonorthogonal.extxyz")).unwrap();
 
-    // Supersedes the original spike, which reordered Lattice into row-major
-    // at parse time: the nine values now stay as written, and conversion is
-    // the normalisation layer's job.
+    // Lattice stays as written; reordering is the normalisation layer's job.
     assert_eq!(
         frame.metadata_value("Lattice"),
         Some(&Value::RealArray(vec![
@@ -155,8 +150,6 @@ fn reads_per_atom_string_column_and_any_element() {
 fn reads_mace_training_schema_with_raw_names() {
     let frame = read_first_frame(fixture("mace_ref_energy_forces_stress.xyz")).unwrap();
 
-    // REF_* names are preserved raw; mapping them is the normalisation
-    // layer's job.
     let ref_forces = frame.column("REF_forces").unwrap();
     assert_eq!(ref_forces.width, 3);
     assert_eq!(ref_forces.data.len(), frame.n_atoms * 3);
@@ -232,8 +225,6 @@ fn errors_carry_the_frame_index_and_stop_iteration() {
     let error = frames.next().unwrap().unwrap_err();
     assert!(matches!(error, ExtxyzError::InFrame { frame_index: 1, .. }));
 
-    // The iterator is fused after an error: the stream position is no longer
-    // trustworthy.
     assert!(frames.next().is_none());
 }
 
@@ -249,9 +240,7 @@ fn error_accessors_locate_the_failure() {
     assert_eq!(error.line(), Some(3));
     assert_eq!(error.column(), None);
 
-    // A non-numeric value in a Real column pins the line and the character
-    // column of the offending cell itself — "nope" is the 2nd of three `pos`
-    // cells in "0 nope 0", not the column's first cell.
+    // "nope" is the second `pos` cell.
     let bad_value = "1\nProperties=species:S:1:pos:R:3\nH 0 nope 0\n";
     let error = FrameIter::new(Cursor::new(bad_value))
         .next()
