@@ -1,11 +1,4 @@
-"""Frame selection by ASE-style index, shared across conversion layers.
-
-The index grammar (an int, an int string, or a slice string) and the
-forward-streaming vs index-backed resolution live here so every conversion
-layer — `oxyz.ase`, and `oxyz.metatomic` next — selects the same frames the
-same way. Selection is frame-type agnostic: it yields oxyz `Frame`s, and the
-caller converts to its own target.
-"""
+"""Frame selection by ASE-style index, shared by the conversion targets."""
 
 from __future__ import annotations
 
@@ -37,7 +30,6 @@ def _is_streaming_only(path: str | Path, compression: Compression) -> bool:
     return _rust.is_compressed(str(path), compression)
 
 
-# "start:stop:step" — a slice string has at most three colon-separated parts.
 _MAX_SLICE_PARTS = 3
 
 
@@ -55,11 +47,7 @@ def parse_index(index: int | str | slice) -> int | slice:
 
 
 def _reject_member_on_plain(member: str | None) -> None:
-    """Reject `member=` on a non-compressed file, which is never an archive.
-
-    The forward read paths reject it in the core (`MemberOnNonArchive`); the
-    seek path bypasses the core, so it must reject `member=` itself to match.
-    """
+    """Reject `member=` on a non-compressed file, as the core does on read paths."""
     if member is not None:
         raise ValueError(
             "member= is only valid for an archive (.zip/.tar/.tar.gz/.tar.zst) source"
@@ -77,14 +65,10 @@ def nth_frame(
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
 ) -> Frame:
-    """Frame `index`; negatives resolve via a scan and seek, not a full parse.
+    """Frame `index`; a negative index seeks after a scan rather than parsing all.
 
-    A compressed source cannot seek, so a negative index there reads the whole
-    file and indexes in memory (as ASE does), losing the partial-read shortcut.
-    A remote URL is likewise non-seekable and takes the same in-memory path.
-    With a `schema`, any index reads the whole file and applies the schema to
-    every frame before indexing — so validation/projection behaves the same way
-    whatever the index, at the cost of the partial-read shortcut.
+    On a compressed or remote source, or with a `schema`, the whole file is
+    read instead.
     """
     if schema is not None:
         frames = _read_all(
@@ -96,8 +80,7 @@ def nth_frame(
             member=member,
             storage_options=storage_options,
         )
-        # `len(frames)` is the count actually read: under project+warn some
-        # frames may have been dropped, so say "available" not "file has".
+        # Under project+warn some frames may have dropped.
         if not -len(frames) <= index < len(frames):
             raise IndexError(
                 f"frame {index} out of range: {len(frames)} frames available"
@@ -135,11 +118,7 @@ def nth_frame(
 
 
 def _in_range(index: int, n_frames: int) -> int:
-    """Return `index` if it is non-negative and below `n_frames`, else raise IndexError.
-
-    Explicit-set selection (`read(path, [i, j, ...])`) is non-negative only,
-    matching `read_batch`; a negative index is rejected rather than wrapped.
-    """
+    """Return `index` if `0 <= index < n_frames`, else raise `IndexError`."""
     if index < 0 or index >= n_frames:
         raise IndexError(
             f"frame index {index} out of range: file has {n_frames} frames"
@@ -159,12 +138,10 @@ def gathered_frames(  # noqa: PLR0913  the read/schema/projection options are th
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
 ) -> list[Frame]:
-    """Read an explicit set of frames, in the given order (repeats allowed).
+    """Read an explicit set of non-negative frame indices, in order.
 
-    With a `schema`, or on a streaming-only (compressed/remote) source, the
-    whole file is read once and the requested frames are picked; a seekable
-    plain file uses the byte-offset index to fetch only those frames. Indices
-    are non-negative, matching `read_batch`.
+    A seekable plain file fetches only those frames; with a `schema` or on a
+    compressed or remote source, the whole file is read.
     """
     picks = [int(i) for i in indices]
     if schema is not None:
@@ -195,11 +172,7 @@ def gathered_frames(  # noqa: PLR0913  the read/schema/projection options are th
 
 
 def is_forward(frames: slice) -> bool:
-    """Return whether `frames` reads front-to-back.
-
-    True iff its bounds are non-negative and its step positive; anything
-    else (negative bound or step) must resolve via the index.
-    """
+    """Return whether `frames` has non-negative bounds and a positive step."""
     start, stop, step = frames.start, frames.stop, frames.step
     return all(bound is None or bound >= 0 for bound in (start, stop)) and (
         step is None or step > 0
@@ -220,16 +193,10 @@ def frames_for_read(  # noqa: PLR0913  the read/schema/projection options are th
 ) -> Iterable[Frame]:
     """Frames for an eager list read.
 
-    An unbounded forward slice needs every frame to end of file, so parse the
-    whole file on all cores (`threads`) rather than streaming on one. Bounded or
-    reverse slices keep the streaming/indexed path, which stops early — an eager
-    read must not parse past the frames a bounded slice asks for, and `threads`
-    does not apply to it.
-
-    With a `schema`, the whole file is read and the schema applied to every
-    frame, then the slice taken — so a schema error (or a projected drop) is
-    handled the same way whatever the slice's shape, rather than depending on
-    which frames the slice happens to traverse.
+    An unbounded forward slice parses the whole file on `threads` cores; a
+    bounded or reverse slice stops early instead. With a `schema`, the whole
+    file is read and checked before slicing, so the outcome does not depend on
+    the slice.
     """
     if schema is not None:
         validated = _read_all(
@@ -272,11 +239,7 @@ def sliced_frames(
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
 ) -> Iterator[Frame]:
-    """Forward slices stream; other slices go via the index or a full in-memory read.
-
-    Negative bounds or steps go via the index, or — on a compressed or
-    remote source, or with a `schema` — via a full in-memory read.
-    """
+    """Forward slices stream; others go via the index or a full in-memory read."""
     if is_forward(frames):
         stream = _iter_all(
             path,
@@ -289,9 +252,6 @@ def sliced_frames(
         )
         return islice(stream, frames.start, frames.stop, frames.step)
 
-    # A reverse/negative slice needs random access. With a schema we read+apply
-    # it eagerly (the sought frames must be validated/projected); otherwise a
-    # streaming-only source reads in memory and a seekable one uses the index.
     if schema is not None:
         projected = _read_all(
             path,

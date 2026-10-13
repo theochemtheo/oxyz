@@ -1,10 +1,4 @@
-"""Writing frames back out: the unified `write` and the incremental `Writer`.
-
-Both accept a `Frame`, an `ase.Atoms`, or an iterable mixing them, and dispatch
-per item — a `Frame` passes straight through; anything else is routed to a
-lazily-imported converter, so the base install never imports ASE. Serialisation,
-ordering, and compression all live in the Rust core; this layer only marshals.
-"""
+"""Writing frames: the unified `write` and the incremental `Writer`."""
 
 from __future__ import annotations
 
@@ -22,11 +16,8 @@ if TYPE_CHECKING:
 
     from ase import Atoms
 
-# A public type alias for a single item `write`/`Writer.write` accept: a `Frame`
-# or an `ase.Atoms`. Both functions also accept an `Iterable[Writable]` mixing
-# the two. Declared with PEP 695 `type`, so the right-hand side is evaluated
-# lazily — exporting `oxyz.Writable` does not import ase, and `type` statements
-# carry no docstring slot, hence this comment rather than a docstring.
+# A single item `write` and `Writer.write` accept. A `type` statement keeps
+# ase unimported and has no docstring slot.
 type Writable = Frame | Atoms
 
 __all__ = ["Writable", "Writer", "write"]
@@ -43,32 +34,31 @@ def write(
 ) -> None:
     """Write frames to `path`, encoding from the path's extension (overridable).
 
-    Each item of `obj` is converted independently. Columns are written
-    `species`, `pos`, then the rest; the comment line is `Lattice`, `pbc`,
-    `Properties`, then remaining metadata. Reals use the shortest
-    round-trippable form, so `read` then `write` is lossless. A frame without
-    both a `species` and a `pos` column is rejected.
+    Columns are written `species`, `pos`, then the rest; the comment line
+    `Lattice`, `pbc`, `Properties`, then the remaining metadata. Reals use the
+    shortest round-trippable form, so `read` then `write` is lossless. A frame
+    without `species` and `pos` columns is rejected.
 
     Parameters
     ----------
     path : str or Path
-        Output location. The codec follows the extension — `.xyz`, `.extxyz`,
-        and the compressed forms `.gz`/`.zip`/`.tar`/`.tar.gz` — unless
-        `compression` overrides it. `"-"` writes to stdout.
+        Output location. The codec follows the extension (`.xyz`, `.extxyz`,
+        `.gz`, `.zip`, `.tar`, `.tar.gz`) unless `compression` overrides it.
+        `"-"` writes to stdout.
     obj : Writable or iterable of Writable
         A single `Frame`/`ase.Atoms`, or an iterable mixing them.
     append : bool, optional
-        Add to an existing file, for the formats that allow it (plain,
-        gzip). Rejected for the archive codecs and for stdout.
+        Add to an existing plain or gzip file. Rejected for archives and
+        stdout.
     compression : Compression, optional
-        Codec, overriding the one inferred from `path`. Writing `.zst` and
-        `.tar.zst` is not yet supported.
+        Codec, overriding the one inferred from `path`. zstd cannot be
+        written.
     level : int, optional
         Deflate level, `0..=9`, for the compressed codecs.
     threads : int, optional
-        Workers to serialise frames across. `None` (the default) uses every
-        core; `1` is serial. Output bytes are identical either way; the cost
-        is peak memory, since frames are serialised before being written.
+        Workers to serialise frames across; `None` (the default) uses every
+        core, `1` is serial. The bytes are identical; parallel serialisation
+        holds every frame's text in memory before writing.
 
     Examples
     --------
@@ -87,10 +77,8 @@ def write(
 class Writer:
     """Write frames incrementally, in bounded memory for the streaming codecs.
 
-    A context manager: entering opens the encoder, `write` accepts frames as
-    they are produced, and exiting (or calling `close`) finalises and closes
-    the file. Options match `write`; dispatch is the same, so `.write` also
-    takes a single `Frame`/`ase.Atoms` or an iterable mixing them.
+    A context manager; exiting, or `close`, finalises the file. Options and
+    accepted items match `write`.
 
     Examples
     --------
@@ -122,17 +110,16 @@ class Writer:
             Output location. The codec follows the extension unless
             `compression` overrides it.
         append : bool, optional
-            Add to an existing file, for the formats that allow it (plain,
-            gzip). Rejected for the archive codecs and for stdout.
+            Add to an existing plain or gzip file. Rejected for archives and
+            stdout.
         compression : Compression, optional
             Codec, overriding the one inferred from `path`.
         level : int, optional
             Deflate level, `0..=9`, for the compressed codecs.
         batch : int, optional
-            Buffer `batch` frames and serialise each full batch in parallel,
-            trading a little memory for throughput. `None` (the default)
-            streams each frame out one at a time instead. The output is
-            identical either way; peak extra memory is one batch.
+            Buffer `batch` frames and serialise each full batch in parallel.
+            `None` (the default) writes each frame as it comes. The output is
+            identical.
         """
         self._inner = _rust.FrameWriter(str(path), compression, level, append, batch)
         self._path = str(path)
@@ -159,14 +146,7 @@ class Writer:
         )
 
     def write(self, obj: Writable | Iterable[Writable]) -> None:
-        """Write `obj` to the file.
-
-        Parameters
-        ----------
-        obj : Writable or iterable of Writable
-            A single `Frame`/`ase.Atoms`, or an iterable mixing them; each
-            item is converted and written independently.
-        """
+        """Write `obj`: a `Frame`/`ase.Atoms`, or an iterable mixing them."""
         for item in _items(obj):
             self._inner.write(_payload(item))
             self._frames_written += 1
@@ -188,24 +168,17 @@ class Writer:
 def _items(obj: Writable | Iterable[Writable]) -> list[Writable]:
     """Normalise `obj` to a list of writables.
 
-    A single writable becomes a one-item list; any other iterable is consumed
-    in order. `ase.Atoms` is itself iterable (over its atoms), so it must be
-    recognised as a single item before the iterable check.
+    `ase.Atoms` iterates over its atoms, so it is matched as one item first.
     """
     if isinstance(obj, Frame) or _looks_like(obj, "ase.atoms", "Atoms"):
         return [cast("Writable", obj)]
     if isinstance(obj, Iterable):
         return list(obj)
-    # Not writable and not iterable: defer to _payload for a clear error.
     return [cast("Writable", obj)]
 
 
 def _payload(obj: Writable) -> _rust.FrameData:
-    """Convert `obj` to the payload shape the Rust binding writes.
-
-    Raises `TypeError` for anything that is neither a `Frame` nor an
-    `ase.Atoms`.
-    """
+    """Convert `obj` to the binding's payload, or raise `TypeError`."""
     if isinstance(obj, Frame):
         return _frame_payload(obj)
     if _looks_like(obj, "ase.atoms", "Atoms"):
@@ -219,12 +192,10 @@ def _payload(obj: Writable) -> _rust.FrameData:
 
 
 def _frame_payload(frame: Frame) -> _rust.FrameData:
-    """Convert `frame`'s columns and metadata to their canonical dtypes.
+    """Convert `frame` to canonical dtypes, checking row counts against `n_atoms`.
 
-    Checks each column's row count against `n_atoms` on the way: the encoder
-    indexes `row * width` for `n_atoms` rows, so a short column would panic
-    and a long one would silently drop atoms. A 0-D value is one row, the
-    scalar-width-1 form the binding accepts, so it is legal at `n_atoms == 1`.
+    The encoder would panic on a short column and drop atoms from a long one.
+    A 0-D value counts as one row.
     """
     columns: dict[str, ColumnValues] = {}
     for name, values in frame.columns.items():
@@ -261,12 +232,9 @@ def _canonical_meta(value: MetadataValue) -> MetadataValue:
 
 
 def _canonical_array(array: np.ndarray) -> np.ndarray | list:
-    """Coerce `array` to the dtype the binding moves without copying.
+    """Coerce `array` to a dtype the binding moves without copying.
 
-    Floats become float64, ints become int64, and bool passes through; a
-    string array becomes a (nested) list, the form string columns cross in.
-    `asarray` skips the copy when the dtype already matches, the common case
-    for reader-produced frames.
+    Floats become float64 and ints int64; a string array becomes a list.
     """
     kind = array.dtype.kind
     if kind == "f":
@@ -279,11 +247,7 @@ def _canonical_array(array: np.ndarray) -> np.ndarray | list:
 
 
 def _looks_like(obj: object, module: str, name: str) -> bool:
-    """Report whether `obj`'s type, or any base, is `module.name`.
-
-    An isinstance check that does not import the module, so a non-ASE object
-    never imports ASE.
-    """
+    """Report whether `obj`'s type or any base is `module.name`, without importing."""
     return any(
         base.__module__ == module and base.__name__ == name
         for base in type(obj).__mro__

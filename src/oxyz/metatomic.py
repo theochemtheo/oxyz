@@ -1,19 +1,11 @@
-"""metatomic conversion layer: extxyz frames to `metatomic.torch.System`.
+"""Convert extxyz frames to `metatomic.torch.System`.
 
-`read`/`iread` mirror `oxyz.ase`'s entry points but yield `System`s; the
-conversion reproduces `metatomic.torch.systems_to_torch(ase.io.read(...))`
-without an ASE round-trip — species map to atomic numbers via this package's
-own element table (`oxyz._convert`), and the cell follows the same Fortran-order
-`Lattice` reshape and pbc-masked zeroing `systems_to_torch` applies.
+`read`/`iread` mirror `oxyz.ase`'s entry points and match
+`metatomic.torch.systems_to_torch(ase.io.read(...))` without ASE.
+`SystemSource` parses once and serves `systems()` plus per-key tensors.
+Frames convert independently, so metadata keys may differ between them.
 
-`SystemSource` is the read-once handle: it parses a file once and serves both
-`systems()` and array-native `per_config`/`per_atom` extraction of arbitrary
-metadata/columns as torch tensors. It is built on per-frame `Frame`s rather than
-a single concatenated `Batch`, so files whose metadata keys drift between frames
-(common in training sets) still convert — each frame stands alone.
-
-Optional dependencies `torch` and `metatomic-torch`, installed with
-`pip install oxyz[metatomic]`.
+Needs `pip install oxyz[metatomic]`.
 """
 
 from __future__ import annotations
@@ -58,9 +50,7 @@ if TYPE_CHECKING:
 
 __all__ = ["SystemSource", "ToSystemError", "iread", "read"]
 
-# systems_to_torch's warning, on the same condition, with "a frame" in place of
-# its "an `ase.Atoms` object" — oxyz has no Atoms object to name. The shared
-# "non-zero cell vectors" phrasing is what the parity test matches on.
+# systems_to_torch's warning; the parity test matches "non-zero cell vectors".
 _PBC_CELL_MISMATCH = (
     "A conversion to `System` was requested for a frame with one or more "
     "non-zero cell vectors but where the corresponding boundary conditions are "
@@ -145,16 +135,12 @@ def read(  # noqa: PLR0913  keyword options mirror the System data model
     member: str | None = None,
     storage_options: StorageOptions | None = None,
 ) -> System | list[System]:
-    """Read frames into `System`s; default `index=":"` reads the whole file.
-
-    An int selects one frame (returned bare); a slice or slice-string returns a
-    list. Compressed paths are read too; a remote URL (``s3://``, ``gs://``,
-    ``az://``, ``hf://``) is read through the same parser.
+    """Read frames into `System`s.
 
     Parameters
     ----------
     path
-        File path or an S3-compatible URL.
+        File path or a remote URL; see `oxyz.read`.
     index
         `":"` (default) reads every frame; an `int` returns one `System`; a
         slice or slice-string returns a list.
@@ -168,23 +154,20 @@ def read(  # noqa: PLR0913  keyword options mirror the System data model
     cell_requires_grad
         Accepted for signature parity with `systems_to_torch`; not applied.
     threads
-        Parallel parse for the whole-file read (`None`: all cores). No effect
-        on bounded or reverse selections, which stream or seek.
+        Parallel parse for a whole-file read (`None`: all cores).
     schema
-        A `SchemaSpec`, or a path to a schema file, applied to the frames
-        actually read. See `oxyz.SchemaSpec`.
+        A `SchemaSpec`, or a path to a schema file. See `oxyz.SchemaSpec`.
     conformance
         How a schema deviation is handled: `"strict"`, `"required"`
         (default), or `"warn"`.
     mode
         Overrides the schema's own `mode`.
     compression
-        Forces a codec instead of inferring it from `path`; as in `oxyz.read`.
+        Forces a codec instead of inferring it from `path`; see `oxyz.read`.
     member
         Selects one entry from an archive holding more than one.
     storage_options
-        Endpoint/credentials for a remote store (needs the ``oxyz[s3]``
-        extra).
+        Endpoint/credentials for a remote store; see `oxyz.read`.
 
     Returns
     -------
@@ -256,12 +239,12 @@ def iread(  # noqa: PLR0913  keyword options mirror the System data model
     member: str | None = None,
     storage_options: StorageOptions | None = None,
 ) -> Iterator[System]:
-    """Stream `System`s one at a time, in bounded memory (serial parse).
+    """Stream `System`s one at a time, in bounded memory.
 
     Parameters
     ----------
     path
-        File path or an S3-compatible URL.
+        File path or a remote URL; see `oxyz.read`.
     index
         `":"` (default) yields every frame; see `read`.
     dtype
@@ -332,16 +315,12 @@ def iread(  # noqa: PLR0913  keyword options mirror the System data model
 
 
 class SystemSource:
-    """Read a file once; serve `System`s and per-key tensors from the result.
-
-    Built for the case where a caller needs both the structures and several
-    target arrays from one file (e.g. energy, forces, stress): one parse backs
-    every accessor, so the file is never re-read.
+    """Parse a file once; serve `System`s and per-key tensors from the result.
 
     Parameters
     ----------
     path
-        File path or an S3-compatible URL.
+        File path or a remote URL; see `oxyz.read`.
     threads
         Parallel parse (`None`: all cores).
     compression
@@ -374,7 +353,7 @@ class SystemSource:
         return len(self._frames)
 
     def __repr__(self) -> str:
-        """Count frames and atoms; the frames need not share columns to name."""
+        """Count frames and atoms."""
         n_atoms = np.array([frame.n_atoms for frame in self._frames], dtype=np.intp)
         return (
             f"SystemSource(n_frames={len(self._frames)}, "
@@ -463,8 +442,6 @@ class SystemSource:
         try:
             stacked = np.array(values)
         except ValueError:
-            # numpy 2 raises on ragged input rather than building an object
-            # array; surface the same message either way.
             raise ValueError(
                 f"metadata {key!r} has inconsistent shapes across frames"
             ) from None
@@ -551,13 +528,11 @@ def _to_system(
 
     cell, pbc = _cell_and_pbc(frame)
     if not np.all(np.any(cell != 0, axis=1) == pbc):
-        # stacklevel=3 (as systems_to_torch uses): point past _to_system and the
-        # read/systems comprehension at the user's call.
+        # stacklevel=3, as systems_to_torch uses, to reach the user's call.
         warnings.warn(_PBC_CELL_MISMATCH, stacklevel=3)
     pbc_tensor = torch.tensor(pbc, dtype=torch.bool, device=device)
     cell_tensor = torch.zeros((3, 3), dtype=resolved, device=device)
-    # Mirror systems_to_torch: keep only the periodic cell vectors. (Like it, we
-    # accept cell_requires_grad for signature parity but do not apply it.)
+    # As systems_to_torch does: keep only the periodic cell vectors.
     cell_tensor[pbc_tensor] = torch.tensor(cell[pbc], dtype=resolved, device=device)
 
     return System(types=types, positions=positions, cell=cell_tensor, pbc=pbc_tensor)
@@ -574,12 +549,7 @@ def _numbers(frame: Frame) -> np.ndarray:
 
 
 def _cell_and_pbc(frame: Frame) -> tuple[np.ndarray, np.ndarray]:
-    """Reconstruct ASE's `(cell, pbc)`.
-
-    A Fortran-order `Lattice`; pbc inferred from `Lattice` presence when not
-    given explicitly. The resolution itself lives in `oxyz._convert`; here it
-    only gains this target's error type.
-    """
+    """ASE's `(cell, pbc)` for a frame, raising this target's error type."""
     try:
         return _resolve_cell(frame.metadata), _resolve_pbc(frame.metadata)
     except FieldError as error:

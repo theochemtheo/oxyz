@@ -1,15 +1,10 @@
 """Fast extxyz reading for atomistic machine learning.
 
-A Rust parser behind a small, typed Python API. `read`/`iread` return frames as
-numpy arrays; `read_batch`/`iread_batch` concatenate frames into batches; `scan`
-and `infer_schema` report a file's structure. A
-`SchemaSpec` supplied to the read functions validates frames against an
-expected structure. ASE conversion lives in the optional `oxyz.ase`
-submodule.
-
-Columns and metadata are kept as written — no aliasing, no normalisation.
-`Frame`'s derived accessors (`positions`, `numbers`, `symbols`, `cell`, `pbc`)
-are opt-in views over those same dicts, computed on access.
+`read`/`iread` return frames of numpy arrays, `read_batch`/`iread_batch`
+concatenate them, and `scan` and `infer_schema` report a file's structure.
+A `SchemaSpec` validates or reshapes frames as they are read. Columns and
+metadata are kept as written. `oxyz.ase`, `oxyz.metatomic` and
+`oxyz.torch_sim` convert to other libraries.
 """
 
 from __future__ import annotations

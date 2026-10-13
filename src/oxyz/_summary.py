@@ -1,10 +1,6 @@
 """Display and equality shared by the public dataclasses.
 
-A dataclass `__repr__` over a dict of arrays prints its contents (500 KB for a
-100k-atom frame with a string column) and a dataclass `__eq__` raises
-`ValueError` on an ndarray value. Every public repr is built from these
-instead, so each is one line whose length depends on how many names an object
-carries, never on how many atoms or frames.
+Dataclass defaults would print every array and raise on ndarray equality.
 """
 
 from __future__ import annotations
@@ -29,9 +25,6 @@ def summarise(value: object) -> str:
     if isinstance(value, np.ndarray):
         return f"{value.dtype}{list(value.shape)}"
     if isinstance(value, list):
-        # A column list is list[str] or list[list[str]] by contract; take the
-        # tag from the first element rather than asserting `str` over a
-        # hand-built list of something else.
         first = value[0] if value else ""
         if isinstance(first, list):
             inner = type(first[0]).__name__ if first else "str"
@@ -43,10 +36,7 @@ def summarise(value: object) -> str:
 def mapping_repr[V](
     mapping: Mapping[str, V], render: Callable[[V], str] = summarise
 ) -> str:
-    """Render a name->value map as `{'pos': float64[96, 3], ...}`.
-
-    Insertion order, at most `_MAX_ENTRIES` entries, then `, +N more`.
-    """
+    """Render a name->value map as `{'pos': float64[96, 3], ...}`, truncated."""
     items = list(mapping.items())
     shown = ", ".join(
         f"{name!r}: {render(value)}" for name, value in items[:_MAX_ENTRIES]
@@ -60,8 +50,7 @@ def mapping_repr[V](
 def atom_range(n_atoms: np.ndarray) -> str:
     """Render per-frame atom counts as `, n_atoms=lo..hi`, or `""` if empty.
 
-    Always a range, even when `lo == hi`, so it cannot be misread as one
-    frame's count.
+    Always a range, so it cannot be read as one frame's count.
     """
     if not n_atoms.size:
         return ""
@@ -69,10 +58,7 @@ def atom_range(n_atoms: np.ndarray) -> str:
 
 
 def nondefault_repr(obj: DataclassInstance) -> str:
-    """Render a dataclass as its constructor, leaving out defaulted fields.
-
-    A field with no default is always shown.
-    """
+    """Render a dataclass as its constructor, leaving out defaulted fields."""
     shown = [
         f"{f.name}={getattr(obj, f.name)!r}"
         for f in dataclasses.fields(obj)
@@ -85,10 +71,7 @@ def nondefault_repr(obj: DataclassInstance) -> str:
 def values_equal(a: object, b: object) -> bool:
     """Report whether two stored values hold the same data, NaN equal to NaN.
 
-    Shapes must match; two float arrays compare bit-exact with `equal_nan`, so
-    a NaN column equals itself. Never raises, because `__eq__` must return a
-    bool: a value numpy cannot coerce, or an object array whose elements have
-    no unambiguous truth, simply equals nothing but itself.
+    Never raises: a value numpy cannot compare equals only itself.
     """
     if a is b:
         return True
@@ -100,22 +83,15 @@ def values_equal(a: object, b: object) -> bool:
         return False
     try:
         if left.dtype.kind == "f" and right.dtype.kind == "f":
-            # equal_nan needs both sides float: np.isnan raises on strings, and
-            # an integer array has no NaN to preserve.
+            # equal_nan needs floats on both sides.
             return bool(np.array_equal(left, right, equal_nan=True))
         return bool(np.array_equal(left, right))
     except ValueError:
-        # An object array of arrays: `bool()` over the elementwise comparison
-        # is ambiguous, so the two are not demonstrably equal.
         return False
 
 
 def mappings_equal(left: Mapping[str, object], right: Mapping[str, object]) -> bool:
-    """Report whether both maps carry the same names and equal values.
-
-    Key *sets*, not key order: `oxyz.write` imposes its own column order, so a
-    round-tripped frame that reordered nothing else stays equal.
-    """
+    """Report whether both maps carry the same names and equal values, in any order."""
     if set(left) != set(right):
         return False
     return all(values_equal(value, right[name]) for name, value in left.items())

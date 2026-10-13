@@ -1,14 +1,8 @@
 """ASE-independent chemistry and well-known-field helpers.
 
-`oxyz.metatomic` must map species to atomic numbers without importing ASE — the
-whole point is to read into torch without an ASE round-trip. The element table
-here is the same construction ASE uses (symbol index = atomic number, with `"X"`
-the dummy at 0), so it agrees with `ase.data.atomic_numbers` by construction; a
-parity test pins the two equal.
-
-The well-known-field resolvers (`positions`, `numbers`, `symbols`, `cell`,
-`pbc`) take the plain `columns`/`metadata` dicts rather than a `Frame`, so a
-`Batch`'s concatenated columns resolve through the same functions.
+The element table follows ASE's (index = atomic number, `"X"` at 0), and a
+parity test keeps it equal to `ase.data`. The field resolvers take plain
+`columns`/`metadata` dicts, so a `Batch` resolves through them too.
 """
 
 from __future__ import annotations
@@ -23,8 +17,7 @@ from oxyz._rust import OxyzError
 if TYPE_CHECKING:
     from oxyz._frames import ColumnValues, MetadataValue
 
-# Index = atomic number; `"X"` (0) is ASE's dummy atom. Element order is the
-# periodic table through Og (118).
+# Index = atomic number; `"X"` (0) is ASE's dummy atom.
 CHEMICAL_SYMBOLS: tuple[str, ...] = (
     "X",
     "H", "He",
@@ -48,11 +41,8 @@ CHEMICAL_SYMBOLS: tuple[str, ...] = (
 
 SYMBOL_TO_Z: dict[str, int] = {symbol: z for z, symbol in enumerate(CHEMICAL_SYMBOLS)}
 
-# Standard atomic weights, index = atomic number, matching `ase.data.atomic_masses`
-# (the IUPAC 2016 table ASE defaults to). The dummy atom `X` (Z=0) is 1.0, as ASE
-# has it. `oxyz.torch_sim` needs masses without an ASE round-trip — extxyz rarely
-# carries a `masses` column, so it derives them from atomic numbers here; a parity
-# test pins this equal to `ase.data.atomic_masses`.
+# Standard atomic weights by atomic number, as `ase.data.atomic_masses`
+# (IUPAC 2016); `X` is 1.0.
 ATOMIC_MASSES: np.ndarray = np.array(
     [
         1.0, 1.008, 4.002602, 6.94, 9.0121831, 10.81,
@@ -80,20 +70,14 @@ ATOMIC_MASSES: np.ndarray = np.array(
 
 
 def numbers_to_masses(atomic_numbers: np.ndarray) -> np.ndarray:
-    """Return standard atomic weights for an array of atomic numbers.
-
-    Looks up `ATOMIC_MASSES`. Callers pass numbers from `species_to_numbers`
-    or a `Z` column, in range `0..118` for real elements.
-    """
+    """Return standard atomic weights for an array of atomic numbers."""
     return ATOMIC_MASSES[atomic_numbers]
 
 
 def numbers_to_symbols(atomic_numbers: np.ndarray) -> list[str]:
-    """Return chemical symbols for an array of atomic numbers.
+    """Return chemical symbols for atomic numbers, rejecting out-of-range values.
 
-    The inverse of `species_to_numbers` on the same `CHEMICAL_SYMBOLS` table.
-    Validates explicitly rather than letting the table index raise, because a
-    negative atomic number would silently wrap to the far end of the table.
+    A negative number would otherwise wrap to the far end of the table.
     """
     values = atomic_numbers.tolist()
     unknown = sorted({z for z in values if not 0 <= z < len(CHEMICAL_SYMBOLS)})
@@ -105,9 +89,8 @@ def numbers_to_symbols(atomic_numbers: np.ndarray) -> list[str]:
 class FieldError(OxyzError):
     """A well-known field is absent, or present in a shape it cannot hold.
 
-    Raised by the derived `Frame` accessors (`positions`, `numbers`, `symbols`,
-    `cell`, `pbc`) and by `oxyz.write` when a column's row count disagrees with
-    the frame's `n_atoms`.
+    Raised by the derived `Frame` accessors, and by `oxyz.write` when a
+    column's row count disagrees with `n_atoms`.
     """
 
 
@@ -116,12 +99,7 @@ class UnknownSpeciesError(FieldError):
 
 
 class MissingSpeciesError(FieldError):
-    """Columns carry no `Z`, `numbers`, or `species` to derive atomic numbers.
-
-    Carries a default message so it reads sensibly when it escapes a `Frame`
-    accessor unwrapped; each conversion target catches it and re-raises with
-    its own wording.
-    """
+    """Columns carry no `Z`, `numbers`, or `species` to derive atomic numbers."""
 
     def __init__(self, message: str = "no 'species', 'Z', or 'numbers' column") -> None:
         super().__init__(message)
@@ -129,26 +107,21 @@ class MissingSpeciesError(FieldError):
 
 @functools.cache
 def _atomic_number(symbol: str) -> int:
-    """Atomic number for a species token, capitalised (so `si` -> `Si`).
+    """Atomic number for a species token, capitalised (`si` -> `Si`).
 
-    Cached: a file repeats the same handful of species across every atom, so the
-    capitalise and dict lookup happen once per distinct token, not once per atom.
-    Raises `KeyError` for non-symbols, surfaced as `UnknownSpeciesError` by the
-    caller.
+    Cached, as a file repeats a few species across every atom. Raises
+    `KeyError` for a non-symbol.
     """
     return SYMBOL_TO_Z[symbol.capitalize()]
 
 
 def species_to_numbers(symbols: np.ndarray | list) -> np.ndarray:
-    """Map a species column to int32 atomic numbers via the cached per-token lookup.
+    """Map a species column to int32 atomic numbers.
 
-    The capitalising lookup both conversion layers share: `oxyz.ase` and
-    `oxyz.metatomic` call this rather than ASE's, on this module's own table so
-    no ASE import is needed. Accepts the column as stored: a 1-D string array or
-    `list[str]` maps; a multi-component `list[list[str]]` has no symbol mapping
-    and raises.
+    A multi-component `list[list[str]]` column has no symbol mapping and
+    raises.
     """
-    # tolist() yields plain str, faster to iterate than ndarray's np.str_ scalars.
+    # Plain str iterates faster than np.str_.
     species: list = symbols if isinstance(symbols, list) else symbols.tolist()
     try:
         return np.fromiter(
@@ -157,10 +130,8 @@ def species_to_numbers(symbols: np.ndarray | list) -> np.ndarray:
             count=len(species),
         )
     except (KeyError, TypeError):
-        # KeyError: a token that is not a chemical symbol. TypeError: a non-scalar
-        # species cell (a multi-component `species:S:2` column is list[list[str]],
-        # unhashable, so the cached lookup cannot key on it). Either way the column
-        # has no faithful symbol mapping.
+        # KeyError: not a chemical symbol. TypeError: a multi-component cell, which
+        # is unhashable.
         tokens = (str(s).capitalize() for s in species)
         unknown = sorted({t for t in tokens if t not in SYMBOL_TO_Z})
         raise UnknownSpeciesError(
@@ -169,11 +140,7 @@ def species_to_numbers(symbols: np.ndarray | list) -> np.ndarray:
 
 
 def positions(columns: dict[str, ColumnValues]) -> np.ndarray:
-    """Return the `pos` column as an array.
-
-    The stored array itself, not a copy. Raises `FieldError` when the frame
-    carries no `pos` column.
-    """
+    """Return the stored `pos` column, or raise `FieldError` without one."""
     column = columns.get("pos")
     if column is None:
         raise FieldError("no 'pos' column to use as positions")
@@ -181,16 +148,10 @@ def positions(columns: dict[str, ColumnValues]) -> np.ndarray:
 
 
 def numbers(columns: dict[str, ColumnValues]) -> np.ndarray:
-    """Return atomic numbers (int32) from columns.
+    """Return int32 atomic numbers from `Z`, else `numbers`, else `species`.
 
-    An explicit `Z`/`numbers` column wins, else the `species` column is
-    mapped via the shared element table. Works on a single frame's per-atom
-    columns or a batch's concatenated
-    columns alike. Raises `MissingSpeciesError` when no usable column is
-    present, `UnknownSpeciesError` when a species token has no chemical
-    symbol, and `FieldError` when a `Z`/`numbers` column holds something that
-    is not a number (a `Z:S:1` string column, say); the conversion layers map
-    these to their own error type.
+    Raises `MissingSpeciesError` with none of them, `UnknownSpeciesError` for
+    a non-symbol species, and `FieldError` for a non-numeric `Z`/`numbers`.
     """
     for name in ("Z", "numbers"):
         column = columns.get(name)
@@ -212,14 +173,10 @@ def numbers(columns: dict[str, ColumnValues]) -> np.ndarray:
 
 
 def symbols(columns: dict[str, ColumnValues]) -> list[str]:
-    """Return chemical symbols for the frame's atoms.
+    """Return chemical symbols: the stored `species` column, else from `numbers`.
 
-    A `species` column wins and is returned as stored (the list itself when it
-    is already a `list[str]`); otherwise the symbols are mapped back from
-    `numbers`. Raises `MissingSpeciesError` when neither is present, and
-    `FieldError` for a multi-component `species:S:2`-style column, which has
-    no one symbol per atom, or for a `species` that is not a per-atom column
-    at all.
+    Raises `MissingSpeciesError` with neither, and `FieldError` for a
+    `species` that is not one symbol per atom.
     """
     species = columns.get("species")
     if species is None:
@@ -237,9 +194,8 @@ def symbols(columns: dict[str, ColumnValues]) -> list[str]:
 def cell(metadata: dict[str, MetadataValue]) -> np.ndarray:
     """Return the 3x3 cell in ASE's row-vector convention.
 
-    The flat, Fortran-order `Lattice` reshaped and transposed; all-zero when
-    `Lattice` is absent. Raises `FieldError` when `Lattice` is present with a
-    shape other than `(9,)`, or holding something that is not numeric.
+    The flat, Fortran-order `Lattice` reshaped and transposed; all-zero
+    without one. Raises `FieldError` unless `Lattice` is 9 numbers.
     """
     lattice = metadata.get("Lattice")
     if lattice is None:
@@ -259,9 +215,8 @@ def cell(metadata: dict[str, MetadataValue]) -> np.ndarray:
 def pbc(metadata: dict[str, MetadataValue]) -> np.ndarray:
     """Return the three periodic-boundary flags.
 
-    An explicit `pbc` defaults to all-true when `Lattice` is present and
-    all-false when it is not; a scalar broadcasts to all three axes, as ASE
-    does. Raises `FieldError` for any other shape.
+    Without `pbc`, all-true with a `Lattice` and all-false without; a scalar
+    broadcasts, as in ASE. Raises `FieldError` for any other shape.
     """
     value = metadata.get("pbc")
     if value is None:

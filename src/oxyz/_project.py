@@ -1,14 +1,4 @@
-"""Schema projection: compile, freeze, and police a `SchemaSpec`.
-
-Compiles a `SchemaSpec` into a fixed-shape plan, freezes its patterns against
-a dataset, and translates the core's deviation report into raise / warn /
-drop policy.
-
-The Rust core reshapes each frame to the plan and reports what it saw; this
-module owns everything policy-shaped that the core deliberately does not — the
-effective-mode rule, the spec-error checks (patterns and un-fillable fields),
-and the mapping from deviations onto `SchemaError` / `SchemaWarning`.
-"""
+"""Schema projection policy: compiling, freezing, and enforcing a `SchemaSpec`."""
 
 from __future__ import annotations
 
@@ -50,14 +40,11 @@ def freeze_spec(
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
 ) -> SchemaSpec:
-    """Expand pattern rules into a literal, project-ready spec (``mode='project'``).
+    """Expand pattern rules into a literal spec with `mode='project'`.
 
-    Rules are expanded against a representative dataset. Literal rules pass
-    through untouched; each pattern rule becomes one literal rule per matched
-    inferred field — required when the field is present in every frame,
-    optional otherwise, so projection fills the sometimes-absent ones. A
-    matched field whose kind conflicts across frames cannot be frozen and
-    raises `SchemaError`.
+    Each pattern becomes one literal rule per matched field, required when
+    every frame has it and optional otherwise. A field whose kind conflicts
+    across frames raises `SchemaError`.
     """
     from oxyz import infer_schema
 
@@ -113,12 +100,9 @@ def _freeze_columns(
 def _check_freezable_optional(
     name: str, pattern: str, kind: Kind, *, required: bool, fill: object, axis: str
 ) -> None:
-    """Refuse to freeze an optional, un-fillable field.
+    """Refuse to freeze an optional INT/BOOL/STR field with no fill.
 
-    A pattern that matches a field present in only *some* frames freezes it
-    to an optional rule; if that field is INT/BOOL/STR with no fill,
-    projection could never materialise it, so refuse here rather than emit a
-    spec that raises at read time.
+    Projection could never fill it, so the spec would fail at read time.
     """
     if not required and kind in _NO_NATURAL_NULL and fill is None:
         raise SchemaError(
@@ -166,23 +150,18 @@ def _freeze_metadata(
 
 
 def effective_mode(spec: SchemaSpec, override: Mode | None) -> Mode:
-    """Return the mode a read runs under.
-
-    An explicit `override` wins, else the spec's own `mode`.
-    """
+    """Return the mode a read runs under: `override`, else the spec's own."""
     return override if override is not None else spec.mode
 
 
 def _fill_for(rule: ColumnRule | MetadataRule) -> float | int | bool | str | None:
     if rule.fill is not None:
         return rule.fill
-    # REAL has NaN as a natural null; other kinds have none, so leave it unset
-    # (the core drops an absent one rather than fabricate a value).
+    # Only REAL has a natural null; the core drops an absent field of another kind.
     return math.nan if rule.kind == Kind.REAL else None
 
 
 def _fill_matches_kind(fill: object, kind: Kind) -> bool:
-    # bool before int: Python's bool is an int subclass.
     if kind == Kind.BOOL:
         return isinstance(fill, bool)
     if kind == Kind.INT:
@@ -203,9 +182,7 @@ def _plan_entry(rule: ColumnRule | MetadataRule, *, is_metadata: bool) -> tuple:
             f"null; give it a 'fill' value so projection can materialise it"
         )
     if rule.fill is not None and not _fill_matches_kind(rule.fill, rule.kind):
-        # Catch a mismatched fill here (e.g. a string fill on an INT column, or
-        # one pattern's fill copied by freeze onto a differing-kind column) with
-        # a clear message rather than a TypeError from the binding at read time.
+        # A clear error now, rather than a TypeError from the binding at read time.
         raise SchemaError(
             f"{axis} {name!r}: fill {rule.fill!r} is not a valid {letter} value"
         )
@@ -217,12 +194,10 @@ def _plan_entry(rule: ColumnRule | MetadataRule, *, is_metadata: bool) -> tuple:
 
 
 def compile_projection(spec: SchemaSpec, mode: Mode) -> ProjectionPlan | None:
-    """Compile `spec` under `mode` into a crossing plan, or `None` for validate mode.
+    """Compile `spec` into a crossing plan, or `None` under validate mode.
 
-    Returns `(columns, metadata)`; `None` means nothing to project. Raises
-    `SchemaError` before any read for a pattern rule (project needs a
-    fixed shape — point at `freeze`) or an optional INT/BOOL/STR field with no
-    fill (no null to materialise it with).
+    Raises `SchemaError` before any read for a pattern rule (use `freeze`) or
+    an optional INT/BOOL/STR field with no fill.
     """
     if mode == "validate":
         return None
@@ -239,8 +214,7 @@ def compile_projection(spec: SchemaSpec, mode: Mode) -> ProjectionPlan | None:
 
 
 def _to_violation(deviation: DeviationData) -> Violation:
-    # The core only emits the "missing"/"mismatch" subset on the column/metadata
-    # axes; the dicts type those fields as plain str, so narrow to the literals.
+    # The core emits only missing/mismatch here; narrow from str.
     return Violation(
         axis=cast("Axis", deviation["axis"]),
         name=deviation["name"],
@@ -257,12 +231,10 @@ def enforce_projection(
     *,
     dropped: bool,
 ) -> bool:
-    """Apply conformance policy to one projected frame's report.
+    """Apply conformance policy to one projected frame; return whether to keep it.
 
-    Returns whether to keep the frame. Under `strict`/`required`, raise
-    `SchemaError` on the first deviation. Under
-    `warn`, emit a `SchemaWarning` per deviation and keep the frame unless it was
-    dropped (an unfillable required/wrong field). A clean, kept frame is silent.
+    Under `strict`/`required`, raise on the first deviation; under `warn`,
+    warn once per deviation and keep the frame unless it dropped.
     """
     if not deviations and not dropped:
         return True
@@ -273,9 +245,7 @@ def enforce_projection(
                 message(first, frame_index), frame_index=frame_index, name=first.name
             )
         if dropped:
-            # A drop always carries a deviation in practice; raise rather than
-            # silently lose the frame under strict/required if the core ever
-            # dropped one without reporting why.
+            # Raise rather than silently lose a frame dropped without a deviation.
             raise SchemaError(
                 f"frame {frame_index}: dropped by projection", frame_index=frame_index
             )
