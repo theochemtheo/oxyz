@@ -19,8 +19,7 @@ SPEC = SchemaSpec(
     columns=(
         ColumnRule("species", Kind.STR),
         ColumnRule("pos", Kind.REAL, width=3),
-        # Optional so the conformant/extra-column files (which lack it) pass;
-        # a present-but-mismatched magmom still fires (drift fixture, frame 1).
+        # Optional, so only the drift fixture's mismatched magmom fires.
         ColumnRule("magmom", Kind.REAL, width=3, required=False),
     ),
     metadata=(MetadataRule("energy", Kind.REAL),),
@@ -77,9 +76,7 @@ def test_schema_from_yaml_path(tmp_path: Path):
 
 
 def test_read_index_zero_with_schema_validates_whole_file():
-    # read(path, 0, schema) inherits nth_frame's whole-file validation: a drift
-    # at frame 1 is raised even when selecting frame 0, so an indexed read
-    # validates consistently with ase.read whatever the index.
+    # The whole file is validated whatever the index.
     with pytest.raises(SchemaError) as excinfo:
         read(DATA / "schema_drift_type.extxyz", 0, schema=SPEC, conformance="required")
     assert excinfo.value.frame_index == 1
@@ -220,8 +217,7 @@ def test_strict_and_required_collapse_under_project(tmp_path):
     )
     strict = oxyz.read(f, schema=spec, conformance="strict")
     required = oxyz.read(f, schema=spec, conformance="required")
-    # Under project, an undeclared field is dropped, never a violation — so
-    # strict and required behave identically (neither raises on 'charge').
+    # Projection drops undeclared fields, so strict and required agree.
     assert [set(fr.columns) for fr in strict] == [set(fr.columns) for fr in required]
     assert all(set(fr.columns) == {"species", "pos"} for fr in strict)
 
@@ -271,8 +267,7 @@ def test_2d_metadata_shape_rejected_by_projection(tmp_path):
         metadata=(MetadataRule("key", Kind.INT, shape=(2, 2), required=True),),
         mode="project",
     )
-    # 2-D metadata projection stays unsupported: a clear error, not a panic
-    # and not silent flattening to 1-D.
+    # 2-D metadata projection is unsupported: an error, not a panic or flattening.
     with pytest.raises(ValueError, match="more than one dimension"):
         oxyz.read(f, schema=spec)
 
@@ -350,8 +345,6 @@ def test_read_frames_sliced_projects_kept_frames(tmp_path):
     import numpy as np
 
     f = _mixed_file(tmp_path)
-    # Slice off the first frame: the projected branch reshapes only what the
-    # slice keeps, indexed by original position.
     frames = read(f, slice(1, None), schema=_proj_spec())
     assert len(frames) == 1
     assert set(frames[0].columns) == {"species", "pos", "charge"}
@@ -363,8 +356,6 @@ def test_reverse_slice_with_schema_projects(tmp_path):
     import oxyz.ase
 
     f = _mixed_file(tmp_path)
-    # A reverse slice with a schema takes sliced_frames' read-and-project path
-    # (the streaming/index shortcut is skipped so the sought frames are shaped).
     atoms = list(oxyz.ase.iread(f, "::-1", schema=_proj_spec()))
     assert len(atoms) == 2
     assert all(len(a) == 1 for a in atoms)

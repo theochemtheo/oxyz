@@ -1,17 +1,9 @@
-//! Concatenated batches of frames: the CSR-style unit for bulk and training
-//! reads.
+//! Concatenated batches of frames.
 //!
-//! Per-atom columns from every frame are concatenated atom-major; `offsets`
-//! (PyG's `ptr`) marks frame boundaries, so frame `i` occupies rows
-//! `offsets[i]..offsets[i + 1]`. Per-frame metadata becomes frame-major
-//! columns: one row per frame.
-//!
-//! The first frame pushed defines the contract: every later frame must match
-//! its column names, kinds, and widths, and its metadata keys. The one
-//! sanctioned unification is Int/Real promotion (the same rule as
-//! [`crate::schema`]'s unify); everything else is an error — hiding schema
-//! inconsistencies is a non-goal. A pinned dtype contract via `Schema` is
-//! the designed extension, not implemented yet.
+//! Per-atom columns are concatenated atom-major, with `offsets` marking frame
+//! boundaries; metadata becomes frame-major columns. The first frame sets the
+//! contract every later frame must meet, with Int/Real promotion the only
+//! unification.
 
 use thiserror::Error;
 
@@ -131,7 +123,7 @@ impl BatchBuilder {
                 })
                 .collect();
         } else {
-            // Match by name: extxyz files may reorder columns between frames.
+            // extxyz files may reorder columns between frames.
             let mut incoming: Vec<Option<Column>> = frame.columns.into_iter().map(Some).collect();
             for column in &mut self.columns {
                 let position = incoming
@@ -213,9 +205,7 @@ fn value_to_data(value: Value) -> (ColumnData, usize) {
             let width = values.len();
             (ColumnData::Str(values), width)
         }
-        // A 2-D value flattens into a fixed-width column like a 1-D array
-        // does: the batch is frame-major and does not preserve per-key shape,
-        // only per-column width.
+        // Flattened: the batch keeps per-column width, not per-key shape.
         Value::RealArray2D { rows, cols, data } => (ColumnData::Real(data), rows * cols),
         Value::IntArray2D { rows, cols, data } => (ColumnData::Int(data), rows * cols),
         Value::BoolArray2D { rows, cols, data } => (ColumnData::Bool(data), rows * cols),
@@ -272,9 +262,8 @@ fn append_column(
     }
 }
 
-/// Concatenate two buffers of the same kind; Int/Real pairs promote to Real
-/// (the schema's one sanctioned unification). Anything else is returned for
-/// error reporting.
+/// Concatenate two buffers of one kind, promoting Int/Real pairs to Real.
+/// Anything else is returned for error reporting.
 fn merge_data(
     current: ColumnData,
     incoming: ColumnData,

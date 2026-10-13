@@ -1,6 +1,5 @@
-//! Single-pass reads must match the two-pass path on valid input, and the
-//! partial-read promise (nothing past the last requested frame is
-//! inspected) must hold where they deliberately differ.
+//! Single-pass reads match the two-pass path on valid input, and read
+//! nothing past the last requested frame.
 
 use std::path::PathBuf;
 
@@ -123,10 +122,8 @@ fn batch_errors_resolve_in_request_order() {
 
 #[test]
 fn structural_damage_in_the_needed_prefix_wins() {
-    // Frame 1 has a content error; frame 2's count line is structural junk.
-    // Requesting frame 3 forces the scan through the damage, and the
-    // structural error must win even though frame 1 sits earlier in the
-    // request — without trustworthy structure, frame 3 cannot be located.
+    // Frame 1 has a content error, frame 2 a structural one. The structural
+    // error wins: without it frame 3 cannot be located.
     let frames = simple_frames(2).replace("H 0 0 1\n", "H 0 0 1 99\n");
     let text = format!("{frames}not-a-count\n");
     let path = write_temp("structural.xyz", &text);
@@ -145,10 +142,8 @@ fn structural_damage_in_the_needed_prefix_wins() {
     std::fs::remove_file(path).ok();
 }
 
-/// Serial and parallel full reads must agree on which error is reported:
-/// the first in frame order, even when a content error (frame 1) races a
-/// structural error further on (frame 3). The two-pass path got this wrong
-/// — its up-front scan reported frame 3.
+/// Serial and parallel full reads report the same error: the first in frame
+/// order, even when a structural error follows.
 #[cfg(feature = "parallel")]
 #[test]
 fn full_read_reports_the_first_error_in_frame_order() {
@@ -168,8 +163,7 @@ fn full_read_reports_the_first_error_in_frame_order() {
     std::fs::remove_file(path).ok();
 }
 
-/// The two-pass path raised "batch is empty" here; an empty file is no
-/// frames, exactly as the serial read says.
+/// An empty file is no frames, as in the serial read.
 #[cfg(feature = "parallel")]
 #[test]
 fn empty_file_is_no_frames_at_every_thread_count() {
@@ -182,8 +176,7 @@ fn empty_file_is_no_frames_at_every_thread_count() {
     std::fs::remove_file(path).ok();
 }
 
-/// A bad count line must raise the identical error from a streamed parse
-/// and a structural scan; the message is the trimmed line either way.
+/// A bad count line raises the same error from a parse and a scan.
 #[test]
 fn count_line_errors_match_between_scan_and_parse() {
     let path = write_temp("badcount.xyz", "  abc  \n");

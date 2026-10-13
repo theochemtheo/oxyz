@@ -1,16 +1,8 @@
-"""ASE conversion layer: all ASE knowledge in oxyz lives in this module.
+"""Convert between extxyz frames and `ase.Atoms`.
 
-Mirrors the mapping of `ase.io.extxyz`'s reader, reusing its routing tables
-and `set_calc_and_arrays` so the result agrees with `ase.io.read` by
-construction; golden tests in tests/test_ase.py hold the two readers equal.
-
-Conversion is last-moment: the Rust core and `Frame` know nothing of ASE.
-ASE is an optional dependency pinned `<4` — ASEv4 may change the data model,
-so new majors are opted into deliberately.
-
-Known divergence from `ase.io.read`: 6-component (Voigt) `stress` metadata
-is accepted and routed to the calculator; ASE's comment parser rejects it.
-The README's "Divergences from ASE" section lists the rest.
+Reuses `ase.io.extxyz`'s routing tables and `set_calc_and_arrays`, so results
+agree with `ase.io.read`. One divergence: 6-component (Voigt) `stress`
+metadata is accepted; the README lists the rest.
 """
 
 from __future__ import annotations
@@ -42,8 +34,7 @@ try:
     from ase import Atoms
     from ase.constraints import FixAtoms, FixCartesian
 
-    # Internal-but-stable pieces of ase.io.extxyz, reused deliberately so the
-    # key routing cannot drift from ASE's own reader. Revisit at ASEv4.
+    # Reused so key routing matches ASE's own reader.
     from ase.io.extxyz import (
         PROPERTY_NAME_MAP,
         REV_PROPERTY_NAME_MAP,
@@ -59,7 +50,6 @@ except ImportError as error:
 
 __all__ = ["FromAtomsError", "ToAseError", "from_atoms", "iread", "read", "to_atoms"]
 
-# A per-atom Cartesian mask is one row per atom, three columns.
 _N_CARTESIAN = 3
 
 
@@ -92,16 +82,13 @@ def to_atoms(frame: Frame) -> Atoms:  # noqa: C901, PLR0912  flat field-by-field
     """
     info: dict = dict(frame.metadata)
 
-    # ASE-table parity, not a duplicate of `oxyz._convert.cell`: this loop
-    # reshapes `virial` and `stress` alongside `Lattice`, following ASE's own
-    # routing tables, and feeds the `info.pop` flow below.
+    # Unlike `oxyz._convert.cell`, this follows ASE's tables for virial and stress too.
     for key in SPECIAL_3_3_KEYS:
         value = info.get(key)
         if value is None:
             continue
         value = np.asarray(value)
         if value.shape == (9,):
-            # extxyz stores these matrices flattened in Fortran order.
             info[key] = value.reshape((3, 3), order="F")
         elif key == "Lattice":
             raise ToAseError(f"Lattice must have 9 components, got shape {value.shape}")
@@ -122,9 +109,7 @@ def to_atoms(frame: Frame) -> Atoms:  # noqa: C901, PLR0912  flat field-by-field
     numbers = arrays.pop("numbers", None)
     symbols = arrays.pop("symbols", None)
     if symbols is not None:
-        # Map the species column to atomic numbers and hand ASE those; a `Z`
-        # column, if also present, still wins (as ASE's reader has it). The map
-        # is oxyz._convert's ASE-independent table, pinned equal to ase.data.
+        # A `Z` column, if present, still wins, as in ASE's reader.
         try:
             mapped = species_to_numbers(symbols)
         except UnknownSpeciesError as error:
@@ -136,9 +121,7 @@ def to_atoms(frame: Frame) -> Atoms:  # noqa: C901, PLR0912  flat field-by-field
 
     positions = arrays.pop("positions", None)
     if positions is None:
-        # No 'pos' column (e.g. a projection schema that omits it). Refuse
-        # rather than let ase default every atom to the origin — silent
-        # corruption. Mirrors oxyz.metatomic's ToSystemError.
+        # ASE would otherwise put every atom at the origin.
         raise ToAseError("frame has no 'pos' column to use as positions")
 
     atoms = Atoms(
@@ -162,7 +145,6 @@ def to_atoms(frame: Frame) -> Atoms:  # noqa: C901, PLR0912  flat field-by-field
         else:
             raise ToAseError(f"move_mask must have width 1 or 3, got {move_mask.shape}")
 
-    # ASE's own routing: known results -> SinglePointCalculator, rest -> arrays.
     set_calc_and_arrays(atoms, arrays)
     return atoms
 
@@ -170,14 +152,9 @@ def to_atoms(frame: Frame) -> Atoms:  # noqa: C901, PLR0912  flat field-by-field
 def from_atoms(atoms: Atoms) -> Frame:
     """Convert one `ase.Atoms` to a `Frame`, the inverse of `to_atoms`.
 
-    Mirrors `ase.io.write`'s mapping so the written file agrees with ASE's:
-    `numbers` become a `species` column, `positions` a `pos` column, the cell a
-    flat row-major `Lattice`, and the remaining `arrays`/`info` carry across with
-    ASE's name map. Any attached calculator's results (energy, forces, ...) are
-    folded in unprefixed, so they re-read as a `SinglePointCalculator`.
-
-    `FixAtoms` constraints become a `move_mask` column; other constraint types
-    have no column form and raise.
+    Follows `ase.io.write`'s mapping. Calculator results are folded in
+    unprefixed, so they re-read as a `SinglePointCalculator`; `FixAtoms`
+    becomes a `move_mask` column.
 
     Parameters
     ----------
@@ -194,8 +171,7 @@ def from_atoms(atoms: Atoms) -> Frame:
     FromAtomsError
         If `atoms` carries a constraint other than `FixAtoms`.
     """
-    # Copy before folding calculator results, which mutates arrays and info.
-    # `Atoms.copy()` drops the calculator, so pass the original's explicitly.
+    # `Atoms.copy()` drops the calculator, so keep the original's.
     calc = atoms.calc
     atoms = atoms.copy()
     if calc is not None:
@@ -215,14 +191,12 @@ def from_atoms(atoms: Atoms) -> Frame:
 
     metadata: dict[str, MetadataValue] = {}
     if atoms.cell.rank > 0 or atoms.pbc.any():
-        # to_atoms reads Lattice as a Fortran-order 3x3 then transposes into the
-        # cell; the inverse is the plain row-major flatten of the cell.
+        # The inverse of to_atoms's Fortran-order reshape and transpose.
         metadata["Lattice"] = np.asarray(atoms.cell).reshape(9)
         metadata["pbc"] = np.asarray(atoms.pbc)
     for key, value in atoms.info.items():
         array = np.asarray(value)
         if key in SPECIAL_3_3_KEYS and array.shape == (3, 3):
-            # Stored flattened in Fortran order, the shape to_atoms reshapes back.
             metadata[key] = array.reshape(9, order="F")
         else:
             metadata[key] = value
@@ -231,11 +205,7 @@ def from_atoms(atoms: Atoms) -> Frame:
 
 
 def _move_mask_column(atoms: Atoms) -> np.ndarray | None:
-    """Per-atom `move_mask` from `FixAtoms` constraints (True where free).
-
-    The inverse of `to_atoms`'s `FixAtoms(mask=~move_mask)`; other constraint
-    types have no faithful column form.
-    """
+    """Per-atom `move_mask` from `FixAtoms` constraints (True where free)."""
     if not atoms.constraints:
         return None
     mask = np.ones(len(atoms), dtype=bool)
@@ -311,56 +281,37 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
     member: str | None = None,
     storage_options: StorageOptions | None = None,
 ) -> Atoms | list[Atoms]:
-    """Drop-in for `ase.io.read` on extxyz files; full ASE index grammar.
+    """Drop-in for `ase.io.read` on extxyz files, with ASE's index grammar.
 
-    Like ASE, the default index is -1: the last frame. Forward selections
-    stream; negative or reverse ones resolve via a structural scan and seek,
-    never a full parse. Per-frame projection/validation (`schema`, `mode`,
-    `conformance`) is applied to the frames actually read; whole-file inference
-    is `oxyz.infer_schema`'s job. A negative or reverse index with a `schema`
-    reads the whole file (forgoing the seek shortcut) so the sought frames are
-    projected before conversion.
-
-    Compressed paths (`.gz`, `.zst`, `.zip`, `.tar.gz`, `.tar.zst`, `.tar`) are
-    read too. A compressed source cannot seek, so a negative or reverse index
-    reads the whole file and indexes in memory (as ASE does), forgoing the
-    partial-read shortcut.
-
-    Remote URLs (``s3://``, ``gs://``, ``az://``, ``hf://``) are supported; pass
-    ``storage_options`` to supply endpoint/credentials. Remote sources are
-    non-seekable, so negative or reverse indices read the whole stream in
-    memory, the same as compressed local files.
+    As in ASE, the default index is -1, the last frame. A negative or reverse
+    index seeks after a structural scan, except on a compressed or remote
+    source, or with a `schema`, where the whole file is read.
 
     Parameters
     ----------
     path
-        File path or an S3-compatible URL.
+        File path or a remote URL; see `oxyz.read`.
     index
-        ASE index grammar. `None` defaults to -1 (the last frame); an `int`
-        returns one `Atoms`; a slice or slice-string (`"1:10:2"`) returns a
-        list.
+        ASE index grammar. `None` means -1; an `int` returns one `Atoms`; a
+        slice or slice-string (`"1:10:2"`) returns a list.
     format
-        Accepted for `ase.io.read` compatibility; only `None`, `"extxyz"`, and
-        `"xyz"` are valid.
+        For `ase.io.read` compatibility; only `None`, `"extxyz"`, and `"xyz"`
+        are valid.
     threads
-        Parallel parse for an eager whole-file/forward read (`None`: all
-        cores, `1`: serial). No effect on a single-frame or bounded selection,
-        which streams or seeks.
+        Parallel parse for a whole-file or forward read (`None`: all cores,
+        `1`: serial).
     schema
-        A `SchemaSpec`, or a path to a `.json`/`.yaml`/`.toml` schema file,
-        applied to the frames actually read. See `oxyz.SchemaSpec`.
+        A `SchemaSpec`, or a path to a schema file, applied to the frames read.
+        See `oxyz.SchemaSpec`.
     conformance
         How a schema deviation is handled: `"strict"`, `"required"`
         (default), or `"warn"`.
     mode
         Overrides the schema's own `mode`.
     compression
-        Forces a codec (`"infer"`, `"none"`, `"gzip"`, `"zstd"`, `"zip"`,
-        `"tar"`, `"tar.gz"`, `"tar.zst"`) instead of inferring it from `path`;
-        as in `oxyz.read`.
+        Forces a codec instead of inferring it from `path`; see `oxyz.read`.
     member
-        Selects one entry from a `.zip`/`.tar`/`.tar.gz`/`.tar.zst` holding
-        more than one.
+        Selects one entry from an archive holding more than one.
     storage_options
         Endpoint/credentials for a remote store.
 
@@ -420,16 +371,16 @@ def iread(  # noqa: PLR0913  the index/schema/projection/source options are the 
     member: str | None = None,
     storage_options: StorageOptions | None = None,
 ) -> Iterator[Atoms]:
-    """Drop-in for `ase.io.iread` on extxyz files: yields one Atoms at a time.
+    """Drop-in for `ase.io.iread` on extxyz files, yielding one `Atoms` at a time.
 
     Parameters
     ----------
     path
-        File path or an S3-compatible URL.
+        File path or a remote URL; see `oxyz.read`.
     index
         ASE index grammar; see `read`. Default `":"` yields every frame.
     format
-        Accepted for `ase.io.iread` compatibility; see `read`.
+        For `ase.io.iread` compatibility; see `read`.
     schema
         A `SchemaSpec`, or a path to a schema file; see `read`.
     conformance

@@ -1,11 +1,7 @@
 """Notebook rendering: the `_repr_html_` tables.
 
-Plain `<table>` markup with no colours, scripts or styles, so a notebook's own
-theme applies. Unlike `repr`, cells preview values, within fixed bounds: the
-first `PREVIEW_ROWS` rows of an array, arrays in full up to `ARRAY_ELEMENTS`
-elements, every cell cut at `CELL_CHARS`. Numbers are formatted here, element
-by element, so numpy's global printoptions never change the output. Every name
-and value is escaped: keys come from the file.
+Plain `<table>` markup, so the notebook's theme applies. Previews are
+bounded, formatted independently of numpy's print options, and escaped.
 """
 
 from __future__ import annotations
@@ -53,11 +49,7 @@ def _size(value: object) -> int:
 
 
 def value_text(value: object) -> str:
-    """Format a scalar, array, or (nested) string list, at most 12 elements.
-
-    Past `ARRAY_ELEMENTS`, keep the leading items whose elements fit, then
-    `…`; each kept item is formatted, and so bounded, the same way.
-    """
+    """Format a scalar, array, or (nested) string list, at most `ARRAY_ELEMENTS`."""
     if isinstance(value, np.ndarray) and value.ndim == 0:
         # Narrowing from `object` leaves numpy's stubs an unusable dtype.
         return number(cast("np.ndarray", value).tolist())

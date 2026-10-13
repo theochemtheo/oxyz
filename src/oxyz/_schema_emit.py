@@ -15,7 +15,7 @@ _ENUMERATED = re.compile(r"^(.*?)(\d+)$")
 
 
 def _dominant[V: (ColumnVariant, MetadataVariant)](variants: Sequence[V]) -> V:
-    # the variant used in the most frames; first-seen wins ties
+    # first-seen wins ties
     return max(variants, key=lambda v: v.frames)
 
 
@@ -34,8 +34,8 @@ def _column_kind_width(entry: ColumnSchema) -> tuple[Kind, int, str | None]:
 def _collapse_columns(
     schema: Schema, glob_min_run: int
 ) -> tuple[list[ColumnRule], dict[str, str]]:
-    # Group required, full-presence columns whose names share a stem and a
-    # trailing integer, same (kind, width); collapse a run of >= glob_min_run.
+    # Required, full-presence columns sharing a stem, a trailing integer, and
+    # (kind, width) collapse to a glob once a run reaches glob_min_run.
     families: dict[tuple[str, Kind, int], list[str]] = defaultdict(list)
     resolved: dict[str, tuple[Kind, int, bool, str | None]] = {}
     for entry in schema.columns:
@@ -96,12 +96,10 @@ def _metadata_rules(schema: Schema) -> tuple[list[MetadataRule], dict[str, str]]
 def spec_and_notes(
     schema: Schema, *, glob_min_run: int = 3
 ) -> tuple[SchemaSpec, dict[str, str]]:
-    """Turn an observed `Schema` into a prescriptive `SchemaSpec`.
+    """Turn an observed `Schema` into a `SchemaSpec` and drift notes for `render_yaml`.
 
-    Also returns a name -> drift-note map for `render_yaml`. Partial-presence
-    entries are `required=False`; enumerable column families collapse to a
-    `*` glob with a `count`; the `frame` section is never emitted (bounds are
-    never auto-pinned).
+    Partially present entries are optional, column families collapse to a `*`
+    glob with a `count`, and no `frame` bounds are set.
     """
     columns, column_notes = _collapse_columns(schema, glob_min_run)
     metadata, metadata_notes = _metadata_rules(schema)

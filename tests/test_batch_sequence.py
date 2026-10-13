@@ -1,11 +1,4 @@
-"""`Batch` as a sequence of frames: `len`, `batch[i]`, slicing, gathering.
-
-Basic indexing shares memory, as numpy's does: `batch[i]` and `batch[a:b]` are
-views onto the batch's numeric arrays. A step slice, an index list, or a mask
-gathers rows from non-adjacent frames, so it copies. String columns are Python
-lists and are always copied; scalars come out as the Python values
-`oxyz.read` gives.
-"""
+"""`Batch` as a sequence of frames: `len`, `batch[i]`, slicing, gathering."""
 
 from __future__ import annotations
 
@@ -21,8 +14,7 @@ from oxyz import Batch, Frame
 DATA_DIR = Path(__file__).parent / "data"
 VARYING = DATA_DIR / "varying_atom_counts.xyz"  # 3, 1, 2 atoms; forces, energy
 
-# Every fixture a batch can hold (one schema across its frames), covering
-# string, bool, 2-D-string-metadata, and per-frame array metadata.
+# Every fixture with one schema across its frames.
 BATCHABLE = [
     "atomic_numbers_z.extxyz",
     "id_and_selection.extxyz",

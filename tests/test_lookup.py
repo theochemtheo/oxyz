@@ -1,11 +1,4 @@
-"""Mapping-like lookup by name on `Frame`, `Batch`, `Schema`, and `SchemaSpec`.
-
-`obj[name]` searches columns then metadata, so a caller need not know the two
-live apart. A name on both sides is an `AmbiguousNameError` — never a silent
-pick, and never a `KeyError` that `get` or `except KeyError` could swallow.
-None of the four is a `Mapping`: a `Mapping` needs `__len__` and `__iter__`,
-and numpy then reads a list of frames as a list of key names.
-"""
+"""Lookup by name on `Frame`, `Batch`, `Schema`, and `SchemaSpec`."""
 
 from __future__ import annotations
 
@@ -122,8 +115,7 @@ def test_frame_has_no_len_and_is_not_iterable(frame: Frame) -> None:
 
 
 def test_numpy_keeps_a_list_of_frames_as_frames() -> None:
-    # With __getitem__ and __len__ both defined, numpy reads a frame as a
-    # sequence: these raised, or — for a Mapping — returned key names.
+    # numpy would read a frame with __getitem__ and __len__ as a sequence.
     frames = oxyz.read(TWO_FRAME)
     rng = np.random.default_rng(0)
 
@@ -239,8 +231,7 @@ def test_rule_for_without_an_axis_searches_both() -> None:
 
 @pytest.mark.parametrize("name", ["pos", "REF_1", "REF_2", "REF_long", "desc_12"])
 def test_rule_for_agrees_with_validation(name: str) -> None:
-    # Give the column a width no rule declares, so validation reports a
-    # mismatch whose `expected` names the rule that claimed it.
+    # A width no rule declares, so the mismatch names the claiming rule.
     frame = Frame(
         n_atoms=1,
         columns={"pos": np.zeros((1, 3)), name: np.zeros((1, 7))},

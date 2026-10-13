@@ -21,8 +21,7 @@ def test_real_data_groups_get_their_own_section():
 
 
 def test_real_data_groups_are_not_plain_reader_groups():
-    # Before real_data existed every non-stores/non-scaling group fell into the
-    # readers section, which carries no provenance caveat; MAD must not land there.
+    # The readers section has no provenance caveat, so MAD must not land there.
     buckets = report.bucket_groups(sample_groups())
     assert set(buckets["readers"]) == {"read_all/many_small_frames"}
 
@@ -40,7 +39,6 @@ def test_every_group_lands_in_exactly_one_bucket():
 
 
 def test_real_data_intro_carries_attribution_and_caveat():
-    # CC-BY-4.0 attribution is a licence obligation, and the numbers must not
-    # travel without the note that they cannot be regenerated from the repo.
+    # CC-BY-4.0 attribution is a licence obligation.
     assert "materialscloud:ak-4p" in report.REAL_DATA_INTRO
     assert "cannot be regenerated" in report.REAL_DATA_INTRO

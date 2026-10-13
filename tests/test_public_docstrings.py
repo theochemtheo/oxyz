@@ -1,11 +1,6 @@
-"""Enforce docstring presence on the re-exported public surface.
+"""Every name in `oxyz.__all__` has its own docstring.
 
-Ruff's pydocstyle (`D`) cannot see this: every module under `src/oxyz` that
-holds a public definition is underscore-prefixed (`_frames.py`, `_batch.py`,
-...), so ruff treats every name in it as private and the missing-docstring
-rules (D100-D107) never fire. This test is what actually enforces "every name
-in `oxyz.__all__` is documented" — it inspects the live objects, not source
-text, so it also catches an inherited docstring standing in for a real one.
+ruff's `D` rules cannot see this: the defining modules are private.
 """
 
 from __future__ import annotations
@@ -16,12 +11,8 @@ import pytest
 
 import oxyz
 
-# Type aliases (`Literal`/`Union`/PEP 695 `type`) have no meaningful own
-# `__doc__` of their own — some inherit `typing.Union`'s or `Literal`'s
-# generic docstring instead. They are documented via a comment at their
-# definition site, not a docstring. Listed explicitly so adding a new name to
-# `oxyz.__all__` that is neither documented nor here fails the test below,
-# rather than silently falling through an exemption.
+# Type aliases are documented by a comment at their definition, as they have
+# no docstring of their own.
 KNOWN_TYPE_ALIASES = frozenset(
     {
         "Compression",

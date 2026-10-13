@@ -10,8 +10,7 @@ import pytest
 
 EXAMPLES_DIR = Path(__file__).resolve().parent.parent / "examples"
 
-# Scoreboard: every runnable example, listed explicitly. Adding a script to
-# examples/ without adding it here (or vice versa) fails test_scoreboard_matches.
+# Every runnable example, listed explicitly; see test_scoreboard_matches.
 EXAMPLES: tuple[str, ...] = (
     "scan_and_schema.py",
     "read_numpy.py",

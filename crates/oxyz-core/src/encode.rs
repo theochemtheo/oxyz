@@ -1,17 +1,9 @@
 //! Lossless extxyz serialisation: the inverse of [`crate::extxyz`]'s parse.
 //!
-//! Reals are formatted shortest-round-trippable (Ryū), so `read -> write ->
-//! read` reproduces every `f64` bit for bit. Output is compact, not
-//! column-aligned — a deliberate departure from ASE's fixed-width look and the
-//! price of compact + lossless.
-//!
-//! Two orderings are imposed and documented:
-//! - columns: `species` then `pos` lead; the rest keep their order;
-//! - comment line: `Lattice`, then `pbc`, then the generated `Properties`, then
-//!   the remaining metadata in order.
-//!
-//! A frame missing `species` or `pos` is rejected — we never emit output that
-//! breaks the grammar.
+//! Reals are written shortest-round-trippable, so `read -> write -> read` is
+//! bit-exact; output is compact rather than column-aligned. `species` and
+//! `pos` lead the columns, and `Lattice` and `pbc` lead the comment line. A
+//! frame missing `species` or `pos` is rejected.
 
 use std::{
     fs::{File, OpenOptions},
@@ -26,11 +18,8 @@ use crate::extxyz::{ExtxyzError, Result};
 use crate::model::{ColumnData, Frame, Value};
 use compact_str::CompactString;
 
-/// Write every frame to `path`, encoding per `compression`.
-///
-/// `level` (`0..=9`, codec default when `None`) tunes the deflate-based codecs
-/// and is ignored for plain output. `append` adds to an existing file where the
-/// codec allows it (plain, gzip); see [`FrameSink::create`].
+/// Write every frame to `path`, encoding per `compression`. `level` (`0..=9`)
+/// tunes the deflate-based codecs; see [`FrameSink::create`] for `append`.
 pub fn write_frames(
     path: &Path,
     frames: &[Frame],
@@ -45,14 +34,9 @@ pub fn write_frames(
     sink.finish()
 }
 
-/// [`write_frames`] with the per-frame serialisation spread over `threads`
-/// workers (`None`: every core, `Some(1)`: serial). Output bytes are identical
-/// to [`write_frames`] for every codec — only serialisation parallelises; the
-/// single output stream and any compression stay serial.
-///
-/// Errors match the serial writer: the first frame in order missing
-/// `species`/`pos` is reported. Frames are serialised *before* the sink is
-/// opened, so a rejected frame leaves no output file behind.
+/// [`write_frames`] with serialisation spread over `threads` workers (`None`:
+/// every core). The bytes and errors match the serial writer. Frames are
+/// serialised before the sink opens, so a rejected frame leaves no file.
 #[cfg(feature = "parallel")]
 pub fn write_frames_parallel(
     path: &Path,
@@ -70,15 +54,12 @@ pub fn write_frames_parallel(
     sink.finish()
 }
 
-/// Serialise `frames` to per-chunk byte buffers on a rayon pool, in frame order.
-/// The first frame (in order) that cannot be serialised is the reported error,
-/// matching the serial writer's precedence.
+/// Serialise `frames` to per-chunk buffers on a rayon pool, in frame order;
+/// the first failing frame is the error.
 #[cfg(feature = "parallel")]
 fn serialise_parallel(frames: &[Frame], threads: Option<usize>) -> Result<Vec<Vec<u8>>> {
     use rayon::prelude::*;
 
-    // A few chunks per thread amortises the per-chunk buffer while leaving rayon
-    // room to balance — the same split the parallel reader uses.
     crate::extxyz::with_pool(threads, || {
         let chunk_size = frames
             .len()
@@ -102,8 +83,7 @@ fn serialise_chunk(chunk: &[Frame]) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-/// Serialise one frame to `out` as an extxyz text block (count line, comment
-/// line, then one line per atom). The pure serialiser, shared by every sink.
+/// Serialise one frame to `out` as an extxyz text block.
 pub fn write_frame<W: Write>(out: &mut W, frame: &Frame) -> Result<()> {
     let order = column_order(frame)?;
 
@@ -115,7 +95,6 @@ pub fn write_frame<W: Write>(out: &mut W, frame: &Frame) -> Result<()> {
         for (col_pos, &index) in order.iter().enumerate() {
             let column = &frame.columns[index];
             for cell in 0..column.width {
-                // A single space between every cell; none leads the line.
                 if !(col_pos == 0 && cell == 0) {
                     out.write_all(b" ")?;
                 }
@@ -127,9 +106,8 @@ pub fn write_frame<W: Write>(out: &mut W, frame: &Frame) -> Result<()> {
     Ok(())
 }
 
-/// Column write order as indices into `frame.columns`: `species`, then `pos`,
-/// then the rest in their existing order. Errors if either required column is
-/// absent.
+/// Column write order as indices: `species`, `pos`, then the rest. Errors if
+/// either required column is absent.
 fn column_order(frame: &Frame) -> Result<Vec<usize>> {
     let find = |name: &'static str| {
         frame
@@ -151,7 +129,6 @@ fn column_order(frame: &Frame) -> Result<Vec<usize>> {
 fn write_comment<W: Write>(out: &mut W, frame: &Frame, order: &[usize]) -> io::Result<()> {
     let mut leading = false; // whether anything has been written yet
 
-    // Lattice and pbc lead, in that order, ahead of the generated Properties.
     for hoisted in ["Lattice", "pbc"] {
         for (key, value) in &frame.metadata {
             if key == hoisted {
@@ -164,7 +141,6 @@ fn write_comment<W: Write>(out: &mut W, frame: &Frame, order: &[usize]) -> io::R
     write!(out, "Properties=")?;
     write_properties(out, frame, order)?;
 
-    // Everything else in its original order; Lattice/pbc already placed.
     for (key, value) in &frame.metadata {
         if key != "Lattice" && key != "pbc" {
             write_metadata(out, key, value, &mut leading)?;
@@ -201,9 +177,8 @@ fn write_metadata<W: Write>(
     space(out, leading)?;
     write!(out, "{key}=")?;
     let mut buf = ryu::Buffer::new();
-    // Lattice/pbc keep the conventional quoted space-separated form ASE expects;
-    // other arrays use brackets, which also round-trip a single element (a
-    // bare-token array would re-parse as a scalar).
+    // Lattice and pbc keep ASE's quoted form. Other arrays bracket, which also
+    // round-trips a single element.
     let quoted = key == "Lattice" || key == "pbc";
     match value {
         Value::Real(x) => write!(out, "{}", buf.format(*x)),
@@ -214,8 +189,6 @@ fn write_metadata<W: Write>(
         Value::IntArray(xs) => write_int_array(out, xs, quoted),
         Value::BoolArray(xs) => write_bool_array(out, xs, quoted),
         Value::StrArray(xs) => write_str_array(out, xs),
-        // 2-D values have no legacy quoted form to preserve, so they always
-        // write as nested brackets regardless of key.
         Value::RealArray2D { rows, cols, data } => write_real_array_2d(out, *rows, *cols, data),
         Value::IntArray2D { rows, cols, data } => write_int_array_2d(out, *rows, *cols, data),
         Value::BoolArray2D { rows, cols, data } => write_bool_array_2d(out, *rows, *cols, data),
@@ -223,8 +196,7 @@ fn write_metadata<W: Write>(
     }
 }
 
-/// Quote a scalar string only when leaving it bare would break tokenisation:
-/// whitespace splits the comment line, and an empty value has nothing to read.
+/// Quote a scalar string only if it is empty or contains whitespace.
 fn write_scalar_string<W: Write>(out: &mut W, s: &str) -> io::Result<()> {
     if s.is_empty() || s.chars().any(char::is_whitespace) {
         write!(out, "\"{s}\"")
@@ -250,7 +222,6 @@ fn write_bool_array<W: Write>(out: &mut W, xs: &[bool], quoted: bool) -> io::Res
     })
 }
 
-/// String arrays always bracket-quote each element: `["slab","relaxed"]`.
 fn write_str_array<W: Write>(out: &mut W, xs: &[CompactString]) -> io::Result<()> {
     out.write_all(b"[")?;
     for (i, s) in xs.iter().enumerate() {
@@ -292,7 +263,6 @@ fn write_bool_array_2d<W: Write>(
     write_array_2d(out, rows, cols, |out, i| out.write_all(bool_token(data[i])))
 }
 
-/// String arrays always bracket-quote each element, same as their 1-D sibling.
 fn write_str_array_2d<W: Write>(
     out: &mut W,
     rows: usize,
@@ -302,9 +272,7 @@ fn write_str_array_2d<W: Write>(
     write_array_2d(out, rows, cols, |out, i| write!(out, "\"{}\"", data[i]))
 }
 
-/// Nested-bracket form for a 2-D value: `[[1,2],[3,4]]`. New-style only — a
-/// 2-D value has no legacy quoted precedent to preserve (unlike 1-D
-/// Lattice/pbc), so it always brackets.
+/// Nested-bracket form for a 2-D value: `[[1,2],[3,4]]`.
 fn write_array_2d<W, F>(out: &mut W, rows: usize, cols: usize, mut element: F) -> io::Result<()>
 where
     W: Write,
@@ -327,9 +295,8 @@ where
     out.write_all(b"]")
 }
 
-/// Numeric arrays: quoted space-separated when `quoted` (Lattice/pbc) and length
-/// permits it, else bracketed. A single element must bracket — `key="1.5"` would
-/// re-parse as a scalar, not a one-element array.
+/// Numeric arrays: quoted when `quoted` (Lattice/pbc), else bracketed. A
+/// single element always brackets, or it would re-parse as a scalar.
 fn write_array<W, F>(out: &mut W, len: usize, quoted: bool, mut element: F) -> io::Result<()>
 where
     W: Write,
@@ -374,7 +341,6 @@ fn bool_token(b: bool) -> &'static [u8] {
     if b { b"T" } else { b"F" }
 }
 
-/// Emit a separating space before the next token, except the first.
 fn space<W: Write>(out: &mut W, leading: &mut bool) -> io::Result<()> {
     if *leading {
         out.write_all(b" ")?;
@@ -383,9 +349,8 @@ fn space<W: Write>(out: &mut W, leading: &mut bool) -> io::Result<()> {
     Ok(())
 }
 
-/// An incremental writer: build it, [`write`](Self::write) frames as they come,
-/// then [`finish`](Self::finish). Constant memory for the streaming codecs;
-/// archive codecs buffer their single member until `finish`.
+/// An incremental writer. Constant memory for the streaming codecs; archive
+/// codecs buffer their single member until [`finish`](Self::finish).
 pub struct FrameSink {
     inner: Inner,
 }
@@ -409,13 +374,8 @@ enum Stream {
 }
 
 impl FrameSink {
-    /// Open a sink for `path`. `compression="infer"` reads the extension only
-    /// (`-` and extensionless paths mean plain).
-    ///
-    /// `append` is honoured for plain and gzip — a gzip append is a fresh member
-    /// concatenated onto the file, which the reader handles. zstd output is
-    /// rejected (encode unsupported); appending to an archive or to stdout is
-    /// rejected too.
+    /// Open a sink for `path`; `"infer"` reads the extension only (`-` is plain).
+    /// `append` works for plain and gzip; zstd output is unsupported.
     pub fn create(
         path: &Path,
         compression: Compression,
@@ -474,9 +434,7 @@ impl FrameSink {
         }
     }
 
-    /// Write an already-serialised block (the bytes [`write_frame`] produces) to
-    /// the sink. The parallel paths serialise off the I/O thread, then hand the
-    /// ordered bytes here.
+    /// Write an already-serialised block to the sink.
     fn write_serialized(&mut self, bytes: &[u8]) -> Result<()> {
         match &mut self.inner {
             Inner::Stream(Stream::Plain(w)) => w.write_all(bytes)?,
@@ -486,10 +444,8 @@ impl FrameSink {
         Ok(())
     }
 
-    /// Serialise `frames` in parallel and write them in order. The bounded-memory
-    /// batch path behind `Writer(batch=N)`: peak extra memory is the batch's
-    /// serialised text, not the whole file. Output is identical to writing the
-    /// frames one by one with [`write`](Self::write).
+    /// Serialise `frames` in parallel and write them in order, as
+    /// `Writer(batch=N)` does. Output matches [`write`](Self::write).
     #[cfg(feature = "parallel")]
     pub fn write_batch_parallel(&mut self, frames: &[Frame], threads: Option<usize>) -> Result<()> {
         for buf in &serialise_parallel(frames, threads)? {
@@ -545,9 +501,8 @@ fn archive_label(codec: Codec) -> &'static str {
     }
 }
 
-/// Member name for an archive: the path stem with its archive suffix stripped,
-/// given a `.extxyz` extension if it lacks an xyz one, so the reader's member
-/// resolver finds it.
+/// Archive member name: the path stem, given `.extxyz` unless it has an xyz
+/// extension, so the reader finds it.
 fn archive_member_name(path: &Path) -> String {
     let name = path
         .file_name()
@@ -607,8 +562,8 @@ fn write_zip<W: Write + io::Seek>(
     Ok(())
 }
 
-/// Tar requires the member size up front, so the whole block is in `buf`
-/// already. Returns the sink so a `.tar.gz` caller can finish the gzip layer.
+/// Tar needs the member size up front, so the block is whole in `buf`.
+/// Returns the sink so a `.tar.gz` caller can finish the gzip layer.
 fn write_tar<W: Write>(sink: W, member: &str, buf: &[u8]) -> Result<W> {
     let mut header = tar::Header::new_gnu();
     header.set_size(buf.len() as u64);
@@ -786,8 +741,6 @@ mod tests {
         };
         let reparsed = reparse(&serialise(&frame));
         assert_eq!(reparsed.len(), 1);
-        // Metadata was already in non-hoisted order with no Lattice/pbc, so the
-        // model compares equal field for field, reals included.
         assert_eq!(reparsed[0], frame);
     }
 

@@ -12,8 +12,7 @@ def test_dataset_fixture_matches_corpus_shape():
     counts = np.array(conftest.dataset_frame_atoms(20_000))
     assert counts.min() >= 1
     assert counts.max() <= 240
-    # Corpus: mean 6.9, p50 6, p90 12. Allow generous tolerance — this is a
-    # statistical stand-in, not a replica.
+    # A statistical stand-in, so the tolerance is generous.
     assert 5.0 <= counts.mean() <= 9.0
     assert np.percentile(counts, 50) <= 8
     assert np.percentile(counts, 90) <= 20

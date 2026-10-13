@@ -22,8 +22,7 @@ ColumnValues = np.ndarray | list[str] | list[list[str]]
 """A per-atom column's values: an array for numeric/bool data, `list[str]` for
 a 1-D string column, `list[list[str]]` for a 2-D one."""
 
-# np.ndarray covers 1-D and 2-D numeric/bool metadata (shape (rows, cols) for
-# 2-D); 2-D string metadata crosses as list[list[str]], mirroring ColumnValues.
+# Numeric and bool metadata are arrays; 2-D string metadata is list[list[str]].
 MetadataValue = float | int | bool | str | np.ndarray | list[str] | list[list[str]]
 """A comment-line metadata value: a scalar, an array, or (for 2-D string
 metadata) `list[list[str]]`."""
@@ -41,40 +40,36 @@ not say `.tar`, `.tar.gz` or `.tar.zst`."""
 class Frame(NameLookup[ColumnValues, MetadataValue]):  # noqa: PLW1641  a dict of arrays is unhashable by construction
     """One parsed extxyz frame: per-atom columns plus comment-line metadata.
 
-    Both dicts preserve file order. Column names and metadata values are kept
-    exactly as written in the file; aliasing (`force` vs `forces`) and
-    conversions (Fortran-order `Lattice` to a 3x3 cell) are never applied to
-    them. `metadata` is a dict, so a repeated key keeps only its last value.
+    Both dicts keep file order, and names and values are kept as written:
+    no aliasing (`force` vs `forces`) and no conversion. A repeated metadata
+    key keeps its last value.
 
-    `frame[name]` looks a name up in `columns`, then `metadata`, returning
-    the stored value; `name in frame`, `frame.get(name)` and `frame.keys()`
-    follow suit, and `dict(frame)` flattens the two. A name in both raises
+    `frame[name]` looks a name up in `columns`, then `metadata`; `in`, `get`,
+    `keys` and `dict(frame)` follow suit, and a name in both raises
     `oxyz.AmbiguousNameError`. A frame is not a `Mapping`: it has no `len()`
     and cannot be iterated, so numpy keeps a list of frames as frames.
 
-    The derived accessors below are opt-in views over those same dicts: each
-    resolves the well-known field on every access, and none of them mutates,
-    caches, or rewrites what the frame stores.
+    The derived accessors resolve a well-known field on each access, and never
+    cache or rewrite what the frame stores.
 
     Attributes
     ----------
     n_atoms
-        Number of atoms in the frame (the XYZ file's leading count line).
+        Number of atoms in the frame.
     columns
-        Per-atom data keyed by column name, e.g. `"species"`, `"pos"`,
-        `"forces"`, each shaped `(n_atoms, ...)`.
+        Per-atom data keyed by column name, each shaped `(n_atoms, ...)`.
     metadata
         Comment-line key/value pairs, e.g. `"Lattice"`, `"energy"`, `"pbc"`.
     positions
-        The `pos` column, derived on access.
+        The `pos` column.
     numbers
-        Atomic numbers as int32, derived on access.
+        Atomic numbers as int32.
     symbols
-        Chemical symbols, derived on access.
+        Chemical symbols.
     cell
-        The 3x3 cell in ASE's row-vector convention, derived on access.
+        The 3x3 cell in ASE's row-vector convention.
     pbc
-        Three periodic-boundary flags, derived on access.
+        Three periodic-boundary flags.
     """
 
     n_atoms: int
@@ -94,11 +89,10 @@ class Frame(NameLookup[ColumnValues, MetadataValue]):  # noqa: PLW1641  a dict o
         return _html.frame(self)
 
     def __eq__(self, other: object) -> bool:
-        """Compare atom counts and every stored value, pairwise.
+        """Compare atom counts and every stored value.
 
-        Key order is ignored and NaN compares equal, so a written-then-read
-        frame equals the one it came from. `Frame` is unhashable, as a mutable
-        dict of arrays must be.
+        Key order is ignored and NaN compares equal, so a written-then-read frame
+        equals the one it came from.
         """
         if not isinstance(other, Frame):
             return NotImplemented
@@ -115,9 +109,8 @@ class Frame(NameLookup[ColumnValues, MetadataValue]):  # noqa: PLW1641  a dict o
     def positions(self) -> np.ndarray:
         """The `pos` column, shaped `(n_atoms, 3)`.
 
-        The stored array itself, not a copy — mutating it mutates the frame's
-        `columns["pos"]`. Resolved on each access; raises `oxyz.FieldError`
-        when the frame has no `pos` column.
+        The stored array, not a copy. Raises `oxyz.FieldError` without a `pos`
+        column.
         """
         return _convert.positions(self.columns)
 
@@ -125,9 +118,8 @@ class Frame(NameLookup[ColumnValues, MetadataValue]):  # noqa: PLW1641  a dict o
     def numbers(self) -> np.ndarray:
         """Atomic numbers as int32, from `Z`, else `numbers`, else `species`.
 
-        Recomputed on each access; hoist it out of a hot loop. Raises
-        `oxyz.FieldError` when no such column is present, or when a species
-        token is not a chemical symbol.
+        Recomputed on each access. Raises `oxyz.FieldError` when no such column
+        exists, or a species token is not a chemical symbol.
         """
         return _convert.numbers(self.columns)
 
@@ -135,9 +127,8 @@ class Frame(NameLookup[ColumnValues, MetadataValue]):  # noqa: PLW1641  a dict o
     def symbols(self) -> list[str]:
         """Chemical symbols: the `species` column, else mapped from `numbers`.
 
-        A `species` column is returned as stored, not as a copy. Recomputed on
-        each access; raises `oxyz.FieldError` when neither a `species` nor an
-        atomic-number column is present.
+        A `species` column is returned as stored. Raises `oxyz.FieldError` when
+        there is neither.
         """
         return _convert.symbols(self.columns)
 
@@ -145,10 +136,8 @@ class Frame(NameLookup[ColumnValues, MetadataValue]):  # noqa: PLW1641  a dict o
     def cell(self) -> np.ndarray:
         """The 3x3 float64 cell in ASE's row-vector convention.
 
-        Reshaped and transposed from the flat, Fortran-order
-        `metadata["Lattice"]`, which is left as written; all-zero when
-        `Lattice` is absent. Recomputed on each access; raises
-        `oxyz.FieldError` when `Lattice` is present but not 9 values.
+        Built from the flat, Fortran-order `metadata["Lattice"]`; all-zero without
+        one. Raises `oxyz.FieldError` when `Lattice` is not 9 values.
         """
         return _convert.cell(self.metadata)
 
@@ -156,12 +145,9 @@ class Frame(NameLookup[ColumnValues, MetadataValue]):  # noqa: PLW1641  a dict o
     def pbc(self) -> np.ndarray:
         """Three periodic-boundary flags, from `metadata["pbc"]`.
 
-        Defaults to all-true when `Lattice` is present and all-false when it
-        is not; a scalar `pbc` broadcasts to all three axes. Recomputed on
-        each access, but an already-boolean `metadata["pbc"]` needs no
-        conversion and is handed back as the stored array itself, so mutating
-        the result mutates the frame. Raises `oxyz.FieldError` for any other
-        shape.
+        Defaults to all-true with a `Lattice` and all-false without; a scalar
+        broadcasts. An already-boolean array is returned as stored. Raises
+        `oxyz.FieldError` for any other shape.
         """
         return _convert.pbc(self.metadata)
 
@@ -231,13 +217,10 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
 ) -> Frame | list[Frame]:
     """Read frames from an extxyz file into numpy-backed `Frame` objects.
 
-    Reads run on all cores by default, and a bounded or single-frame selection
-    stops as soon as the last requested frame is read. A compressed path is
-    decoded on the fly, so reads stay parallel without decompressing to a
-    temporary file; a remote URL streams the object through the same parser. A
-    remote or compressed source cannot seek, so a negative or reverse selection
-    there reads the whole file and indexes in memory (as ASE does). For
-    bounded memory over a large file, stream with `iread` instead.
+    Parses on all cores by default, and a selection stops reading after its
+    last frame. Compressed and remote sources stream; as they cannot seek, a
+    negative or reverse selection there reads the whole file. For bounded
+    memory, use `iread`.
 
     Parameters
     ----------
@@ -249,18 +232,17 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
         single `Frame`; a slice or slice-string (`"1:10:2"`) or a sequence of
         non-negative ints selects a subset, in order (repeats allowed).
     threads
-        `None` parses on every core; `1` is the exact serial path. Results and
-        errors are identical either way.
+        `None` parses on every core; `1` is serial. Results and errors are
+        identical.
     schema
         A `SchemaSpec`, or a path to a `.json`/`.yaml`/`.toml` schema file,
-        validated against each frame as it is read. See `oxyz.SchemaSpec`.
+        validated against each frame. See `oxyz.SchemaSpec`.
     conformance
         How a schema deviation is handled: `"strict"`, `"required"` (default),
         or `"warn"`.
     mode
         Overrides the schema's own `mode`. `"project"` reshapes each frame to
-        the schema (extras dropped, optionals filled); an unfillable frame is
-        dropped under `conformance="warn"`.
+        the schema; an unfillable frame is dropped under `conformance="warn"`.
     compression
         Forces a codec (`"infer"`, `"none"`, `"gzip"`, `"zstd"`, `"zip"`,
         `"tar"`, `"tar.gz"`, `"tar.zst"`) instead of inferring it from `path`.
@@ -347,17 +329,11 @@ def iread(
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
 ) -> Iterator[Frame]:
-    """Iterate frames one at a time, streaming in bounded memory.
+    """Iterate frames one at a time, in memory bounded by the largest frame.
 
-    Parameters and `index` semantics match `read`; frames are yielded lazily
-    rather than materialised into a list, so peak memory is bounded by the
-    largest frame rather than the file length. An int index yields exactly one
-    frame. The file stays open while iterating and closes when the iterator is
-    dropped. After a parse error the stream position is untrustworthy, so
-    iteration ends: the error is raised once, then `StopIteration`. Selecting
-    an explicit sequence of frames reads eagerly — an arbitrary set cannot
-    stream — while a slice or the default `":"` stays lazy. To materialise
-    every frame at once (and in parallel), use `read` instead.
+    The file stays open until the iterator is dropped. After a parse error the
+    error is raised once and iteration ends. A sequence `index` reads eagerly,
+    as an arbitrary set cannot stream.
 
     Parameters
     ----------
@@ -441,11 +417,7 @@ def iread(
 
 
 def _check_threads(threads: int | None) -> None:
-    """Reject an invalid `threads` value.
-
-    `None` parses on all cores, an integer >= 1 sets the count. Reject 0 and
-    negatives rather than letting rayon read `num_threads(0)` as "all cores".
-    """
+    """Reject 0 and negatives, which rayon would read as all cores."""
     if threads is not None and threads < 1:
         raise ValueError(f"threads must be a positive integer or None, got {threads!r}")
 
@@ -453,11 +425,7 @@ def _check_threads(threads: int | None) -> None:
 def _projection(
     schema: SchemaSpec | str | Path, mode: Mode | None
 ) -> tuple[ProjectionPlan | None, SchemaSpec]:
-    """Resolve `schema` and compile its projection plan.
-
-    Returns the crossing plan (`None` under validate mode) and the resolved
-    spec, for a reader that was given a `schema`.
-    """
+    """Resolve `schema` and its projection plan (`None` under validate mode)."""
     from oxyz._project import compile_projection, effective_mode
     from oxyz._schema_spec import SchemaSpec
 
@@ -471,12 +439,7 @@ def _require_schema_for_mode(schema: object, mode: Mode | None) -> None:
 
 
 def _frame_rule_compiled(spec: SchemaSpec) -> CompiledSpec | None:
-    """Compile `spec`'s frame rule, if it has one.
-
-    Returns `None` when the spec has no frame rule. Columns and metadata
-    already conform after projection, so only frame-axis (`n_atoms`,
-    `lattice`) checks bite.
-    """
+    """Compile `spec`'s frame rule, or `None` if it has none."""
     if spec.frame is None:
         return None
     from oxyz import _schema_match
@@ -490,11 +453,7 @@ def _keep_projected(
     spec: SchemaSpec,
     indices: Iterable[int],
 ) -> list[Frame]:
-    """Apply projection policy to `(data, deviations)` items and return the kept frames.
-
-    Items are paired with their file `indices`: raise/warn/drop, then
-    frame-rule-check the survivors.
-    """
+    """Apply projection policy to `(data, deviations)` items; return kept frames."""
     from oxyz import _schema_match
     from oxyz._project import enforce_projection
 
@@ -521,11 +480,7 @@ def _read_all(
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
 ) -> list[Frame]:
-    """Read and materialise every frame.
-
-    The whole-file primitive behind `read`/`iread`; parses on all cores unless
-    `threads=1`.
-    """
+    """Read and materialise every frame."""
     _check_threads(threads)
     _require_schema_for_mode(schema, mode)
     plan = spec = None
@@ -582,13 +537,7 @@ def _read_all_sliced(  # noqa: PLR0913  the read/schema/projection options are t
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
 ) -> list[Frame]:
-    """Read every frame, then apply `frames` before wrapping.
-
-    Like `_read_all`, but parse every frame (`threads=None`: all cores), then
-    build `Frame` objects only for those the slice keeps — so an unbounded
-    forward slice that drops a prefix or steps (`"1000:"`, `"::2"`) does not
-    pay to wrap the frames it discards.
-    """
+    """Read every frame, wrapping only those `frames` keeps."""
     _require_schema_for_mode(schema, mode)
     plan = spec = None
     if schema is not None:
@@ -635,11 +584,7 @@ def _read_all_sliced(  # noqa: PLR0913  the read/schema/projection options are t
 
 
 class IndexedFrames:
-    """Random-access reader: scans on open, then reads frames in any order.
-
-    Internal for now — the public random-access surface is `oxyz.scan`
-    plus the completed index grammar in `oxyz.ase`.
-    """
+    """Random-access reader: scans on open, then reads frames in any order."""
 
     def __init__(self, path: str | Path) -> None:
         self._inner = _rust.IndexedFrames(str(path))
@@ -661,11 +606,7 @@ def _iter_all(
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
 ) -> Iterator[Frame]:
-    """Stream every frame, peak memory bounded by the largest frame.
-
-    The whole-file primitive behind `read`/`iread`; the file closes when the
-    iterator is dropped.
-    """
+    """Stream every frame; the file closes when the iterator is dropped."""
     _require_schema_for_mode(schema, mode)
     plan = spec = None
     if schema is not None:

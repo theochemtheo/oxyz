@@ -1,27 +1,16 @@
-"""torch_sim conversion layer: extxyz frames to `torch_sim.SimState`.
+"""Convert extxyz frames to batched `torch_sim.SimState`.
 
-`SimState` is natively batched — one state holds many systems with their atoms
-concatenated — so this layer maps onto oxyz's batched reader rather than the
-per-frame path the `oxyz.ase` / `oxyz.metatomic` targets use:
+`SimState` holds many systems in one batch, so this target builds on
+`oxyz.read_batch` rather than reading frame by frame. `read` returns one
+state for the whole selection, `iread` streams states with the strategies of
+`oxyz.iread_batch`, and `SimStateSource` parses once and serves the state and
+per-key tensors.
 
-- `read` returns a *single* batched `SimState` (the whole selection as one
-  batch). With a model and a GPU, hand it straight to `torch_sim`'s
-  `BinningAutoBatcher`, which sizes memory-aware batches by probing the model.
-- `iread` streams the file as a sequence of `SimState` batches, one per step,
-  for files too large to materialise at once. It forwards the binning knobs of
-  `oxyz.iread_batch` (`frames_per_batch` / `atoms_per_batch` /
-  `memory_scales_with` + `max_scaler`); pick exactly one.
-- `SimStateSource` parses a file once and serves the state plus array-native
-  `per_config` / `per_atom` tensor extraction.
+The result matches `torch_sim.io.atoms_to_state(ase.io.read(...))`: cells in
+torch_sim's column-vector convention, one pbc for the batch, and masses from a
+`masses` column or the atomic numbers.
 
-The conversion reproduces `torch_sim.io.atoms_to_state(ase.io.read(...))`: cells
-in `torch_sim`'s column-vector convention (ASE's cell transposed), a single pbc
-shared by every system (frames that disagree are an error), masses from a
-`masses` column or, failing that, derived from atomic numbers via this package's
-ASE-parity table. Extras are opt-in, mirroring `atoms_to_state`'s maps.
-
-Optional dependencies `torch` and `torch-sim-atomistic`, installed with
-`pip install oxyz[torch-sim]`.
+Needs `pip install oxyz[torch-sim]`.
 """
 
 from __future__ import annotations
@@ -89,26 +78,21 @@ def read(  # noqa: PLR0913  keyword options mirror the SimState data model
     member: str | None = None,
     storage_options: StorageOptions | None = None,
 ) -> SimState:
-    """Read selected frames into one batched `SimState`; default reads the file.
+    """Read selected frames into one batched `SimState`.
 
-    An int selects one frame (a state with `n_systems == 1`); a slice or
-    slice-string selects several, batched into a single state. Compressed
-    paths are read too (any index: the scan and the selecting read both
-    stream); a remote URL (``s3://``, ``gs://``, ``az://``, ``hf://``) is read through
-    the same parser.
+    For a model-aware split, pass the result to torch_sim's
+    `BinningAutoBatcher`.
 
     Parameters
     ----------
     path
-        File path or an S3-compatible URL.
+        File path or a remote URL; see `oxyz.read`.
     index
-        `":"` (default) reads every frame; an `int` selects one frame (a
-        state with `n_systems == 1`); a slice or slice-string selects
-        several, batched into a single state.
+        `":"` (default) reads every frame; an `int` gives a state with
+        `n_systems == 1`; a slice or slice-string selects several.
     dtype
-        Float dtype for positions/cell/masses. `None` infers from the data
-        (so positions are float64), matching `atoms_to_state` rather than
-        `torch.get_default_dtype()`; pass `torch.float32` for ML use.
+        Float dtype for positions/cell/masses. `None` keeps the data's
+        float64, as `atoms_to_state` does; pass `torch.float32` for ML use.
     device
         Target device for the returned tensors.
     positions_requires_grad
@@ -122,20 +106,18 @@ def read(  # noqa: PLR0913  keyword options mirror the SimState data model
     threads
         Parallel parse (`None`: all cores).
     schema
-        A `SchemaSpec`, or a path to a schema file, applied to the frames
-        actually read. See `oxyz.SchemaSpec`.
+        A `SchemaSpec`, or a path to a schema file. See `oxyz.SchemaSpec`.
     conformance
         How a schema deviation is handled: `"strict"`, `"required"`
         (default), or `"warn"`.
     mode
         Overrides the schema's own `mode`.
     compression
-        Forces a codec instead of inferring it from `path`; as in `oxyz.read`.
+        Forces a codec instead of inferring it from `path`; see `oxyz.read`.
     member
         Selects one entry from an archive holding more than one.
     storage_options
-        Endpoint/credentials for a remote store (needs the ``oxyz[s3]``
-        extra).
+        Endpoint/credentials for a remote store; see `oxyz.read`.
 
     Returns
     -------
@@ -207,35 +189,25 @@ def iread(  # noqa: PLR0913  batching options plus the SimState data model
 ) -> Iterator[SimState]:
     """Stream the file as `SimState` batches, one per step.
 
-    Pick exactly one binning strategy, as in `oxyz.iread_batch`: a fixed
-    `frames_per_batch`, a greedy `atoms_per_batch`, or balanced memory-aware
-    bins (`memory_scales_with` + `max_scaler`). For a model-aware split prefer
-    `read` plus `torch_sim`'s `BinningAutoBatcher`, which probes the model.
-
-    A compressed source supports only `frames_per_batch` without `shuffle` (it
-    cannot be randomly accessed); see `oxyz.iread_batch`.
+    Exactly one strategy must be given, as in `oxyz.iread_batch`, which also
+    describes what a compressed source supports.
 
     Parameters
     ----------
     path
-        File path or an S3-compatible URL.
+        File path or a remote URL; see `oxyz.read`.
     frames_per_batch
-        Fixed batch size, in frames. Mutually exclusive with
-        `atoms_per_batch`/`memory_scales_with`.
+        Fixed frame count per batch.
     atoms_per_batch
-        Greedy batch size, in atoms. Mutually exclusive with
-        `frames_per_batch`/`memory_scales_with`.
+        Atom budget per batch.
     memory_scales_with
-        How memory use scales with system size, for balanced memory-aware
-        binning; paired with `max_scaler`. Mutually exclusive with
-        `frames_per_batch`/`atoms_per_batch`.
+        `"n_atoms"` or `"n_atoms_x_density"`, packed under `max_scaler`.
     max_scaler
-        The per-batch cap on `memory_scales_with`'s scaling quantity.
+        The per-batch weight budget for `memory_scales_with`.
     shuffle
-        Whether to shuffle frame order before binning. Not supported for a
-        compressed source.
+        Draw frames in a seeded random order.
     seed
-        Random seed for `shuffle`.
+        Seeds `shuffle`.
     dtype
         Float dtype for positions/cell/masses; see `read`.
     device
@@ -301,18 +273,14 @@ def iread(  # noqa: PLR0913  batching options plus the SimState data model
 
 
 class SimStateSource:
-    """Read a file once; serve a batched `SimState` and per-key tensors from it.
+    """Parse a file once; serve a batched `SimState` and per-key tensors from it.
 
-    Built for the case where a caller needs both the state and several target
-    arrays (energy, forces, stress) from one file: one parse backs every
-    accessor, so the file is never re-read. Like every oxyz `Batch`, the frames
-    must share a schema — a file whose metadata keys drift between frames cannot
-    form one batch.
+    The frames must share a schema, as in any `Batch`.
 
     Parameters
     ----------
     path
-        File path or an S3-compatible URL.
+        File path or a remote URL; see `oxyz.read`.
     threads
         Parallel parse (`None`: all cores).
     compression
@@ -471,10 +439,7 @@ def _plan_indices(
     member: str | None = None,
     storage_options: StorageOptions | None = None,
 ) -> list[int] | None:
-    """Resolve an ASE-style index to a list of frame indices.
-
-    Returns `None` for the whole file (read in a single pass).
-    """
+    """Resolve an ASE-style index to frame indices, or `None` for the whole file."""
     selection = parse_index(index)
     if isinstance(selection, slice) and selection == slice(None, None, None):
         return None
@@ -505,8 +470,7 @@ def _to_state(
     system_extras: ExtrasMap | None,
     atom_extras: ExtrasMap | None,
 ) -> SimState:
-    # dtype=None infers from the (float64) arrays, matching atoms_to_state; it
-    # does not resolve to torch.get_default_dtype() the way systems_to_torch does.
+    # dtype=None infers float64, as atoms_to_state does.
     n_frames = batch.n_frames
 
     pos = batch.columns.get("pos")
@@ -558,11 +522,7 @@ def _numbers(batch: Batch) -> np.ndarray:
 
 
 def _masses(batch: Batch, atomic_numbers: np.ndarray) -> np.ndarray:
-    """Per-atom masses: a `masses` column wins, else standard atomic weights.
-
-    `SimState` requires masses; extxyz rarely carries them, so they are derived
-    from atomic numbers via the ASE-parity table when no column is present.
-    """
+    """Per-atom masses: a `masses` column, else standard atomic weights."""
     column = batch.columns.get("masses")
     if column is None:
         return numbers_to_masses(atomic_numbers)
@@ -575,17 +535,11 @@ def _masses(batch: Batch, atomic_numbers: np.ndarray) -> np.ndarray:
     return values
 
 
-# Batched and in torch_sim's column-vector convention — the opposite of ASE's.
-# `oxyz._convert.cell` is the per-frame, ASE-convention twin behind `Frame.cell`.
+# torch_sim's column-vector convention, unlike `oxyz._convert.cell`.
 def _cell_and_pbc(batch: Batch) -> tuple[np.ndarray, np.ndarray]:
-    """Per-system cells and the batch's single shared pbc.
+    """Per-system `(n_frames, 3, 3)` cells and the batch's shared `(3,)` pbc.
 
-    Returns `(cell, pbc)`: `cell` is `(n_frames, 3, 3)` in torch_sim's
-    column-vector convention, and `pbc` is `(3,)`, shared by every system.
-    torch_sim stores the ASE cell transposed; an extxyz `Lattice` is the ASE
-    cell flattened in Fortran order, so the column-convention cell is the plain
-    C-order reshape transposed per frame. A frame with no `Lattice` contributes
-    a zero cell.
+    A frame with no `Lattice` has a zero cell.
     """
     n_frames = batch.n_frames
     lattice = batch.metadata.get("Lattice")
@@ -605,16 +559,11 @@ def _cell_and_pbc(batch: Batch) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _resolve_pbc(pbc: object, n_frames: int, *, default: bool) -> np.ndarray:
-    """Return the single `(3,)` pbc every system shares.
-
-    Raises a `ToSimStateError` when frames disagree (a `SimState` has one pbc
-    for the whole batch).
-    """
+    """Return the one `(3,)` pbc every system shares, or raise if they differ."""
     if pbc is None:
         return np.full(3, default, dtype=bool)
     array = np.asarray(pbc)
     if array.ndim == 1 and array.shape[0] == n_frames:
-        # one scalar pbc per frame; each broadcasts to all three axes, as ASE has it
         per_frame = np.repeat(array.astype(bool)[:, None], 3, axis=1)
     elif array.shape == (n_frames, 3):
         per_frame = array.astype(bool)
@@ -635,10 +584,7 @@ def _extras(
     dtype: torch.dtype | None,
     device: torch.device | None,
 ) -> dict[str, torch.Tensor]:
-    """Build a `{simstate_key: tensor}` extras dict.
-
-    Reads a `{simstate_key: oxyz_key}` map over a batch's metadata or columns.
-    """
+    """Build a `{simstate_key: tensor}` dict from a `{simstate_key: oxyz_key}` map."""
     if not mapping:
         return {}
     extras: dict[str, torch.Tensor] = {}

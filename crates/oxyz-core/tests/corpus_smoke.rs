@@ -1,15 +1,10 @@
-//! Corpus scoreboard: every frame of every fixture in `tests/data/` must
-//! parse.
-//!
-//! Per-fixture error expectations will return when malformed fixtures
-//! arrive, in their own `invalid/` subdirectory.
+//! Corpus scoreboard: every frame of every fixture in `tests/data/` parses.
 
 use std::{fs, path::PathBuf};
 
 use oxyz_core::read_frames;
 
-/// Kept explicit so adding a fixture without an entry, or deleting one the
-/// suite still expects, fails loudly.
+/// Explicit, so an unlisted or missing fixture fails.
 const FIXTURES: &[&str] = &[
     "atomic_numbers_z.extxyz",
     "force_singular_alias.extxyz",

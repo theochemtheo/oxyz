@@ -7,11 +7,8 @@
 Usage:
     uv run benchmarks/report.py [SAVE.json]
 
-Stdlib only; uv runs it anywhere. Without an argument, the newest save
-under .benchmarks/ is used. The tables, row descriptions, and environment
-section all come from the JSON (rows carry their output/mode via
-extra_info, versions via a conftest hook); only the prose lives here.
-Regenerate after any run worth recording:
+Without an argument, the newest save under .benchmarks/ is used. Everything
+but the prose comes from the JSON. Record and render with:
 
     uv run benchmarks/run.py --benchmark-autosave
     uv run benchmarks/report.py

@@ -1,8 +1,5 @@
-//! Reading from compressed sources: codec detection, archive member
-//! resolution, and parity with the plain fixture they were made from.
-//!
-//! Fixtures under `tests/data/compressed/` are compressed twins of
-//! `two_frame_same_schema.xyz` (see that directory's README).
+//! Reading from compressed sources. Fixtures under `tests/data/compressed/`
+//! are compressed twins of `two_frame_same_schema.xyz`.
 
 use std::{
     io::{Cursor, Read, Write},
@@ -46,9 +43,7 @@ fn read_frames_autodetects_every_codec() {
     }
 }
 
-/// `.tar.zst` ends in `.zst` too, so the tar arm must be tested first. A
-/// regression here decodes the zstd layer and then feeds tar headers to the
-/// parser, which is exactly the bug this codec was added to fix.
+/// `.tar.zst` also ends in `.zst`, so the tar arm must match first.
 #[test]
 fn tar_zstd_extensions_beat_the_bare_zstd_arm() {
     for (name, expected) in [
@@ -65,18 +60,14 @@ fn tar_zstd_extensions_beat_the_bare_zstd_arm() {
 
 #[test]
 fn concatenated_gzip_members_are_all_read() {
-    // concat.xyz.gz is the two-frame file gzipped twice and catted: a single
-    // `.gz` with two members. MultiGzDecoder must read both (plain GzDecoder
-    // would silently stop after the first).
+    // Two gzip members in one file; plain GzDecoder stops after the first.
     let frames = read_frames(fixture("compressed/concat.xyz.gz")).unwrap();
     assert_eq!(frames.len(), 4);
 }
 
 #[test]
 fn concatenated_zstd_frames_are_all_read() {
-    // concat.xyz.zst is the two-frame file zstd-compressed and catted: a single
-    // `.zst` of two frames. ruzstd's StreamingDecoder stops at the first frame,
-    // so the multi-frame wrapper must drive it across the boundary (4 frames).
+    // Two zstd frames in one file; ruzstd's StreamingDecoder stops after the first.
     let frames = read_frames(fixture("compressed/concat.xyz.zst")).unwrap();
     assert_eq!(frames.len(), 4);
 }
@@ -84,9 +75,7 @@ fn concatenated_zstd_frames_are_all_read() {
 /// Encodes a plain extxyz body into one codec's bytes.
 type Encoder = fn(&str) -> Vec<u8>;
 
-/// A multi-frame body large enough to span several pipe chunks for the archive
-/// routes (the producer thread streams 64 KiB at a time) and several reads for
-/// the direct decoders. Each copy of the two-frame fixture adds two frames.
+/// A body spanning several 64 KiB pipe chunks; each copy adds two frames.
 fn large_body(copies: usize) -> (String, usize) {
     let one = std::fs::read_to_string(fixture("two_frame_same_schema.xyz")).unwrap();
     (one.repeat(copies), copies * 2)
@@ -121,8 +110,7 @@ fn tar_gz_bytes(plain: &str) -> Vec<u8> {
     tar_into(plain, encoder).finish().unwrap()
 }
 
-/// Write a single `many.xyz` member into a fresh tar over `sink`, returning the
-/// finished sink.
+/// Write a single `many.xyz` member into a fresh tar over `sink`.
 fn tar_into<W: Write>(plain: &str, sink: W) -> W {
     let mut builder = tar::Builder::new(sink);
     let mut header = tar::Header::new_gnu();
@@ -137,11 +125,8 @@ fn tar_into<W: Write>(plain: &str, sink: W) -> W {
 
 #[test]
 fn every_route_reads_a_large_multi_frame_file() {
-    // 1500 copies (3000 frames, ~500 KiB) clears the 64 KiB pipe chunk many
-    // times over, so a chunking or truncation bug in the streaming/archive
-    // paths would drop frames here. zstd has no pure-Rust encoder, so its
-    // multi-frame coverage is the committed concat fixture
-    // (`concatenated_zstd_frames_are_all_read`) instead.
+    // Many pipe chunks, so a chunking or truncation bug drops frames. zstd has no
+    // pure-Rust encoder; `concatenated_zstd_frames_are_all_read` covers it.
     let (plain, expected) = large_body(1500);
     let routes: [(&str, Encoder); 4] = [
         ("gz", gzip_bytes),
@@ -159,9 +144,7 @@ fn every_route_reads_a_large_multi_frame_file() {
 
 #[test]
 fn unknown_extension_falls_back_to_magic_bytes() {
-    // A `.dat` extension says nothing, so the codec is recognised from the
-    // leading magic bytes. zstd magic comes from the committed fixture; the
-    // rest are encoded here.
+    // `.dat` says nothing, so the magic bytes decide.
     let one = std::fs::read_to_string(fixture("two_frame_same_schema.xyz")).unwrap();
     let zstd = std::fs::read(fixture("compressed/two_frame.xyz.zst")).unwrap();
     let cases: [(Vec<u8>, usize); 4] = [
@@ -190,8 +173,7 @@ fn archive_with_no_extxyz_member_errors() {
 
 #[test]
 fn tar_skips_directory_entries_when_resolving_a_member() {
-    // A directory entry alongside the sole extxyz member must be ignored during
-    // enumeration, not mistaken for a second member.
+    // A directory entry must not count as a second member.
     let plain = std::fs::read_to_string(fixture("two_frame_same_schema.xyz")).unwrap();
     let mut builder = tar::Builder::new(Vec::new());
     let mut dir = tar::Header::new_gnu();
@@ -215,8 +197,6 @@ fn tar_skips_directory_entries_when_resolving_a_member() {
 
 #[test]
 fn corrupt_zip_surfaces_an_error() {
-    // Bytes with a zip extension but no valid central directory must fail at
-    // open, not panic or read garbage.
     let path = temp_file(b"PK\x03\x04 not really a zip", "zip");
     assert!(open_decoded(&path, Compression::Infer, None).is_err());
     let _ = std::fs::remove_file(&path);
@@ -224,9 +204,7 @@ fn corrupt_zip_surfaces_an_error() {
 
 #[test]
 fn a_corrupt_archive_member_surfaces_an_error_not_a_silent_truncation() {
-    // A stored zip member with a flipped data byte fails its CRC check while the
-    // producer thread streams it; the error must reach the reader rather than
-    // ending the stream early.
+    // The CRC failure happens on the producer thread and must reach the reader.
     let plain = std::fs::read_to_string(fixture("two_frame_same_schema.xyz")).unwrap();
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let options =
@@ -234,8 +212,7 @@ fn a_corrupt_archive_member_surfaces_an_error_not_a_silent_truncation() {
     writer.start_file("many.xyz", options).unwrap();
     writer.write_all(plain.as_bytes()).unwrap();
     let mut bytes = writer.finish().unwrap().into_inner();
-    // Flip a byte inside the stored member data (past the local header, before
-    // the trailing central directory) to break its CRC.
+    // Past the local header, before the central directory.
     let middle = bytes.len() / 2;
     bytes[middle] ^= 0xff;
 
@@ -361,12 +338,8 @@ fn compression_can_be_forced_for_a_misnamed_file() {
     );
 }
 
-/// A tar has no magic bytes, so a tar under an unrecognised name is
-/// unreadable by inference alone. Each fixture is copied to a `.bin` name
-/// first — `detect_by_extension` returns `None` for it, so a version of this
-/// test that kept the original `.tar`/`.tar.gz`/`.tar.zst` names would pass
-/// even with the forcing arms in `detect` deleted, since extension inference
-/// alone resolves those. Only the blind name isolates what forcing adds.
+/// A tar has no magic bytes, so only a forced codec reads one under a blind
+/// `.bin` name. The original names would pass on extension inference alone.
 #[test]
 fn tar_codecs_can_be_forced_regardless_of_name() {
     for (name, compression) in [
@@ -385,10 +358,7 @@ fn tar_codecs_can_be_forced_regardless_of_name() {
             .unwrap_or_else(|e| panic!("failed forcing {name}: {e}"));
         assert_eq!(text, plain(), "mismatch forcing {name}");
 
-        // Same blind bytes, but without the forced codec: no tar magic
-        // exists to sniff, so Infer lands on gzip, zstd, or plain, decodes
-        // that outer layer (if any), and hands the parser raw tar headers
-        // instead of extxyz text.
+        // Without forcing, the parser is handed raw tar headers.
         assert!(
             read_frames(&path).is_err(),
             "expected Infer to fail reading {name} without forcing"
@@ -400,9 +370,7 @@ fn tar_codecs_can_be_forced_regardless_of_name() {
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// Write `bytes` to a uniquely-named temp file with the given extension and
-/// return its path. Random access is never used here, so a plain temp file is
-/// enough; the caller removes it.
+/// Write `bytes` to a uniquely named temp file; the caller removes it.
 fn temp_file(bytes: &[u8], extension: &str) -> PathBuf {
     let id = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
     let path =
@@ -415,9 +383,7 @@ fn temp_file(bytes: &[u8], extension: &str) -> PathBuf {
 }
 
 proptest! {
-    /// Arbitrary bytes presented as any codec must never panic: decoding either
-    /// fails cleanly or yields garbage the parser rejects. Truncated and
-    /// malformed archive headers are the cases that matter.
+    /// Arbitrary bytes presented as any codec fail cleanly, never panic.
     #[test]
     fn arbitrary_bytes_never_panic(bytes in proptest::collection::vec(any::<u8>(), 0..512)) {
         for (extension, compression) in [
@@ -429,8 +395,6 @@ proptest! {
             ("xyz", Compression::None),
         ] {
             let path = temp_file(&bytes, extension);
-            // open_decoded may fail at the header; if it opens, draining the
-            // reader must also not panic.
             if let Ok(mut reader) = open_decoded(&path, compression, None) {
                 let mut sink = Vec::new();
                 let _ = reader.read_to_end(&mut sink);

@@ -1,8 +1,6 @@
-"""ASE's own database: `ase.db.connect` on SQLite, core ASE, no extras.
+"""ASE's own database: `ase.db.connect` on SQLite.
 
-The common ecosystem path for "I have Atoms, I want a queryable store".
-Ingest commits row by row (that is how ase.db writes), so building the
-cache the first time takes minutes; it only happens once.
+Ingest commits row by row, so the first build takes minutes.
 """
 
 from __future__ import annotations
@@ -22,8 +20,7 @@ def ensure(src: Path) -> Path:
 def _ingest(src: Path, dest: Path) -> None:
     from ase.db import connect
 
-    # Explicit type: the build path ends in .tmp, which connect() cannot
-    # infer a backend from.
+    # The .tmp build path gives connect() nothing to infer a backend from.
     db = connect(dest, type="db")
     for atoms in oxyz.ase.iread(src):
         db.write(atoms)

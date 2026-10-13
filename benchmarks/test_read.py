@@ -4,16 +4,8 @@ Record a run: uv run benchmarks/run.py --benchmark-autosave
 Smoke only:   uv run benchmarks/run.py --benchmark-disable
 Render:       uv run benchmarks/report.py
 
-run.py is a PEP 723 script that supplies its own environment (CPython
-3.13, the comparison libraries, a release build of this checkout's oxyz);
-conftest refuses debug builds as a backstop. Saves land in .benchmarks/
-(gitignored); numbers are only comparable across runs on one machine.
-
-Each reader carries a `@row(output, mode)` tag describing what it
-materialises (numpy frames / ase.Atoms / Batch) and whether it parses on
-all cores or one; report.py renders those columns straight from the save,
-and RESULTS.md is never edited by hand. cextxyz and ase-extxyz rows skip
-where the libraries are missing (they publish no CPython 3.14 wheels).
+Numbers compare only across runs on one machine. `@row` tags feed
+report.py; RESULTS.md is never edited by hand.
 """
 
 from __future__ import annotations
@@ -47,11 +39,7 @@ THREAD_SWEEP = (1, 2, 4, 8)
 
 
 def row(output: str, mode: str, threads: int | None = None):
-    """Tag a reader with the output/mode columns report.py renders.
-
-    Swept rows also record their thread count; plot.py folds rows that
-    differ only in threads into one reader with a bar per count.
-    """
+    """Tag a reader with the output/mode columns report.py renders."""
 
     def tag(fn):
         info: dict[str, str | int] = {"output": output, "mode": mode}
@@ -73,11 +61,8 @@ def file_shape(path: Path) -> tuple[int, int]:
 def run(benchmark, read, path: Path, shape: tuple[int, int] | str | None = "file"):
     """Benchmark `read(path)`, recording its row tags in the save.
 
-    `shape` is the work the row does, recorded as n_frames/n_atoms so
-    report.py can derive frames/s and atoms/s. The default records the
-    whole file; rows reading a subset pass an explicit (n_frames, n_atoms);
-    rows whose cost does not scale with frames read (first/last/scan) pass
-    None and get no throughput columns.
+    `shape` is `(n_frames, n_atoms)` for throughput columns, defaulting to the
+    whole file; `None` for rows whose cost does not scale with frames.
     """
     benchmark.extra_info.update(read.row_info)
     if shape == "file":
@@ -107,8 +92,7 @@ def oxyz_read_all_schema_with(conformance: oxyz.Conformance):
 
 @row("numpy frames", "serial")
 def oxyz_iter_read_all(path: Path) -> list:
-    # The constant-memory streaming path; collected so every read_all row
-    # does the same total work.
+    # Collected, so every read_all row does the same total work.
     return list(oxyz.iread(path))
 
 
@@ -168,8 +152,7 @@ def ase_read_first(path: Path) -> object:
 
 @row("numpy frames", "serial")
 def cextxyz_read_all(path: Path) -> list:
-    # Not installable on 3.14 (needs_cextxyz skips there), so unresolvable
-    # for ty, which checks under the 3.14 venv.
+    # No 3.14 wheels, so unresolvable for ty.
     from extxyz import read_dicts  # ty: ignore[unresolved-import]
 
     frames = read_dicts(str(path))
@@ -187,8 +170,7 @@ def cextxyz_read_first(path: Path) -> object:
 
 @row("ase.Atoms", "serial")
 def cextxyz_to_ase_read_all(path: Path) -> list:
-    # ase-extxyz registers the C parser as an ASE IO plugin: same Atoms
-    # output as the `ase` row, parsing via cextxyz.
+    # ase-extxyz plugs cextxyz into ase.io as a reader.
     from ase.io import read
 
     frames = read(path, index=":", format="cextxyz")
@@ -211,9 +193,7 @@ def cextxyz_to_ase_read_last(path: Path) -> object:
 
 
 READ_ALL = [
-    # threads=None is the default call: every core the machine has. The sweep
-    # stops at 8, so without this row no measurement reaches the core count the
-    # all-core label names.
+    # Every core; the thread sweep stops at 8.
     pytest.param(oxyz_read_all_with(None), id="oxyz"),
     *(pytest.param(oxyz_read_all_with(t), id=f"oxyz-{t}t") for t in THREAD_SWEEP),
     pytest.param(oxyz_iter_read_all, id="oxyz-iter"),
@@ -272,12 +252,7 @@ SCHEMA_READ = [
 ]
 
 
-# Isolates per-frame validation cost from parsing: all three rows parse the
-# same file the same way, differing only in whether/how strictly read_frames
-# checks each frame against a schema. The schema itself is derived from the
-# file (the common case: validate what training data actually looks like)
-# and computed once per row, before timing starts, so the measured cost is
-# validation alone, not schema inference.
+# Validation cost alone: the schema is inferred once, before timing.
 @pytest.mark.benchmark(group="schema_read/mace_mixed")
 @pytest.mark.parametrize("read", SCHEMA_READ)
 def test_schema_read_overhead(benchmark, read, mace_mixed):
@@ -327,9 +302,7 @@ def cextxyz_to_ase_read_strided(path: Path) -> list:
     return frames
 
 
-# Selective read: every 20th frame (100 of 2000). The oxyz rows seek via
-# the byte-offset index. Output contracts: `oxyz-read-batch` returns one
-# Batch, the other rows lists of Atoms.
+# Every 20th frame. `oxyz-read-batch` returns one Batch, the rest Atoms.
 @pytest.mark.benchmark(group="selective/many_small_frames")
 @pytest.mark.parametrize(
     "read",
@@ -357,9 +330,7 @@ def test_selective_read_of_many_small_frames(benchmark, read, many_small_frames)
 
 @row("Batch", "serial")
 def oxyz_read_batch_last(path: Path) -> object:
-    # The large_frames fixture has 4 frames; read_batch takes absolute
-    # indices, so "last" is spelled 3. One frame requested, so threads
-    # would have nothing to parallelise; serial keeps the row honest.
+    # One frame, so threads=1.
     return oxyz.read_batch(path, [3], threads=1)
 
 
@@ -371,8 +342,7 @@ READ_LAST = [
 ]
 
 
-# Exercises the structural scan: seek to the last frame instead of parsing
-# the whole file (which is what index=-1 costs without an index).
+# Seeks to the last frame via the structural scan.
 @pytest.mark.benchmark(group="read_last/large_frames")
 @pytest.mark.parametrize("read", READ_LAST)
 def test_read_last_frame_of_large_file(benchmark, read, large_frames):
@@ -385,9 +355,6 @@ def oxyz_scan(path: Path) -> object:
     return oxyz.scan(path)
 
 
-# The structural scan underlies iread_batch planning, IndexedFrames open,
-# and ASE-style negative/strided indexing; it should sit far above parse
-# throughput to earn its keep.
 @pytest.mark.benchmark(group="scan/many_small_frames")
 @pytest.mark.parametrize("read", [pytest.param(oxyz_scan, id="oxyz-scan")])
 def test_scan_many_small_frames(benchmark, read, many_small_frames):
@@ -424,8 +391,7 @@ def oxyz_shuffled_atom_batches_with(threads: int):
     return batched
 
 
-# No ASE rows: ASE has no batch concept. Tracked against read_all[oxyz]
-# (same parse work, per-frame objects) as the informal baseline.
+# ASE has no batch concept; read_all[oxyz] is the informal baseline.
 @pytest.mark.benchmark(group="batches/many_small_frames")
 @pytest.mark.parametrize(
     "batched_read",
@@ -448,9 +414,7 @@ def test_batched_read_of_many_small_frames(benchmark, batched_read, many_small_f
     assert run(benchmark, batched_read, many_small_frames) > 0
 
 
-# The only real dataset in the suite: chemically diverse frames that disagree
-# on schema, at a size no generated fixture reaches. min_rounds=1 because a
-# single ase row here builds 180k Atoms objects off 303.5 MiB of text.
+# The one real dataset; one ase round builds 180k Atoms.
 @pytest.mark.benchmark(group="real_data/mad", min_rounds=1)
 @pytest.mark.parametrize("read", READ_ALL)
 def test_read_all_mad_full(benchmark, read, mad_full):

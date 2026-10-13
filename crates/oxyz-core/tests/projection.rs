@@ -223,8 +223,7 @@ fn metadata_array_mismatch_reports_bracket_signature() {
     assert_eq!(deviations[0].kind, DeviationKind::Mismatch);
     assert_eq!(deviations[0].expected, "R[9]");
     assert_eq!(deviations[0].found.as_deref(), Some("R[6]"));
-    // Filled to the declared 9-length array (NaN != NaN, so check componentwise
-    // rather than assert_eq! on the value).
+    // NaN != NaN, so check componentwise.
     match &frame.metadata[0].1 {
         Value::RealArray(v) => {
             assert_eq!(v.len(), 9);
@@ -304,8 +303,7 @@ fn projected_selection_preserves_request_order() {
 
 #[test]
 fn duplicate_metadata_prefers_conforming_occurrence() {
-    // `energy` appears twice: a wrong-kind Str, then a conforming Real. Projection
-    // must pick the conforming one, not report a spurious mismatch on the first.
+    // A wrong-kind duplicate must not hide the conforming one.
     let f = frame_meta(
         1,
         vec![
@@ -379,8 +377,6 @@ fn plain_meta(name: &str, kind: ColumnKind, shape: Option<usize>, fill: Fill) ->
 
 #[test]
 fn keeps_conforming_metadata_of_every_kind_and_shape() {
-    // Exercises every value_kind_shape arm: a conforming occurrence of each
-    // scalar and array kind is kept verbatim, no deviation.
     let f = frame_meta(
         1,
         vec![
@@ -414,8 +410,6 @@ fn keeps_conforming_metadata_of_every_kind_and_shape() {
 
 #[test]
 fn materialises_absent_optional_metadata_of_every_kind() {
-    // Every valid materialise_value arm: an absent optional scalar and array of
-    // each non-real kind fills with its declared sentinel.
     let f = frame_meta(1, Vec::new());
     let plan = ProjectionPlan {
         columns: Vec::new(),
@@ -444,8 +438,7 @@ fn materialises_absent_optional_metadata_of_every_kind() {
 
 #[test]
 fn required_metadata_absent_without_fill_drops_frame() {
-    // The metadata analogue of the column drop: a required key with no fill has
-    // no value to hold the fixed shape, so the frame is dropped with a Missing.
+    // A required key with no fill drops the frame.
     let f = frame_meta(1, Vec::new());
     let plan = ProjectionPlan {
         columns: Vec::new(),
@@ -467,10 +460,8 @@ fn required_metadata_absent_without_fill_drops_frame() {
 
 #[test]
 fn kind_mismatched_fill_falls_back_instead_of_panicking() {
-    // A plan whose fill kind disagrees with the field kind is a construction
-    // bug the Python compiler prevents; the core must still not panic. Each
-    // defensive arm produces the declared kind's zero. An empty frame forces
-    // every absent optional through the fill path.
+    // A fill kind disagreeing with the field kind falls back to the declared
+    // kind's zero rather than panicking. An empty frame fills every field.
     let f = frame(2, Vec::new());
     let mismatched = |name: &str, kind: ColumnKind| PlanColumn {
         name: name.into(),
@@ -530,17 +521,14 @@ fn kind_mismatched_fill_falls_back_instead_of_panicking() {
 
 // --- parallel and streamed projected reads match the serial read ---------
 
-// A four-frame file that drifts: charge present, absent, present (2 atoms),
-// absent. Enough to exercise fill, request order, and multi-frame batches.
+// Charge present, absent, present (2 atoms), absent.
 const DRIFT: &str = "1\nProperties=species:S:1:pos:R:3:charge:R:1\nH 0 0 0 0.5\n\
                      1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n\
                      2\nProperties=species:S:1:pos:R:3:charge:R:1\nH 0 0 0 1.0\nO 1 1 1 -1.0\n\
                      1\nProperties=species:S:1:pos:R:3\nO 0 0 0\n";
 
 fn drift_plan() -> ProjectionPlan {
-    // A concrete (non-NaN) fill so a filled column compares equal across the
-    // serial and parallel reads — derived `PartialEq` on `f64` treats NaN as
-    // unequal to itself, which would otherwise mask a true parity check.
+    // A concrete fill, as NaN != NaN would break the serial/parallel comparison.
     ProjectionPlan {
         columns: vec![
             real_col_plan("pos", 3, true),

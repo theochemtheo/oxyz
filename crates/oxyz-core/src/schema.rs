@@ -1,17 +1,8 @@
 //! Schema inference: a fold over frames recording which columns and metadata
 //! keys appear, with what types and shapes, and how consistently.
 //!
-//! Role: dataset diagnostics today, and eventually the dtype/presence
-//! contract for assembling a `Batch` across drifting frames. Deliberately
-//! *not* a parsing fast path (supersedes the original motivation): extxyz
-//! headers are self-describing per frame, so parse-speed work belongs in
-//! indexing/descriptor caching, not here.
-//!
-//! The accumulator records observed variants verbatim; unification (e.g.
-//! Int/Real promotion) happens only when reporting, so no observation is
-//! lost. Strictness policy will hook in at report/unify time, not during
-//! observation. This module is format-agnostic — the extxyz driver lives in
-//! [`crate::extxyz::infer_schema`].
+//! Variants are recorded verbatim; Int/Real promotion happens only when
+//! reporting, so no observation is lost.
 
 use std::fmt;
 
@@ -84,16 +75,14 @@ pub struct ColumnVariant {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ColumnSchema {
     pub name: String,
-    /// Observed variants in first-seen order; more than one means the column
-    /// changed kind or width between frames.
+    /// Observed variants in first-seen order.
     pub variants: Vec<ColumnVariant>,
     pub frames_present: usize,
 }
 
 impl ColumnSchema {
-    /// The single `(kind, width)` every frame's column can be read as: the
-    /// sole observed variant, or the Real that an Int/Real pair of equal
-    /// width promotes to. `None` is a genuine conflict.
+    /// The `(kind, width)` every frame's column can be read as: the sole variant,
+    /// or Real for an Int/Real pair of equal width. `None` is a conflict.
     pub fn unified(&self) -> Option<(ColumnKind, usize)> {
         match self.variants.as_slice() {
             [only] => Some((only.kind, only.width)),
@@ -117,8 +106,8 @@ pub struct MetadataSchema {
 }
 
 impl MetadataSchema {
-    /// The single type every frame's value can be read as; same promotion
-    /// rule as [`ColumnSchema::unified`].
+    /// The type every frame's value can be read as, promoting as
+    /// [`ColumnSchema::unified`] does.
     pub fn unified(&self) -> Option<ValueType> {
         match self.variants.as_slice() {
             [(only, _)] => Some(*only),
@@ -146,10 +135,7 @@ pub struct Schema {
     pub total_atoms: usize,
     pub min_atoms: Option<usize>,
     pub max_atoms: Option<usize>,
-    /// Declared atom count per frame, in file order. Kept as the sample the
-    /// distribution statistics (mean/median/std) are derived from, so the
-    /// schema pass alone answers what `scan` answers — `min`/`max`/`total`
-    /// stay accumulated to leave the rest of this type untouched.
+    /// Declared atom count per frame, in file order.
     pub n_atoms: Vec<usize>,
     /// Per-atom columns, in first-seen order.
     pub columns: Vec<ColumnSchema>,
@@ -172,8 +158,7 @@ impl Schema {
         self.n_atoms.push(frame.n_atoms);
 
         for column in &frame.columns {
-            // Look up by index rather than holding the `find` borrow: the
-            // not-found arm must push into the same Vec.
+            // By index: the not-found arm pushes into the same Vec.
             let index = match self
                 .columns
                 .iter()
@@ -208,10 +193,8 @@ impl Schema {
             }
         }
 
-        // Collapse duplicate keys last-wins within the frame, matching the
-        // dict semantics of `Frame`'s Python view, so a repeated key counts
-        // once rather than pushing frames_present past n_frames (which would
-        // wrongly read as inconsistent).
+        // Last-wins within the frame, as in the Python dict view, so a repeated key
+        // counts once.
         let mut deduped: Vec<(&CompactString, &Value)> = Vec::with_capacity(frame.metadata.len());
         for (key, value) in &frame.metadata {
             match deduped.iter_mut().find(|(existing, _)| *existing == key) {
@@ -252,10 +235,8 @@ impl Schema {
         }
     }
 
-    /// Strict consistency: every column and metadata key has exactly one
-    /// observed variant and appears in every frame. Int/Real promotion does
-    /// not count — a unifiable file is still inconsistent. Vacuously true
-    /// for an empty file.
+    /// Every column and key has exactly one variant and appears in every frame.
+    /// A file that only unifies through promotion is not consistent.
     pub fn is_consistent(&self) -> bool {
         let single_and_everywhere =
             |variants: usize, present: usize| variants == 1 && present == self.n_frames;

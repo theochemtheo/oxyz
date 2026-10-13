@@ -1,8 +1,5 @@
-//! Writing frames out: codec round-trips against the reader, append, the
-//! rejections (zstd-write, bad level), and a lossless round-trip invariant.
-//!
-//! Temp files land in the OS temp dir under a per-process, per-test name and
-//! are removed on success; a failing test leaves its file for inspection.
+//! Writing frames: codec round-trips, append, rejections, and the lossless
+//! round-trip invariant. A failing test leaves its temp file for inspection.
 
 use std::{
     fs,
@@ -19,8 +16,7 @@ use proptest::prelude::*;
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// A unique temp path with the given trailing name, so codec inference fires on
-/// the extension exactly as it would for a user path.
+/// A unique temp path ending in `name`, so codec inference sees the extension.
 fn temp_path(name: &str) -> PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!("oxyz_write_{}_{n}_{name}", std::process::id()))
@@ -34,8 +30,7 @@ fn col(name: &str, width: usize, data: ColumnData) -> Column {
     }
 }
 
-/// Two frames already in canonical order (species, pos lead; no Lattice/pbc to
-/// hoist), so a write then read compares equal field for field.
+/// Two frames already in write order, so a round trip compares equal.
 fn sample_frames() -> Vec<Frame> {
     let frame = Frame {
         n_atoms: 2,
@@ -86,9 +81,7 @@ fn explicit_compression_overrides_a_plain_extension() {
 
 #[test]
 fn forcing_tar_codecs_on_write_produces_a_readable_archive() {
-    // Compression::Tar/TarGzip now reach detect_for_write, so forcing them is
-    // no longer extension-only; name the files unhelpfully to prove the codec
-    // came from the forced argument, not from ".tar"/".tar.gz" in the path.
+    // Unhelpful names, so the codec can only come from the forced argument.
     let frames = sample_frames();
     for (name, compression) in [
         ("forced_tar.bin", Compression::Tar),
@@ -145,9 +138,7 @@ fn zstd_write_is_refused() {
     let by_request = FrameSink::create(&temp_path("x.xyz"), Compression::Zstd, None, false);
     assert!(matches!(by_request, Err(ExtxyzError::ZstdWriteUnsupported)));
 
-    // A tar wrapper does not make the zstd layer writable, even forced by
-    // codec rather than by the `.tar.zst` extension (covered separately by
-    // `tar_zstd_write_is_refused_not_unreachable`).
+    // Forcing the codec does not make zstd writable either.
     let tar_zstd_forced = FrameSink::create(&temp_path("x.bin"), Compression::TarZstd, None, false);
     assert!(matches!(
         tar_zstd_forced,
@@ -157,10 +148,7 @@ fn zstd_write_is_refused() {
 
 #[test]
 fn tar_zstd_write_is_refused_not_unreachable() {
-    // `.tar.zst`/`.tzst` extension-detect to an archive codec same as `.tar.gz`,
-    // but there is no zstd encoder in the tree (see the crate's dependency
-    // policy), so this must fail cleanly rather than reach `write_archive`'s
-    // archive-only match and panic.
+    // No zstd encoder is available, so this must fail cleanly, not panic.
     for name in ["x.tar.zst", "x.tzst"] {
         let result = FrameSink::create(&temp_path(name), Compression::Infer, None, false);
         assert!(
@@ -179,11 +167,7 @@ fn out_of_range_level_is_refused() {
     ));
 }
 
-// --- Parallel parity --------------------------------------------------------
-
-/// `count` distinct canonically-ordered frames, enough to span several chunks
-/// at any realistic thread count, with per-frame-varying data so a reordering
-/// bug would show.
+/// `count` distinct frames in write order, varied so a reordering would show.
 fn many_frames(count: usize) -> Vec<Frame> {
     (0..count)
         .map(|i| {
@@ -208,9 +192,7 @@ fn many_frames(count: usize) -> Vec<Frame> {
 #[test]
 fn parallel_write_is_byte_identical_to_serial() {
     let frames = many_frames(200);
-    // One path per codec, reused across serial and parallel: the archive codecs
-    // embed the file name in their header, so byte-identity is only meaningful
-    // for the same path.
+    // Archive headers embed the file name, so serial and parallel share a path.
     for name in ["p.xyz", "p.xyz.gz", "p.xyz.zip", "p.tar", "p.tar.gz"] {
         let path = temp_path(name);
         write_frames(&path, &frames, Compression::Infer, None, false).unwrap();
@@ -231,9 +213,8 @@ fn parallel_write_is_byte_identical_to_serial() {
 
 #[test]
 fn parallel_write_reports_the_first_invalid_frame_and_leaves_no_file() {
-    // A good prefix, one frame missing `pos` partway through, more good frames:
-    // the reported error must be that frame's, the same MissingRequiredColumn the
-    // serial writer raises, and the output file must not exist.
+    // The frame missing `pos` is reported, as in the serial writer, and no file
+    // is left behind.
     let mut frames = many_frames(50);
     frames[20] = Frame {
         n_atoms: 1,
@@ -261,8 +242,7 @@ fn parallel_write_reports_the_first_invalid_frame_and_leaves_no_file() {
 
 #[test]
 fn batched_sink_writes_match_a_serial_whole_file() {
-    // The Writer(batch=N) path: flush frames in fixed-size batches through
-    // write_batch_parallel, and the file must equal a one-shot serial write.
+    // Writer(batch=N): batched writes equal a one-shot serial write.
     let frames = many_frames(100);
     for name in ["batch.xyz", "batch.xyz.gz"] {
         let serial = temp_path(name);
@@ -287,24 +267,19 @@ fn batched_sink_writes_match_a_serial_whole_file() {
     }
 }
 
-// --- Lossless round-trip invariant -----------------------------------------
-
-/// A short species token (non-empty, no whitespace, a real chemical symbol so a
-/// `species` column is well-formed).
+/// A chemical symbol, so the `species` column is well-formed.
 fn species_strategy() -> impl Strategy<Value = String> {
     prop::sample::select(vec!["H", "C", "N", "O", "Si", "Fe"]).prop_map(str::to_owned)
 }
 
-/// Any finite f64 — the bit pattern Ryū must reproduce exactly.
+/// Any finite f64; the round trip must reproduce its bits.
 fn finite() -> impl Strategy<Value = f64> {
     any::<f64>().prop_filter("finite", |x| x.is_finite())
 }
 
 prop_compose! {
-    /// A canonically-ordered frame: `species`, `pos`, then a real and an int
-    /// column; metadata holds round-trippable scalars and arrays (nothing that
-    /// re-types on parse, and no Lattice/pbc so order is preserved). The model
-    /// it produces must survive write then re-parse unchanged.
+    /// A frame in write order, with metadata that survives re-parsing unchanged
+    /// and no Lattice/pbc to reorder.
     fn frame_strategy()(
         n in 0usize..6,
     )(
@@ -347,9 +322,8 @@ proptest! {
         prop_assert_eq!(&reparsed[0], &frame);
     }
 
-    /// Parallel serialisation reproduces the serial bytes for any frame list,
-    /// at any thread count — the byte-parity promise the codec tests check on a
-    /// fixed corpus, generalised.
+    /// Parallel serialisation reproduces the serial bytes for any frames and
+    /// thread count.
     #[test]
     fn parallel_serialisation_matches_serial(
         frames in prop::collection::vec(frame_strategy(), 0..40),

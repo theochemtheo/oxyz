@@ -36,37 +36,25 @@ memory."""
 class Batch(NameLookup[ColumnValues, ColumnValues]):  # noqa: PLW1641  a dict of arrays is unhashable by construction
     """Frames concatenated atom-major, CSR-style (PyG's batch layout).
 
-    `columns` holds per-atom arrays with `total_atoms` rows; `metadata` holds
-    per-frame arrays with `n_frames` rows. Frame `i` occupies rows
-    `offsets[i]:offsets[i + 1]` of every column. `batch[name]` looks a name up
-    across both, as `Frame` does.
+    Frame `i` occupies rows `offsets[i]:offsets[i + 1]` of every column.
+    `batch[name]` looks a name up across columns and metadata, as on `Frame`;
+    `name in batch` tests names, not frames.
 
-    A batch is also a sequence of its frames: `len(batch)` is `n_frames`, and
-    iterating yields each frame. Indexing follows numpy's rule — basic
-    indexing shares memory, advanced indexing copies:
-
-    - `batch[i]` is a `Frame` whose numeric arrays are views onto the batch;
-    - `batch[a:b]` is a `Batch` of views;
-    - a step slice, a sequence of indices, or a boolean mask over frames
-      gathers a new `Batch`, a copy.
-
-    String columns are Python lists, so a frame or slice gets new lists of the
-    same strings; scalar metadata comes out as the Python value `oxyz.read`
-    gives. `name in batch` tests names, as on `Frame`, not frames.
+    A batch is a sequence of its frames. Indexing follows numpy: `batch[i]` is
+    a `Frame` of views, `batch[a:b]` a `Batch` of views, and a step slice,
+    sequence of positions, or boolean mask gathers a new `Batch`, a copy.
+    String columns are lists, so these always get new lists.
 
     Attributes
     ----------
     columns
-        Per-atom data keyed by column name, e.g. `"species"`, `"pos"`,
-        `"forces"`, concatenated across frames.
+        Per-atom data keyed by column name, `total_atoms` rows.
     metadata
-        Per-frame data keyed by name, e.g. `"energy"`, `"Lattice"`, one row
-        per frame.
+        Per-frame data keyed by name, `n_frames` rows.
     offsets
         CSR row boundaries, length `n_frames + 1`.
     frame_indices
-        Which file frame each batch entry came from — provenance for a
-        shuffled or gathered batch.
+        The file frame each entry came from.
     n_frames
         Number of frames in the batch.
     total_atoms
@@ -76,8 +64,7 @@ class Batch(NameLookup[ColumnValues, ColumnValues]):  # noqa: PLW1641  a dict of
     ptr
         Alias of `offsets`, under its PyG name.
     batch
-        Per-atom frame id within this batch (PyG's `batch` vector), computed
-        on each access.
+        Per-atom frame id (PyG's `batch` vector), computed on each access.
     """
 
     columns: dict[str, ColumnValues]
@@ -99,10 +86,9 @@ class Batch(NameLookup[ColumnValues, ColumnValues]):  # noqa: PLW1641  a dict of
         return _html.batch(self)
 
     def __eq__(self, other: object) -> bool:
-        """Compare the layout arrays and every stored value, pairwise.
+        """Compare the layout arrays and every stored value.
 
-        Key order is ignored and NaN compares equal, matching `Frame`. `Batch`
-        is unhashable, as a mutable dict of arrays must be.
+        Key order is ignored and NaN compares equal, as on `Frame`.
         """
         if not isinstance(other, Batch):
             return NotImplemented
@@ -131,16 +117,12 @@ class Batch(NameLookup[ColumnValues, ColumnValues]):  # noqa: PLW1641  a dict of
     def __getitem__(self, key: int | np.integer) -> Frame: ...
     @overload
     def __getitem__(self, key: slice | Sequence[int] | np.ndarray) -> Batch: ...
-    # A str key keeps NameLookup's exact signature; ty does not yet read an
-    # overloaded override as compatible.
+    # ty does not yet accept an overloaded override of NameLookup's signature.
     def __getitem__(  # ty: ignore[invalid-method-override]
         self, key: str | int | np.integer | slice | Sequence[int] | np.ndarray
     ) -> ColumnValues | Frame | Batch:
         """Look up a field by name, a frame by position, or frames by selection.
 
-        A `str` is a column or metadata name. An `int` gives a `Frame`; a
-        `slice` with step 1 a `Batch` of views; any other slice, a sequence of
-        positions, or a boolean mask of length `n_frames` a gathered `Batch`.
         Negative positions count from the end; out of range is `IndexError`.
         """
         if isinstance(key, str):
@@ -260,22 +242,14 @@ class Batch(NameLookup[ColumnValues, ColumnValues]):  # noqa: PLW1641  a dict of
 
 
 def _fresh[V](value: V) -> V:
-    """Return `value` with every list in it replaced by a new one.
-
-    Arrays pass through untouched (a slice of one is already a view); only
-    the Python lists that hold strings need copying, so that a frame or slice
-    never aliases the batch's lists.
-    """
+    """Return `value` with every list in it replaced, so nothing aliases the batch."""
     if isinstance(value, list):
         return [_fresh(item) for item in value]  # ty: ignore[invalid-return-type]
     return value
 
 
 def _unbox(value: object) -> MetadataValue:
-    """Turn one frame's metadata row into what `oxyz.read` would give.
-
-    A numpy scalar becomes its Python value; an array row stays a view.
-    """
+    """Turn one frame's metadata row into what `oxyz.read` would give."""
     if isinstance(value, np.generic):
         # A batch's numeric metadata is float64, int64 or bool.
         return cast("float | int | bool", value.item())
@@ -295,10 +269,7 @@ def _scan_count(
     member: str | None,
     storage_options: _remote.StorageOptions | None,
 ) -> int:
-    """Frame count from a structural scan (no value parsing).
-
-    For resolving a slice or negative index against the file length.
-    """
+    """Frame count from a structural scan."""
     from oxyz._scan import scan
 
     return scan(
@@ -313,11 +284,9 @@ def _resolve_batch_indices(
     member: str | None,
     storage_options: _remote.StorageOptions | None,
 ) -> list[int] | None:
-    """Turn `read_batch`'s `index` into a concrete selection.
+    """Turn `read_batch`'s `index` into a frame list, or `None` for every frame.
 
-    `None` means the whole file (fast path, no scan); otherwise a list of
-    frame indices to gather in order. A slice or negative int resolves
-    against the frame count; `":"` and an explicit sequence do not scan.
+    Only a slice or a negative int needs a scan.
     """
     from oxyz._select import parse_index
 
@@ -355,35 +324,14 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
 ) -> Batch:
     """Gather frames into one batch.
 
-    `index` is `read`'s selection grammar: the default `":"` reads every frame
-    in file order; an int, slice, or slice string like `"1:10:2"` selects a
-    range; an explicit sequence of non-negative ints gathers those frames (in
-    order, repeats allowed). Slices and negative ints resolve against the frame
-    count via a structural scan; `":"` and an explicit sequence do not. Single
-    pass: the file is read once, and for an explicit selection only as far as the
-    last requested frame — structure and contents beyond it are never inspected.
-    For repeated gathers from one file prefer `iread_batch`, which scans once and
-    reuses the index. `threads=None` parses on every core, `threads=1` serially;
-    the batch is identical either way.
+    The file is read once, and for an explicit selection only as far as the
+    last requested frame. To gather repeatedly from one file, `iread_batch`
+    scans once and reuses the index.
 
-    Works on a compressed source (the selection still streams in one pass);
-    `compression` and `member` are as in `read`.
-
-    A remote URL (``s3://``, ``gs://``, ``az://``, ``hf://``) streams the
-    object through the same reader (needs the ``oxyz[s3]`` extra);
-    ``storage_options`` passes endpoint/credentials to the store.
-
-    `schema` (a `SchemaSpec` or a path) with effective `mode="project"` reshapes
-    every frame to the schema before concatenation — the way to batch a
-    mixed-schema file. `conformance` (`"strict"`/`"required"`/`"warn"`) governs
-    deviations; under `warn` an unfillable frame is dropped from the batch, and a
-    read where every frame drops yields an empty batch. `mode` without a `schema`
-    is an error. Without `schema`, behaviour is unchanged.
-
-    `schema` with effective validate mode (the default) validates each frame the
-    batch contains — columns, metadata, and the frame rule — exactly as the frame
-    readers do, before concatenation; a mixed-schema file still cannot batch, so
-    use `mode="project"` to reshape it.
+    With a `schema`, each frame is validated before concatenation; with
+    `mode="project"` each is reshaped to the schema instead, which is how to
+    batch a mixed-schema file. Under `conformance="warn"` a projected frame
+    that cannot be filled is dropped.
 
     Parameters
     ----------
@@ -391,16 +339,17 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
         File path, or a remote URL (``s3://``, ``gs://``, ``az://``,
         ``hf://`` — needs the ``oxyz[s3]`` extra).
     index
-        Which frames to gather; see above.
+        `read`'s selection grammar, or a sequence of non-negative frame
+        indices gathered in order (repeats allowed). Default: every frame.
     threads
-        `None` parses on every core; `1` is the exact serial path.
+        `None` parses on every core; `1` is serial. The batch is identical.
     schema
-        A `SchemaSpec`, or a path to a schema file; see above.
+        A `SchemaSpec`, or a path to a schema file.
     conformance
         How a schema deviation is handled: `"strict"`, `"required"` (default),
         or `"warn"`.
     mode
-        Overrides the schema's own `mode`; see above.
+        Overrides the schema's own `mode`; requires `schema`.
     compression
         Forces a codec instead of inferring it from `path`; see `read`.
     member
@@ -442,10 +391,7 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
     if selection is not None:
         for i in selection:
             if i < 0:
-                # The Rust binding takes unsigned indices; reject negatives in an
-                # explicit sequence here with the documented out-of-range
-                # IndexError rather than leaking pyo3's OverflowError. (A negative
-                # *int* index is resolved against the frame count above.)
+                # IndexError, not the binding's OverflowError on an unsigned index.
                 raise IndexError(
                     f"frame index {i} out of range: indices must be non-negative"
                 )
@@ -469,7 +415,6 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
         return result if result is not None else _empty_batch()
 
     if spec is not None:
-        # Validate-mode schema: validate each constituent frame, then assemble.
         return _read_batch_validate(
             path,
             selection,
@@ -522,69 +467,49 @@ def iread_batch(  # noqa: C901, PLR0913, PLR0912  the keyword options are the ba
 ) -> Iterator[Batch]:
     """Read a file as a sequence of batches.
 
-    Exactly one batching strategy must be given:
+    Exactly one strategy must be given:
 
-    - `frames_per_batch` — a fixed structure count per batch.
-    - `atoms_per_batch` — greedy file-order packing to a total-atom budget; a
-      frame larger than the budget gets a batch to itself.
-    - `memory_scales_with` — pack into balanced bins (best-fit-decreasing) under
-      `max_scaler`, weighting each frame by `"n_atoms"` or by `"n_atoms_x_density"`
-      (`n_atoms**2 / volume`, a proxy for the neighbour-graph size that drives
-      MLIP memory). A frame whose weight exceeds `max_scaler` gets its own bin.
-      Density needs the cell volume, read by an opt-in extension of the scan;
-      a frame with no `Lattice` falls back to its atom count.
+    - `frames_per_batch`: a fixed frame count per batch.
+    - `atoms_per_batch`: file-order packing to an atom budget.
+    - `memory_scales_with`: balanced bins under `max_scaler`, weighting each
+      frame by `"n_atoms"` or `"n_atoms_x_density"` (`n_atoms**2 / volume`, a
+      proxy for MLIP neighbour-graph memory; `n_atoms` where there is no
+      `Lattice`).
 
-    `shuffle` draws frames in a seeded random order via the byte-offset index
-    instead of file order (not available with `memory_scales_with`, whose
-    packing defines its own order). Whatever the order, each batch records the
-    file frame every entry came from in `frame_indices`.
+    A frame over budget gets a batch to itself. Batch composition depends only
+    on the file, the strategy and the seed, never on `threads`.
 
-    Batch composition depends only on the file, the knobs, and the seed —
-    never on `threads`, which sets parsing parallelism within each batch
-    (None: all cores; 1: serial, which for unshuffled `frames_per_batch`
-    streams the file without scanning).
+    A compressed or remote source supports only `frames_per_batch` without
+    `shuffle`; the other strategies need random access.
 
-    A compressed source (`.gz`, `.zst`, `.zip`, `.tar.gz`, `.tar.zst`, `.tar`) cannot be
-    randomly accessed, so only `frames_per_batch` without `shuffle` is
-    supported there — it streams batch-by-batch, peak memory bounded by the
-    batch, not the file. `shuffle`, `atoms_per_batch`
-    and `memory_scales_with` all need the byte-offset index and raise on a
-    compressed source; decompress the file first. `compression` and `member`
-    are as in `read`.
-
-    `schema` with effective `mode="project"` reshapes every frame to the schema
-    before batching — the way to batch a mixed-schema file. `conformance` governs
-    deviations; under `warn` an unfillable frame is dropped, so a batch whose
-    frames all drop is skipped and the batch count is not purely a function of
-    the strategy. `mode` without a `schema` is an error.
+    With `mode="project"`, a batch whose frames all drop under
+    `conformance="warn"` is skipped.
 
     Parameters
     ----------
     path
         File path, an S3-compatible URL, or `"-"` for stdin.
     frames_per_batch
-        Fixed structure count per batch; one of the three strategies.
+        Fixed frame count per batch.
     atoms_per_batch
-        Greedy file-order atom-count budget per batch; one of the three
-        strategies.
+        Atom budget per batch.
     memory_scales_with
-        `"n_atoms"` or `"n_atoms_x_density"`, packed into balanced bins under
-        `max_scaler`; one of the three strategies.
+        `"n_atoms"` or `"n_atoms_x_density"`.
     max_scaler
         The per-bin weight budget for `memory_scales_with`.
     shuffle
-        Draw frames in a seeded random order instead of file order.
+        Draw frames in a seeded random order; not with `memory_scales_with`.
     seed
-        Seeds `shuffle`; requires `shuffle=True`.
+        Seeds `shuffle`.
     threads
         Parsing parallelism within each batch; `None` for all cores, `1` for
-        serial. Never affects batch composition.
+        serial.
     schema
-        A `SchemaSpec`, or a path to a schema file; see above.
+        A `SchemaSpec`, or a path to a schema file; see `read_batch`.
     conformance
-        How a schema deviation is handled; see above.
+        How a schema deviation is handled; see `read_batch`.
     mode
-        Overrides the schema's own `mode`; see above.
+        Overrides the schema's own `mode`; requires `schema`.
     compression
         Forces a codec instead of inferring it from `path`; see `read`.
     member
@@ -600,10 +525,8 @@ def iread_batch(  # noqa: C901, PLR0913, PLR0912  the keyword options are the ba
     Raises
     ------
     ValueError
-        On an invalid combination of knobs (zero or more than one strategy,
-        `seed` without `shuffle`, `shuffle` with `memory_scales_with`, an
-        out-of-range knob, or a strategy unsupported on a compressed or
-        remote source).
+        On an invalid combination of options, or a strategy the source cannot
+        support.
 
     Examples
     --------
@@ -648,9 +571,7 @@ def iread_batch(  # noqa: C901, PLR0913, PLR0912  the keyword options are the ba
         projection, spec = _projection(schema, mode)
 
     remote = _remote.is_remote(path)
-    # A remote URL or a compressed local file is non-seekable, so only the
-    # streaming strategy (frames_per_batch without shuffle) is available; the
-    # index-backed strategies need random access.
+    # Non-seekable sources support only streaming frames_per_batch.
     streaming_only = True if remote else _rust.is_compressed(str(path), compression)
     if member is not None and not remote and not streaming_only:
         raise ValueError(
@@ -665,8 +586,6 @@ def iread_batch(  # noqa: C901, PLR0913, PLR0912  the keyword options are the ba
             "to use shuffle, atoms_per_batch, or memory_scales_with"
         )
 
-    # The sequential stream covers unshuffled frames_per_batch; a streaming-only
-    # source must take it (no index), and otherwise it is the serial fast path.
     if (
         frames_per_batch is not None
         and not shuffle
@@ -707,7 +626,7 @@ def _sequential_batches(
     conformance: Conformance = "required",
     spec: SchemaSpec | None = None,
 ) -> Iterator[Batch]:
-    """Streamed file-order batches: memory bounded by the batch, no scan."""
+    """File-order batches streamed without a scan."""
     remote = _remote.is_remote(path)
     src = (
         _remote.open_source(
@@ -736,8 +655,6 @@ def _sequential_batches(
         return
 
     if spec is not None:
-        # Validate-mode schema: parse and validate each frame, then window the
-        # frames into batches (build_batch assembles; a mixed file raises there).
         from oxyz._frames import _frame_from_data
         from oxyz._schema_match import enforce_frame, resolve
 
@@ -788,13 +705,7 @@ def _planned_batches(  # noqa: PLR0913  the planning knobs plus projection
     conformance: Conformance = "required",
     spec: SchemaSpec | None = None,
 ) -> Iterator[Batch]:
-    """Index-backed batches over a frame order planned up front.
-
-    Planning is serial and happens before any parsing, so `threads` cannot
-    influence which frames land in which batch. The reader's own index
-    supplies the atom counts (and, for density, the cell volumes), so the
-    file is scanned exactly once.
-    """
+    """Index-backed batches over a frame order planned before any parsing."""
     validate_compiled = None
     if spec is not None and projection is None:
         from oxyz._schema_match import resolve
@@ -815,8 +726,7 @@ def _planned_batches(  # noqa: PLR0913  the planning knobs plus projection
     elif atoms_per_batch is not None:
         plans = _greedy_atom_plans(order, n_atoms, atoms_per_batch)
     else:
-        # Type-narrowing only, never control flow: iread_batch already raised
-        # unless exactly one strategy is set, so this else is the memory case.
+        # Type-narrowing only: iread_batch ensured exactly one strategy.
         assert memory_scales_with is not None  # noqa: S101
         assert max_scaler is not None  # noqa: S101
         weights = _memory_weights(memory_scales_with, n_atoms, reader.volumes)
@@ -867,17 +777,11 @@ def _greedy_atom_plans(
 def _memory_weights(
     metric: MemoryScaling, n_atoms: np.ndarray, volumes: np.ndarray | None
 ) -> np.ndarray:
-    """Per-frame packing weight; see `iread_batch` for the rationale.
-
-    `n_atoms_x_density` is `n_atoms**2 / volume`, falling back to `n_atoms`
-    where the volume is missing (`NaN`, a frame with no `Lattice`) or
-    non-positive — mirroring `torch_sim`'s `where(volume > 0, ...)`.
-    """
+    """Per-frame packing weight; `n_atoms` where the volume is missing or <= 0."""
     counts = n_atoms.astype(np.float64)
     if metric == "n_atoms":
         return counts
-    # Type-narrowing only, never control flow: need_volume opened the scan with
-    # volumes, so this is non-None here.
+    # Type-narrowing only: need_volume scanned with volumes.
     assert volumes is not None  # noqa: S101
     with np.errstate(invalid="ignore", divide="ignore"):
         density = counts * counts / volumes
@@ -887,12 +791,7 @@ def _memory_weights(
 def _balanced_bins(
     order: np.ndarray, weights: np.ndarray, max_volume: float
 ) -> list[list[int]]:
-    """Best-fit-decreasing bin packing, after `torch_sim`'s `to_constant_volume_bins`.
-
-    Heaviest first, into the most-full bin that still has room, opening a new
-    bin only when none does. A frame heavier than the budget opens (and
-    fills) a bin of its own.
-    """
+    """Best-fit-decreasing packing, after `torch_sim`'s `to_constant_volume_bins`."""
     entries = sorted(
         ((float(weights[i]), int(i)) for i in order), key=lambda entry: -entry[0]
     )
@@ -938,10 +837,6 @@ def _resolve_projected_batch(
     """Apply projection policy to a `(batch_data, survivors, reports)` triple.
 
     Returns the surviving `Batch`, or `None` when every frame dropped.
-    Reports arrive in request order, so the first strict/required violation
-    raised is deterministic and matches the frame readers; `warn` warns per
-    deviation and the caller skips a `None` (empty) result. The frame rule, if
-    the spec has one, is checked against the projected survivors.
     """
     from oxyz._project import enforce_projection
 
@@ -961,12 +856,7 @@ def _resolve_projected_batch(
 def _enforce_frame_rule_on_batch(
     batch: Batch, frame_rule: FrameRule, conformance: Conformance
 ) -> None:
-    """Check a batch's per-frame structural facts against the frame rule.
-
-    Checks `n_atoms` bounds and `lattice_required`, in frame order — the
-    batch analogue of the frame readers' frame-rule validation. Raises under
-    strict/required on the first violation; warns under warn.
-    """
+    """Check each frame's atom count and `Lattice` against the frame rule."""
     import warnings
 
     from oxyz._schema_match import SchemaError, SchemaWarning, Violation, message
@@ -1004,11 +894,7 @@ def _materialise_batch_frames(
     member: str | None,
     storage_options: _remote.StorageOptions | None,
 ) -> tuple[list[_rust.FrameData], list[int]]:
-    """Parse the frames a batch will contain, as `FrameData` dicts with file indices.
-
-    A selection reads the whole file and picks (the validate path is not on
-    the hot loop); `selection=None` returns every frame in file order.
-    """
+    """Parse the frames a batch will contain, with their file indices."""
     if _remote.is_remote(path):
         src = _remote.open_source(
             path,
@@ -1041,11 +927,7 @@ def _read_batch_validate(
     member: str | None,
     storage_options: _remote.StorageOptions | None,
 ) -> Batch:
-    """Validate each constituent frame, then assemble the batch.
-
-    Checks columns, metadata, and the frame rule per frame — the
-    validate-mode analogue of the projecting read.
-    """
+    """Validate each frame against the schema, then assemble the batch."""
     from oxyz._frames import _frame_from_data
     from oxyz._schema_match import enforce_frame, resolve
 

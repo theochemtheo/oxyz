@@ -24,8 +24,7 @@ fn corpus() -> Vec<PathBuf> {
     paths
 }
 
-/// The scan and the parser must agree on every corpus file: same frame
-/// count, same atom counts, and `get(i)` returns the identical `Frame`.
+/// The scan and the parser agree on every corpus file.
 #[test]
 fn indexed_reads_match_streamed_reads_across_corpus() {
     for path in corpus() {
@@ -72,8 +71,7 @@ fn scan_records_offsets_and_counts() {
 
 #[test]
 fn lying_count_surfaces_one_frame_late() {
-    // Frame 0 declares 3 atoms but has 2; the scan desyncs and trips on the
-    // next count line, blaming frame 1 — the documented trust tradeoff.
+    // Frame 0 claims 3 atoms but has 2, so the scan trips on frame 1.
     let text = "3\ncomment\nH 0 0 0\nH 1 1 1\n1\ncomment\nH 2 2 2\n";
     let error = scan_frames(Cursor::new(text)).unwrap_err();
     assert!(error.to_string().contains("frame 1"), "{error}");
@@ -90,9 +88,7 @@ fn truncated_final_frame_is_an_error() {
 
 #[test]
 fn volume_scan_records_lattice_determinant() {
-    // A periodic frame (2x2x2 cubic cell, volume 8) followed by a molecular
-    // frame with no Lattice: the molecular volume is NaN, the cheap fallback to
-    // an atom-count weight downstream.
+    // A cell of volume 8, then a frame with no Lattice (NaN).
     let text = "1\nLattice=\"2 0 0 0 2 0 0 0 2\"\nH 0 0 0\n1\ncomment\nH 1 1 1\n";
     let index = scan_frames_with_volume(Cursor::new(text)).unwrap();
     let volumes = index.volumes().expect("volume scan records volumes");
@@ -107,8 +103,6 @@ fn volume_scan_records_lattice_determinant() {
 
 #[test]
 fn volume_scan_handles_triclinic_and_negative_determinant() {
-    // A sheared cell: |det| is the volume regardless of handedness or the
-    // row/column order the nine components are read in.
     let text = "1\nLattice=\"2 0 0 1 2 0 0 0 3\"\nH 0 0 0\n";
     let index = scan_frames_with_volume(Cursor::new(text)).unwrap();
     let volumes = index.volumes().unwrap();
@@ -139,8 +133,6 @@ fn out_of_range_get_reports_bounds() {
 
 #[test]
 fn random_access_refuses_a_compressed_source() {
-    // A compressed stream cannot be seeked, so the index-backed reader rejects
-    // it up front rather than reading wrong bytes.
     let error = IndexedFrames::open(fixture("compressed/two_frame.xyz.gz"))
         .err()
         .unwrap();

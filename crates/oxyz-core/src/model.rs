@@ -1,12 +1,7 @@
 //! oxyz's internal data model: typed, columnar, format-agnostic.
 //!
-//! Runtime-typed on purpose: which columns a file has, their types, and
-//! their widths are discovered while parsing, so they cannot be compile-time
-//! type parameters. extxyz's closed set of column kinds (`R`/`I`/`L`/`S`)
-//! maps onto enums instead.
-//!
-//! Parsing lives in [`crate::extxyz`]; a future `Batch` (concatenated
-//! columns across frames) is expected to reuse this vocabulary.
+//! Columns are discovered while parsing, so kinds are enums rather than type
+//! parameters.
 
 use std::fmt;
 
@@ -22,7 +17,6 @@ pub enum ColumnKind {
 }
 
 impl fmt::Display for ColumnKind {
-    /// Displays as the extxyz Properties letter (`R`, `I`, `L`, `S`).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let letter = match self {
             ColumnKind::Real => 'R',
@@ -34,10 +28,7 @@ impl fmt::Display for ColumnKind {
     }
 }
 
-/// The values of one per-atom column, stored as a single dense buffer.
-///
-/// The enum wraps whole columns, not cells: one tag check per column access,
-/// with contiguous data inside — the layout numpy and Arrow want.
+/// The values of one per-atom column, as a single dense buffer.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ColumnData {
     /// extxyz kind `R`.
@@ -102,14 +93,11 @@ impl ColumnData {
     }
 }
 
-/// One per-atom column: a named, typed, width-strided buffer.
-///
-/// Deliberately frame-agnostic: row count lives with the owner, so a future
-/// `Batch` can concatenate buffers across frames.
+/// One per-atom column: a named, typed, width-strided buffer. The row count
+/// lives with the owner.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Column {
-    /// Name exactly as written in the Properties descriptor; aliasing
-    /// (`force` vs `forces`) is a later layer's job.
+    /// Name as written in the Properties descriptor.
     pub name: CompactString,
 
     /// Values per atom (e.g. 3 for `pos:R:3`).
@@ -119,11 +107,8 @@ pub struct Column {
     pub data: ColumnData,
 }
 
-/// One typed comment-line metadata value.
-///
-/// Values that fit nothing more specific fall back to `Str` with the raw
-/// text preserved. Arrays stay in as-written order — `Lattice` is not
-/// reordered or reshaped here.
+/// One typed comment-line metadata value. Anything unrecognised is `Str` with
+/// the raw text kept.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Real(f64),
@@ -134,8 +119,7 @@ pub enum Value {
     IntArray(Vec<i64>),
     BoolArray(Vec<bool>),
     StrArray(Vec<CompactString>),
-    /// Flat row-major buffer; element `(r, c)` at `data[r * cols + c]`,
-    /// `data.len() == rows * cols`. Mirrors `Column`'s own row-major layout.
+    /// Row-major: element `(r, c)` is `data[r * cols + c]`.
     RealArray2D {
         rows: usize,
         cols: usize,
@@ -158,20 +142,15 @@ pub enum Value {
     },
 }
 
-/// One parsed frame: per-atom columns plus frame-level metadata.
-///
-/// Both collections are `Vec`s, not maps: file order is preserved and
-/// duplicate keys survive. Fields are public while the model is settling.
+/// One parsed frame. `Vec`s rather than maps keep file order and duplicate keys.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Frame {
     pub n_atoms: usize,
 
-    /// Per-atom columns, in file order; each upholds
-    /// `data.len() == n_atoms * width`.
+    /// Per-atom columns in file order; `data.len() == n_atoms * width`.
     pub columns: Vec<Column>,
 
-    /// Frame-level metadata, in file order. `Properties` is consumed into
-    /// `columns` and not repeated here.
+    /// Frame-level metadata in file order, without `Properties`.
     pub metadata: Vec<(CompactString, Value)>,
 }
 

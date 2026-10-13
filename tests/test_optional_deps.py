@@ -1,22 +1,7 @@
-"""The optional targets' import guards, and the tier environment they run in.
+"""The optional targets' import guards, and the CI tier canary.
 
-`oxyz.ase`, `oxyz.metatomic` and `oxyz.torch_sim` each wrap their third-party
-imports in a `try`/`except ImportError` that re-raises a plain `ImportError`
-naming the extra to install. That path only runs when the dependency is
-genuinely absent, so in a full development environment it never executes and its
-promise — that the message names the module and the extra, and chains the
-original cause — goes untested.
-
-These tests block the imports *in-process* rather than in a subprocess, so
-coverage.py attributes those lines to the run that executes them. That keeps the
-guards inside the full-dependency coverage measurement instead of only inside a
-CI dependency tier, and it means the tests pass whether or not the optional
-dependency happens to be installed.
-
-The tier canary at the foot of the file checks the environment is the one CI
-declared, so a tier that quietly installed too much — or a skip guard that fires
-for the wrong reason — surfaces as a failure rather than a green run over
-nothing.
+Imports are blocked in-process, so coverage sees the guards and the tests
+pass whether or not the dependency is installed.
 """
 
 from __future__ import annotations
@@ -46,8 +31,7 @@ TARGETS = [
 class _Blocker:
     """A meta-path finder that makes the named roots unimportable.
 
-    Raises rather than returning `None`: returning `None` means "not my
-    business, ask the next finder", which would fall through to the real one.
+    It raises: returning `None` would fall through to the real finder.
     """
 
     def __init__(self, roots: tuple[str, ...]) -> None:
@@ -73,8 +57,7 @@ def _hidden(target: str, roots: tuple[str, ...]) -> Iterator[None]:
         ]
 
     saved_meta = list(sys.meta_path)
-    # A cached module never re-executes, so the guard would not run. Drop the
-    # target and anything under the blocked roots; the rest of oxyz stays cached.
+    # A cached module never re-executes its guard.
     saved_modules = {name: sys.modules[name] for name in touched()}
     for name in saved_modules:
         del sys.modules[name]
@@ -83,12 +66,8 @@ def _hidden(target: str, roots: tuple[str, ...]) -> Iterator[None]:
         yield
     finally:
         sys.meta_path[:] = saved_meta
-        # Restore only these names. Restoring a whole sys.modules snapshot would
-        # also un-import whatever the blocked import pulled in on its way to the
-        # guard — and if that included `oxyz._rust`, the next import of it fails
-        # with "cannot load module more than once per process", because a PyO3
-        # abi3 extension cannot be initialised twice. Anything newly imported is
-        # harmless to leave in place.
+        # Restore only these: un-importing `oxyz._rust` would break it, as a PyO3
+        # abi3 extension cannot be initialised twice.
         for name in touched():
             del sys.modules[name]
         sys.modules.update(saved_modules)
@@ -104,13 +83,10 @@ def test_missing_dependency_raises_with_the_install_hint(
         importlib.import_module(module)
 
     error = excinfo.value
-    # Exactly ImportError, not a ModuleNotFoundError: the latter would mean the
-    # raw import error escaped and the guard never ran.
+    # A ModuleNotFoundError would mean the guard never ran.
     assert type(error) is ImportError
     assert module in str(error)
     assert extra in str(error)
-    # `raise ... from error` keeps the underlying failure reachable, so a typo in
-    # an internal import is still diagnosable behind the friendly message.
     assert error.__cause__ is not None
 
 
@@ -132,10 +108,7 @@ def test_hiding_a_dependency_leaves_no_trace(
     assert not any(isinstance(finder, _Blocker) for finder in sys.meta_path)
 
 
-# The dependency tiers CI builds, as the optional top-level packages each is
-# expected to provide. `OXYZ_TEST_TIER` is set by the `tiers`, `python` and
-# `coverage` jobs in test.yml; unset (a bare local run) skips, because there is
-# no declared expectation to check against.
+# The optional packages each CI tier provides, keyed by `OXYZ_TEST_TIER`.
 TIERS = {
     "base": set(),
     "ase": {"ase"},

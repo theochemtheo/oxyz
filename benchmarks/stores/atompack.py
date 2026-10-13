@@ -1,16 +1,8 @@
 """atompack: the specialised binary molecule store (pip: atompack-db).
 
-Two read configurations, matching how the library is actually used:
-`serial` loops `get_molecule(i)` and decodes each frame's arrays (the
-per-item path, effectively serial regardless of the rayon pool); `native`
-calls `get_molecules_flat`, the mmap-backed batch path that parallelises
-across all cores. Pinning the pool size needs RAYON_NUM_THREADS in the
-environment before first use — one process per setting — so a thread
-sweep would have to come from run.py spawning subprocesses, not from
-parameters here.
-
-atompack stores positions and forces as float32 by design; the text
-readers hand back float64.
+`serial` loops `get_molecule(i)`; `native` calls `get_molecules_flat`, the
+mmap-backed batch path on all cores. The pool size is fixed per process by
+RAYON_NUM_THREADS. Positions and forces are stored as float32.
 """
 
 from __future__ import annotations

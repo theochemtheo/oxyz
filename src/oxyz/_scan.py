@@ -18,11 +18,8 @@ if TYPE_CHECKING:
 class FrameIndex(AtomCountStats):
     """Structural facts from a scan: frame offsets and declared atom counts.
 
-    Nothing is parsed beyond the count lines, so this is cheap even for files
-    where a full read is not. Statistics are derived from the stored counts;
-    `mean_atoms`/`median_atoms`/`std_atoms` come from `AtomCountStats`, with
-    `std_atoms` the population standard deviation. All statistics are None for
-    an empty file.
+    All statistics are None for an empty file; `std_atoms` is the population
+    standard deviation.
 
     Attributes
     ----------
@@ -31,9 +28,8 @@ class FrameIndex(AtomCountStats):
     n_atoms
         Declared atom count per frame, dtype `intp`.
     volumes
-        Per-frame cell volume `|det(Lattice)|`, only for
-        `scan(..., with_volume=True)`; `NaN` for a frame with no `Lattice`.
-        None when volume was not requested.
+        Per-frame cell volume `|det(Lattice)|` with
+        `scan(..., with_volume=True)`, `NaN` without a `Lattice`; else None.
     """
 
     offsets: np.ndarray
@@ -87,42 +83,23 @@ def scan(
 ) -> FrameIndex:
     """Scan a file's structure without parsing any frame contents.
 
-    Returns a `FrameIndex` of per-frame byte offsets and declared atom counts.
-    `n_atoms` is `intp` so arithmetic with it does not promote to float64.
-    The atom-count statistics (`min_atoms`/`max_atoms`/`mean_atoms`/
-    `median_atoms`/`std_atoms`) are `None` for an empty file — the only
-    optionals in the result. For column and metadata types too, at the cost of
-    a full parse, use `infer_schema`.
-
-    `with_volume=True` reads one extra line per frame (the comment line) to
-    record each frame's cell volume `|det(Lattice)|` in `volumes`; a frame with
-    no `Lattice` gets `NaN`. It backs density-aware batch binning
-    (`iread_batch(memory_scales_with="n_atoms_x_density")`).
-
-    A compressed path is scanned by streaming through the decoder; the recorded
-    offsets are into the decompressed stream, so they give no random-access
-    speedup on a re-read (which decompresses afresh). `compression` and `member`
-    work as in `read`.
-
-    A remote URL (``s3://``, ``gs://``, ``az://``, ``hf://``) streams the
-    object through the same scanner (needs the ``oxyz[s3]`` extra);
-    ``storage_options`` passes endpoint/credentials to the store.
+    For column and metadata types too, at the cost of a full parse, use
+    `infer_schema`. On a compressed source the offsets index the decompressed
+    stream, so they do not speed up a re-read.
 
     Parameters
     ----------
     path
-        File path or remote URL to scan.
+        File path, or a remote URL; see `read`.
     with_volume
-        Also record each frame's cell volume in `volumes`.
+        Also record each frame's cell volume in `volumes`, reading each
+        comment line.
     compression
-        Forces a codec (`"infer"`, `"none"`, `"gzip"`, `"zstd"`, `"zip"`,
-        `"tar"`, `"tar.gz"`, `"tar.zst"`) instead of inferring it from `path`.
+        Forces a codec instead of inferring it from `path`; see `read`.
     member
-        Selects one entry from a `.zip`/`.tar`/`.tar.gz`/`.tar.zst` holding
-        more than one.
+        Selects one entry from an archive holding more than one; see `read`.
     storage_options
-        Endpoint/credentials for a remote store, falling back to `AWS_*`
-        env vars.
+        Endpoint/credentials for a remote store; see `read`.
 
     Returns
     -------

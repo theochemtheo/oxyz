@@ -1,10 +1,4 @@
-"""Parity tests: oxyz.metatomic must agree with systems_to_torch(ase.io.read).
-
-System fields (types/positions/cell/pbc) are compared against
-metatomic.torch.systems_to_torch fed by ase.io.read, the path oxyz.metatomic
-replaces. Array-native extraction (per_config/per_atom) is checked against ASE's
-info/arrays. Voigt stress — which ASE's reader rejects — gets its own test.
-"""
+"""Parity tests: oxyz.metatomic agrees with systems_to_torch(ase.io.read)."""
 
 from __future__ import annotations
 
@@ -24,9 +18,7 @@ pytestmark = pytest.mark.skipif(
 
 DATA_DIR = Path(__file__).parent / "data"
 
-# Files ase.io.read disagrees on (Voigt stress it rejects, plus oxyz's
-# documented metadata divergences). System fields are unaffected, but we keep
-# the reference set to those ASE reads cleanly, matching test_ase's GOLDEN.
+# Files ase.io.read disagrees on, as in test_ase's GOLDEN.
 DIVERGENT = {
     "simple.extxyz",
     "nonorthogonal.extxyz",
@@ -75,8 +67,7 @@ def test_system_parity_with_systems_to_torch(name: str, dtype_name: str) -> None
         got = oxyz.metatomic.read(path, dtype=dtype)
         ase_frames = ase_read(path, ":", format="extxyz")
         assert isinstance(ase_frames, list)  # narrow ase.io.read's union
-        # metatomic types its input as the abstract IntoSystem, which ase.Atoms
-        # is not declared to satisfy, so ty cannot see the (supported) call.
+        # ase.Atoms is not declared to satisfy metatomic's IntoSystem.
         ref = systems_to_torch(ase_frames, dtype=dtype)  # ty: ignore[invalid-argument-type]
         assert isinstance(ref, list)
 
@@ -106,8 +97,7 @@ def test_per_config_and_per_atom_match_ase() -> None:
 
 
 def test_per_config_voigt_stress_keeps_width_six() -> None:
-    # ASE's comment parser rejects 6-vector stress, so there is no ASE reference;
-    # oxyz keeps it as-written, stacked (n_frames, 6) for the caller to reshape.
+    # ASE rejects 6-vector stress, so there is no reference.
     import torch
 
     import oxyz.metatomic
@@ -164,8 +154,7 @@ def test_index_selects_single_or_list() -> None:
     import oxyz.metatomic
 
     path = DATA_DIR / "two_frame_same_schema.xyz"
-    # System is a TorchScript custom class, not an isinstance-able type; check
-    # the shape of the result instead — a bare System vs a list of them.
+    # System is a TorchScript class, so check the shape of the result instead.
     one = oxyz.metatomic.read(path, 0)
     assert not isinstance(one, list)
     assert hasattr(one, "positions")
@@ -224,8 +213,7 @@ def test_extraction_missing_key_raises() -> None:
 def test_scalar_pbc_broadcasts_to_three_axes(tmp_path: Path) -> None:
     import oxyz.metatomic
 
-    # `pbc=T` (a scalar) is accepted by ASE and broadcast to all three axes;
-    # reproduce that rather than crashing on a reshape.
+    # A scalar `pbc=T` broadcasts, as in ASE.
     path = _write(
         tmp_path,
         '1\nLattice="1 0 0 0 1 0 0 0 1" pbc=T '
@@ -246,8 +234,7 @@ def test_malformed_pbc_shape_raises(tmp_path: Path) -> None:
 def test_explicit_pbc_without_lattice_is_honoured(tmp_path: Path) -> None:
     import oxyz.metatomic
 
-    # No Lattice but an explicit pbc: cell stays zero, pbc is taken as given
-    # (systems_to_torch warns on the zero-cell/periodic mismatch, as do we).
+    # systems_to_torch warns on a zero cell with periodic axes; so do we.
     path = _write(tmp_path, '1\npbc="T T F" Properties=species:S:1:pos:R:3\nH 0 0 0\n')
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")

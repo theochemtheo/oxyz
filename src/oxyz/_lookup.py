@@ -1,9 +1,4 @@
-"""Mapping-like lookup by name across a columns side and a metadata side.
-
-`Frame`, `Batch`, `Schema`, and `SchemaSpec` share one definition of the rules:
-columns are searched before metadata, and a name on both sides is an error
-rather than a silent pick.
-"""
+"""Lookup by name across columns, then metadata; a name on both is an error."""
 
 from __future__ import annotations
 
@@ -18,9 +13,8 @@ if TYPE_CHECKING:
 class AmbiguousNameError(OxyzError):
     """A name is both a column and a metadata key, so a lookup cannot choose.
 
-    Raised by `frame[name]` and `.get(name)` (and the same on `Batch`, `Schema`
-    and `SchemaSpec`), never by `name in frame`. Deliberately not a `KeyError`,
-    so neither `get` nor `except KeyError` can mistake it for absence.
+    Not a `KeyError`, so `get` and `except KeyError` cannot mistake it for
+    absence. `name in frame` never raises it.
 
     Attributes
     ----------
@@ -36,10 +30,8 @@ class AmbiguousNameError(OxyzError):
 class NameLookup[C, M]:
     """Mapping-like access by name over a host's columns and metadata.
 
-    Not a `Mapping`: iterating the names is disabled and no `__len__` counts
-    them. With both, numpy reads a list of hosts as a sequence of key names, so
-    `rng.choice(frames, k)` would return names rather than frames. `Batch`
-    instead defines both over its frames, as the sequence it is.
+    Not iterable and without `__len__`, so numpy treats a list of hosts as
+    hosts, not as key names.
     """
 
     __slots__ = ()
@@ -84,8 +76,7 @@ class NameLookup[C, M]:
     def get(self, name: str, default: object = None) -> object:
         """Return `self[name]`, or `default` when neither side has `name`.
 
-        A name on both sides still raises `oxyz.AmbiguousNameError`: it is
-        ambiguous, not absent.
+        A name on both sides still raises `oxyz.AmbiguousNameError`.
         """
         try:
             return self[name]

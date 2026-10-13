@@ -88,9 +88,7 @@ def test_same_stem_families_with_different_width_not_globbed(tmp_path):
 
 
 def test_to_spec_emits_drift_note_for_conflicting_column():
-    # schema_drift_type has magmom R:3 (frame 0) then R:1 (frame 1): the widths
-    # conflict, so `unified` is None and emission falls back to the dominant
-    # variant with a drift note rather than a clean rule.
+    # magmom is R:3 then R:1, so emission uses the dominant variant and a note.
     from oxyz._schema_emit import spec_and_notes
 
     _, notes = spec_and_notes(infer_schema(DATA / "schema_drift_type.extxyz"))
@@ -99,8 +97,6 @@ def test_to_spec_emits_drift_note_for_conflicting_column():
 
 
 def test_to_spec_emits_drift_note_for_conflicting_metadata(tmp_path):
-    # `label` is an Int in frame 0 and a Str in frame 1 — no unifying type, so
-    # the metadata entry carries a drift note.
     from oxyz._schema_emit import spec_and_notes
 
     text = (

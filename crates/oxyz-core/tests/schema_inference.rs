@@ -93,8 +93,7 @@ H 0 0 0
 
 #[test]
 fn unified_promotes_int_real_and_flags_conflicts() {
-    // forces drifts Int/Real at equal width (unifiable); stress changes
-    // length (genuine conflict); pos is stable (unifies to itself).
+    // forces is Int/Real at equal width (unifies); stress changes length.
     let text = "\
 1
 Properties=species:S:1:pos:R:3:forces:I:3 energy=-158 stress=\"1.0 2.0 3.0 4.0 5.0 6.0\"
@@ -122,12 +121,9 @@ H 0 0 0 0.1 0.2 0.3
 
 #[test]
 fn consistency_is_strict() {
-    // Stable file: consistent.
     let schema = infer_schema(fixture("two_frame_same_schema.xyz")).unwrap();
     assert!(schema.is_consistent());
 
-    // A key missing from one frame breaks consistency even though every
-    // observed variant is stable.
     let text = "\
 1
 Properties=species:S:1:pos:R:3 energy=-1.0 tag=reference
@@ -148,9 +144,7 @@ H 0 0 0
 
 #[test]
 fn duplicate_metadata_keys_collapse_last_wins() {
-    // One frame repeating `energy` with a different type each time. The dict
-    // view of `Frame` keeps the last value, so the schema must count one
-    // occurrence of the last type, not two occurrences of two types.
+    // Last-wins within a frame: one occurrence of the last type.
     let text = "\
 1
 Properties=species:S:1:pos:R:3 energy=-1 energy=-2.5
@@ -184,9 +178,7 @@ fn report_summarises_a_stable_file() {
 
 #[test]
 fn types_arrays_scalars_and_flags_a_column_width_conflict() {
-    // Exercises every metadata value shape (Str, Bool, Int/Real-array
-    // promotion, BoolArray, StrArray) and a per-atom column whose width
-    // changes between frames — an unresolvable conflict.
+    // Every metadata value shape, and a column whose width changes.
     let text = "\
 1
 Properties=species:S:1:pos:R:3:q:R:1 label=hello done=T counts=[1,2] tags=[a,b] flags=\"T F\"

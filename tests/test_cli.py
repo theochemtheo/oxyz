@@ -151,8 +151,7 @@ def _write_spec(tmp_path: Path) -> Path:
         "columns:\n"
         "  species: {kind: S}\n"
         "  pos: {kind: R, width: 3}\n"
-        # optional, so the conformant/extra files (no magmom) pass; a
-        # present-but-mismatched magmom still fires on the drift fixture
+        # optional, so only the drift fixture's mismatched magmom fires
         "  magmom: {kind: R, width: 3, required: false}\n"
         "metadata:\n  energy: {kind: R}\n"
     )
@@ -207,8 +206,7 @@ def test_check_extra_only_errors_under_strict(tmp_path):
 
 
 def test_check_accepts_warn_conformance(tmp_path):
-    # `warn` is a valid --conformance level (parity with the Python API); like
-    # strict it reports extra columns/keys.
+    # Like strict, warn reports extra columns and keys.
     spec = _write_spec(tmp_path)
     args = ["check", str(DATA / "schema_extra_column.extxyz"), "--schema", str(spec)]
     assert main([*args, "--conformance", "warn"]) == 1

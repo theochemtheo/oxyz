@@ -1,9 +1,4 @@
-"""Hand-rolled LMDB store: one pickled dict of numpy arrays per frame.
-
-Not a library — the pattern dataloader repositories write themselves
-when extxyz parsing starts to hurt. Kept deliberately plain: no
-compression, default pickles, one key per frame.
-"""
+"""Hand-rolled LMDB store: one plain pickled dict of numpy arrays per frame."""
 
 from __future__ import annotations
 

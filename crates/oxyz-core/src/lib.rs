@@ -30,6 +30,3 @@ pub use extxyz::{
     read_frames_parallel, read_frames_parallel_from,
 };
 pub use model::{Column, ColumnData, ColumnKind, Frame, Value};
-// Schema and index types stay behind `schema::` / `index::` — derived
-// surfaces, not core vocabulary like `Frame`. The entry points (readers and
-// `infer_schema` / `scan_index`) live at the root.

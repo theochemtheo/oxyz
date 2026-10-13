@@ -23,14 +23,13 @@ class Kind(StrEnum):
     Attributes
     ----------
     REAL
-        Floating-point; letter code `R` in a `ColumnRule`/`MetadataRule`
-        `kind`.
+        Floating-point, letter `R`.
     INT
-        Integer; letter code `I`.
+        Integer, letter `I`.
     BOOL
-        Boolean; letter code `L`.
+        Boolean, letter `L`.
     STR
-        String; letter code `S`.
+        String, letter `S`.
     """
 
     REAL = "Real"
@@ -69,9 +68,6 @@ def metadata_sig(kind: Kind, shape: tuple[int, ...]) -> str:
 class ColumnVariant:
     """One observed (kind, width) combination for a per-atom column.
 
-    `frames` counts how many frames used exactly this combination; the
-    variant counts on a column sum to its `frames_present`.
-
     Attributes
     ----------
     kind
@@ -79,7 +75,7 @@ class ColumnVariant:
     width
         Number of components per atom (1 for a scalar column).
     frames
-        Number of frames that used this (kind, width) combination.
+        Number of frames that used this combination.
     """
 
     kind: Kind
@@ -91,9 +87,6 @@ class ColumnVariant:
 class MetadataVariant:
     """One observed (kind, shape) combination for a metadata key.
 
-    `shape` follows numpy: `()` for scalars, `(n,)` for arrays. `frames`
-    counts how many frames used exactly this combination.
-
     Attributes
     ----------
     kind
@@ -101,7 +94,7 @@ class MetadataVariant:
     shape
         Array shape observed, `()` for a scalar.
     frames
-        Number of frames that used this (kind, shape) combination.
+        Number of frames that used this combination.
     """
 
     kind: Kind
@@ -113,12 +106,6 @@ class MetadataVariant:
 class ColumnSchema:
     """Everything observed about one per-atom column across the file.
 
-    More than one variant means the column changed kind or width between
-    frames; `frames_present < n_frames` means some frames lack it entirely.
-    `unified` is the single (kind, width) every frame's column can be read
-    as — the sole variant, or the Real that an Int/Real pair of equal width
-    promotes to — and None when the variants genuinely conflict.
-
     Attributes
     ----------
     name
@@ -126,10 +113,10 @@ class ColumnSchema:
     variants
         Every (kind, width) combination observed, in first-seen order.
     frames_present
-        Number of frames that carried this column at all.
+        Number of frames that carried this column.
     unified
-        The single (kind, width) every frame's column can be read as, or
-        None on a genuine conflict.
+        The (kind, width) every frame's column can be read as, promoting an
+        Int/Real pair of equal width to Real; `None` on a conflict.
     """
 
     name: str
@@ -142,9 +129,6 @@ class ColumnSchema:
 class MetadataSchema:
     """Everything observed about one metadata key across the file.
 
-    Mirrors `ColumnSchema`; `unified` is (kind, shape) under the same
-    Int/Real promotion rule, or None on a genuine conflict.
-
     Attributes
     ----------
     key
@@ -152,10 +136,10 @@ class MetadataSchema:
     variants
         Every (kind, shape) combination observed, in first-seen order.
     frames_present
-        Number of frames that carried this key at all.
+        Number of frames that carried this key.
     unified
-        The single (kind, shape) every frame's value can be read as, or
-        None on a genuine conflict.
+        The (kind, shape) every frame's value can be read as, promoting as
+        `ColumnSchema.unified` does; `None` on a conflict.
     """
 
     key: str
@@ -168,15 +152,8 @@ class MetadataSchema:
 class Schema(AtomCountStats, NameLookup[ColumnSchema, MetadataSchema]):
     """Observed structure of a dataset: columns, metadata, and consistency.
 
-    Built by `infer_schema` in one pass; records counts, not frame indices.
-    `is_consistent` is strict: every column and key has a single variant and
-    appears in every frame. Int/Real promotion does not count — consult
-    each entry's `unified` for that looser reading. `min_atoms`/`max_atoms`
-    are None only for an empty file. The same single pass keeps the per-frame
-    `n_atoms`, so `mean_atoms`/`median_atoms`/`std_atoms` (from
-    `AtomCountStats`) match what a `scan` would report without a second read.
-    `schema[name]` returns the `ColumnSchema` or `MetadataSchema` so named, as
-    `Frame` looks names up.
+    `schema[name]` returns the `ColumnSchema` or `MetadataSchema` so named.
+    The atom-count statistics match what `scan` reports.
 
     Attributes
     ----------
@@ -196,7 +173,7 @@ class Schema(AtomCountStats, NameLookup[ColumnSchema, MetadataSchema]):
         Every comment-line metadata key observed, in first-seen order.
     is_consistent
         Whether every column and key has a single variant and appears in
-        every frame.
+        every frame. Int/Real promotion does not count; see `unified`.
     """
 
     n_frames: int
@@ -228,9 +205,8 @@ class Schema(AtomCountStats, NameLookup[ColumnSchema, MetadataSchema]):
     def to_spec(self) -> SchemaSpec:
         """Best-effort prescriptive schema from what was observed.
 
-        Partial-presence entries come out optional, enumerable column
-        families collapse to `*` globs, and there are no `frame` bounds.
-        Feed the result back to `read(..., schema=...)`.
+        Partially present entries are optional, column families collapse to `*`
+        globs, and there are no `frame` bounds.
         """
         from oxyz._schema_emit import spec_from_schema
 
@@ -269,7 +245,7 @@ class Schema(AtomCountStats, NameLookup[ColumnSchema, MetadataSchema]):
 
 
 def _column_schema(data: _rust.ColumnSchemaData) -> ColumnSchema:
-    """Build a `ColumnSchema` from the Rust scan's raw data for one column."""
+    """Build a `ColumnSchema` from the binding's raw data for one column."""
     unified = data["unified"]
     return ColumnSchema(
         name=data["name"],
@@ -283,7 +259,7 @@ def _column_schema(data: _rust.ColumnSchemaData) -> ColumnSchema:
 
 
 def _metadata_schema(data: _rust.MetadataSchemaData) -> MetadataSchema:
-    """Build a `MetadataSchema` from the Rust scan's raw data for one key."""
+    """Build a `MetadataSchema` from the binding's raw data for one key."""
     unified = data["unified"]
     return MetadataSchema(
         key=data["key"],
@@ -305,30 +281,18 @@ def infer_schema(
 ) -> Schema:
     """Fold the whole file into a `Schema` in a single pass.
 
-    Records, per column and metadata key, the observed variants and how many
-    frames used each, with a strict `is_consistent` and a promoted `unified`.
     Parses every frame; for the structure alone, use `scan`.
-
-    A compressed path is decoded while streaming; `compression` and `member`
-    work as in `read`.
-
-    A remote URL (``s3://``, ``gs://``, ``az://``, ``hf://``) streams the
-    object through the same parser (needs the ``oxyz[s3]`` extra);
-    ``storage_options`` passes endpoint/credentials to the store.
 
     Parameters
     ----------
     path
-        File path or remote URL to fold into a schema.
+        File path, or a remote URL; see `read`.
     compression
-        Forces a codec (`"infer"`, `"none"`, `"gzip"`, `"zstd"`, `"zip"`,
-        `"tar"`, `"tar.gz"`, `"tar.zst"`) instead of inferring it from `path`.
+        Forces a codec instead of inferring it from `path`; see `read`.
     member
-        Selects one entry from a `.zip`/`.tar`/`.tar.gz`/`.tar.zst` holding
-        more than one.
+        Selects one entry from an archive holding more than one; see `read`.
     storage_options
-        Endpoint/credentials for a remote store, falling back to `AWS_*`
-        env vars.
+        Endpoint/credentials for a remote store; see `read`.
 
     Returns
     -------

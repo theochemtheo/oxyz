@@ -198,10 +198,7 @@ def test_enforce_frame_raises_first_violation_strict():
 
 
 def test_enforce_frame_warns_under_warn():
-    # Columns must be fully declared so the only deviation is the missing
-    # "forces" column — `_validate_columns` also flags undeclared present
-    # columns as "extra" under "warn" (see Task 3), which would otherwise
-    # produce extra warnings unrelated to what this test is checking.
+    # Fully declared, so the missing "forces" is the only deviation.
     spec = SchemaSpec(
         columns=(
             ColumnRule("species", Kind.STR),

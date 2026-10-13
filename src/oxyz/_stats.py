@@ -6,11 +6,7 @@ import numpy as np
 class AtomCountStats:
     """Distribution statistics over a per-frame atom-count array.
 
-    Mixed into the scan and schema results, which both carry an `n_atoms`
-    array, so the two report identical numbers from one definition. The mean,
-    median, and population standard deviation are derived on demand; all are
-    None for an empty file. `min`/`max`/`total` are left to each host, which
-    already has them.
+    Shared by the scan and schema results; all are None for an empty file.
 
     Attributes
     ----------

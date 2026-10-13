@@ -1,10 +1,7 @@
 //! Lossless extxyz parsing into the columnar data model.
 //!
-//! The parser accepts and preserves; it does not interpret. Column names are
-//! kept as written (no `force`/`forces` aliasing) and metadata values are
-//! typed by shape but never renamed, reordered, or converted — `Lattice`
-//! stays a flat 9-value array in as-written order. Normalisation is a
-//! separate, later layer.
+//! Names and values are kept as written: no aliasing, renaming, or
+//! conversion. `Lattice` stays a flat 9-value array.
 
 use std::{
     collections::HashMap,
@@ -74,9 +71,7 @@ pub enum ExtxyzError {
         source: Box<ExtxyzError>,
     },
 
-    /// A parse error pinned to its source location: the file-absolute 1-based
-    /// line, and where a token is pinpointable the 1-based character column of
-    /// it within that line. The single carrier of location; `InFrame` wraps this.
+    /// A parse error at a 1-based file line and, where known, character column.
     #[error("line {line}{}: {source}", .column.map(|c| format!(", column {c}")).unwrap_or_default())]
     Located {
         line: usize,
@@ -173,9 +168,7 @@ fn at(line: usize, column: Option<usize>, source: ExtxyzError) -> ExtxyzError {
     }
 }
 
-/// 1-based character column of byte offset `byte` within `line`. Falls back to
-/// the byte offset + 1 when the prefix up to `byte` is not valid UTF-8 (only
-/// reachable on already-broken input). Error path only.
+/// 1-based character column of `byte` in `line`; byte offset + 1 if not UTF-8.
 fn char_column(line: &[u8], byte: usize) -> usize {
     match std::str::from_utf8(line.get(..byte).unwrap_or(line)) {
         Ok(prefix) => prefix.chars().count() + 1,
@@ -183,9 +176,7 @@ fn char_column(line: &[u8], byte: usize) -> usize {
     }
 }
 
-/// The 1-based character column a comment-line error points at, if it carries a
-/// byte index into `comment`. Comment errors other than `InvalidMetadata`
-/// locate the line only.
+/// The column a comment-line error points at; only `InvalidMetadata` has one.
 fn comment_column(comment: &str, error: &ExtxyzError) -> Option<usize> {
     match error {
         ExtxyzError::InvalidMetadata { index } => Some(char_column(comment.as_bytes(), *index)),
@@ -193,10 +184,7 @@ fn comment_column(comment: &str, error: &ExtxyzError) -> Option<usize> {
     }
 }
 
-/// Shift a value typer's `InvalidMetadata { index }` — a byte offset relative
-/// to the raw value it was given — by that value's byte offset within the
-/// whole comment line, so [`comment_column`] locates it correctly. Any other
-/// error variant passes through unchanged.
+/// Shift an `InvalidMetadata` index from value-relative to line-relative.
 fn offset_value_error(error: ExtxyzError, value_offset: usize) -> ExtxyzError {
     match error {
         ExtxyzError::InvalidMetadata { index } => ExtxyzError::InvalidMetadata {
@@ -216,9 +204,7 @@ pub fn read_frames(path: impl AsRef<Path>) -> Result<Vec<Frame>> {
     iter_frames(path)?.collect()
 }
 
-/// Open `path` for streaming, detecting and decompressing per the extension.
-/// For explicit control over the codec or an archive member, build the reader
-/// with [`open_decoded`] and call [`iter_frames_from`].
+/// Open `path` for streaming, choosing the codec from the extension.
 pub fn iter_frames(path: impl AsRef<Path>) -> Result<FrameIter<DecodedReader>> {
     iter_frames_from(open_decoded(path.as_ref(), Compression::Infer, None)?)
 }
@@ -228,8 +214,7 @@ pub fn iter_frames_from<R: BufRead>(reader: R) -> Result<FrameIter<R>> {
     Ok(FrameIter::new(reader))
 }
 
-/// Infer the whole file's schema. Full-parse fold for now: every frame is
-/// parsed and validated, so this doubles as a structural check of the file.
+/// Infer the whole file's schema. Parses every frame, so it also validates.
 pub fn infer_schema(path: impl AsRef<Path>) -> Result<Schema> {
     infer_schema_from(open_decoded(path.as_ref(), Compression::Infer, None)?)
 }
@@ -306,18 +291,13 @@ pub fn scan_index(path: impl AsRef<Path>) -> Result<FrameIndex> {
     scan_frames(open_decoded(path.as_ref(), Compression::Infer, None)?)
 }
 
-/// [`scan_index`] that also records each frame's cell volume `|det(Lattice)|`,
-/// reading the one comment line per frame a plain scan skips. For the batched
-/// `torch_sim` reader's density-aware binning; off by default so the structural
-/// scan stays count-lines-only.
+/// [`scan_index`] that also records each frame's cell volume `|det(Lattice)|`.
 pub fn scan_index_with_volume(path: impl AsRef<Path>) -> Result<FrameIndex> {
     scan_frames_with_volume(open_decoded(path.as_ref(), Compression::Infer, None)?)
 }
 
-/// Scan any reader. The count line is trusted, per the format spec: atom
-/// lines are skipped blindly, so a lying count desyncs the scan and surfaces
-/// as an invalid count line one frame late. Contents are never validated —
-/// that is the parser's and [`infer_schema`]'s job.
+/// Scan any reader, trusting count lines and skipping atom lines unread. A
+/// wrong count surfaces as an invalid count line one frame later.
 pub fn scan_frames<R: BufRead>(reader: R) -> Result<FrameIndex> {
     scan_inner(reader, false)
 }
@@ -356,9 +336,7 @@ fn scan_inner<R: BufRead>(mut reader: R, with_volume: bool) -> Result<FrameIndex
         line_number += 1;
 
         let text = std::str::from_utf8(&line).ok();
-        // A blank line where a count is expected ends the file, as ASE's
-        // reader does: trailing blank lines are tolerated and a blank line
-        // between frames stops the read.
+        // A blank count line ends the file, as in ASE.
         if text.is_some_and(|text| text.trim().is_empty()) {
             return finish(entries, volumes);
         }
@@ -376,9 +354,7 @@ fn scan_inner<R: BufRead>(mut reader: R, with_volume: bool) -> Result<FrameIndex
             })?;
 
         if with_volume {
-            // Read the comment line so its Lattice can be measured, then skip
-            // only the atom lines. A malformed or Lattice-free comment yields
-            // NaN: volume is a heuristic, never a reason to fail the scan.
+            // Volume is a heuristic: a missing or malformed Lattice gives NaN.
             line.clear();
             let n_comment = reader.read_until(b'\n', &mut line)?;
             if n_comment == 0 {
@@ -399,9 +375,7 @@ fn scan_inner<R: BufRead>(mut reader: R, with_volume: bool) -> Result<FrameIndex
                 return Err(missing_line(entries.len(), line_number, "atom"));
             }
         } else {
-            // Saturating: an untrusted count of usize::MAX must not overflow the
-            // +1 for the comment line. usize::MAX lines never arrive, so the read
-            // hits EOF and reports a missing line rather than wrapping to 0.
+            // Saturating: an untrusted usize::MAX count must not wrap the +1.
             let (n_bytes, skipped) = skip_lines(&mut reader, n_atoms.saturating_add(1))?;
             offset += n_bytes;
             line_number += skipped;
@@ -426,9 +400,7 @@ fn missing_line(frame_index: usize, line: usize, label: &'static str) -> ExtxyzE
     }
 }
 
-/// `|det(cell)|` from a comment line's `Lattice`, or `None` when there is no
-/// well-formed 9-component `Lattice`. `|det|` is the volume independent of cell
-/// handedness and of the row/column order the nine components are read in.
+/// `|det(cell)|` from a comment line's well-formed 9-component `Lattice`.
 fn lattice_volume(comment: &str) -> Option<f64> {
     let pairs = parse_comment_metadata(comment).ok()?;
     // Last Lattice wins, matching the metadata map's last-key-wins semantics.
@@ -457,10 +429,8 @@ fn det3(m: &[f64; 9]) -> f64 {
         + m[2] * (m[3] * m[7] - m[4] * m[6])
 }
 
-/// Skip up to `n` lines without copying them: newlines are counted straight
-/// off the reader's internal buffer. Returns the bytes consumed and the
-/// lines skipped (fewer than `n` only at end-of-file). Matches the
-/// `read_until` view of lines: an unterminated final line counts.
+/// Skip up to `n` lines without copying; returns bytes consumed and lines
+/// skipped. An unterminated final line counts, as with `read_until`.
 fn skip_lines<R: BufRead>(reader: &mut R, n: usize) -> io::Result<(u64, usize)> {
     let mut bytes: u64 = 0;
     let mut skipped = 0;
@@ -495,8 +465,7 @@ fn skip_lines<R: BufRead>(reader: &mut R, n: usize) -> io::Result<(u64, usize)> 
     Ok((bytes, skipped))
 }
 
-/// One frame's bytes, cut out of the stream by a single-pass scan: the
-/// count line through the last atom line, plus where it sat in the file.
+/// One frame's bytes, count line through last atom line.
 struct RawFrame {
     frame_index: usize,
     /// 1-based file line number of the count line.
@@ -504,11 +473,8 @@ struct RawFrame {
     bytes: Vec<u8>,
 }
 
-/// Single-pass scanner: walks the stream once, yielding the bytes of each
-/// selected frame. Unselected frames are skipped without copying, and
-/// nothing past the last selected frame is ever read — the partial-read
-/// promise. Structural trust matches [`scan_frames`]: only count lines are
-/// interpreted. Fused after the first error.
+/// Single-pass scanner yielding each selected frame's bytes. Nothing past the
+/// last selected frame is read. Fused after the first error.
 struct RawFrames<R: BufRead> {
     reader: R,
     line_number: usize,
@@ -517,12 +483,9 @@ struct RawFrames<R: BufRead> {
     selection: Option<Vec<usize>>,
     /// Last frame the scan needs; later bytes are never read.
     stop_after: Option<usize>,
-    /// Count-line buffer, reused across frames; selected frames take it
-    /// over as the start of their byte buffer.
+    /// Count-line buffer; a selected frame takes it over as its byte buffer.
     scratch: Vec<u8>,
-    /// Byte length of the last frame emitted: frames in a file run to similar
-    /// sizes, so reserving this up front spares a selected frame's buffer the
-    /// handful of line-by-line `read_until` reallocations.
+    /// The last frame's length, reserved up front for the next selected frame.
     bytes_hint: usize,
     fused: bool,
 }
@@ -583,10 +546,8 @@ impl<R: BufRead> RawFrames<R> {
         }))
     }
 
-    /// End of input: fuse, and if a selected frame was never reached report
-    /// the first such index as out of range. `frame_index` is the file's true
-    /// frame count here. A blank line where a count is expected counts as end
-    /// of input, as in ASE.
+    /// End of input: fuse, and report the first unreached selected frame as out
+    /// of range.
     fn end_of_input(&mut self) -> Option<Result<RawFrame>> {
         self.fused = true;
         self.first_unreached().map(|frame_index| {
@@ -620,9 +581,7 @@ impl<R: BufRead> Iterator for RawFrames<R> {
             if n_read == 0 {
                 return self.end_of_input();
             }
-            // A blank line where a count is expected ends the file, as ASE's
-            // reader does, so trailing and interspersed blank lines stop the
-            // read rather than erroring. Checked before the int parse.
+            // A blank count line ends the file, as in ASE.
             if std::str::from_utf8(&self.scratch).is_ok_and(|text| text.trim().is_empty()) {
                 return self.end_of_input();
             }
@@ -645,9 +604,7 @@ impl<R: BufRead> Iterator for RawFrames<R> {
             };
 
             if !self.selected(frame_index) {
-                // Skip the frame's lines without copying them anywhere.
-                // Saturating: see scan_frames -- an untrusted usize::MAX count
-                // must not overflow the +1 for the comment line.
+                // Saturating: an untrusted usize::MAX count must not wrap the +1.
                 let skipped = match skip_lines(&mut self.reader, n_atoms.saturating_add(1)) {
                     Ok((_, skipped)) => skipped,
                     Err(error) => return self.fuse(error.into()),
@@ -745,13 +702,8 @@ type TaggedFrames = Vec<(usize, Result<Frame>)>;
 #[cfg(feature = "parallel")]
 type PipelineOutcome = (TaggedFrames, Option<ExtxyzError>);
 
-/// Drive a scanner through the parse workers in one pass: whichever worker
-/// is idle pulls the next chunk from the shared scan (`par_bridge`), so
-/// scanning overlaps parsing and `threads` is the total thread count — the
-/// scan has no thread of its own.
-///
-/// The scanner is fused, so at most one scan error exists and every parsed
-/// frame precedes it in the file.
+/// Drive a scanner through the parse workers in one pass. Idle workers pull
+/// the next chunk via `par_bridge`, so the scan has no thread of its own.
 #[cfg(feature = "parallel")]
 fn run_pipeline<R: BufRead + Send>(
     raw: RawFrames<R>,
@@ -804,15 +756,11 @@ pub(crate) fn with_pool<T: Send>(
     }
 }
 
-/// Gather `indices` (request order, repeats allowed) into one batch, in a
-/// single pass that ends at the last requested frame.
+/// Gather `indices` (request order, repeats allowed) into one batch.
 ///
-/// The partial-read promise: bytes past the last requested frame are never
-/// read, so structural damage there goes unreported, and contents are
-/// validated only for requested frames. Errors resolve in request order —
-/// the earliest requested position that is out of range or fails to parse
-/// is reported — except that a structural error in the scanned prefix
-/// always wins, since nothing after it can be located.
+/// Reads nothing past the last requested frame and validates only requested
+/// frames. The first error in request order wins, unless a structural error
+/// in the scanned prefix comes first.
 pub fn read_batch(path: impl AsRef<Path>, indices: &[usize]) -> Result<Batch> {
     if indices.is_empty() {
         return Err(BatchError::Empty.into());
@@ -879,9 +827,7 @@ fn assemble_batch(
     parsed: Vec<(usize, Result<Frame>)>,
     scan_error: Option<ExtxyzError>,
 ) -> Result<Batch> {
-    // Out-of-range is only knowable at EOF; the scanner reports it carrying
-    // the file's true frame count. Any other scan error is structural and
-    // wins outright (the two-pass scan also failed before any parsing).
+    // Out-of-range is only knowable at EOF; any other scan error wins.
     let n_frames = match scan_error {
         Some(ExtxyzError::FrameOutOfRange { n_frames, .. }) => Some(n_frames),
         Some(structural) => return Err(structural),
@@ -920,11 +866,8 @@ fn assemble_batch(
     Ok(builder.finish()?)
 }
 
-/// Read every frame into one [`Batch`], in file order, single pass.
-///
-/// The whole-file analogue of [`read_batch`]: where that gathers a selection,
-/// this concatenates the lot. An empty file yields the empty batch (no frames,
-/// no columns), not an error — callers treat it as "no frames".
+/// Read every frame into one [`Batch`], in file order. An empty file yields
+/// the empty batch, not an error.
 pub fn read_all_batch(path: impl AsRef<Path>) -> Result<Batch> {
     read_all_batch_from(open_decoded(path.as_ref(), Compression::Infer, None)?)
 }
@@ -939,9 +882,8 @@ pub fn read_all_batch_from<R: BufRead>(reader: R) -> Result<Batch> {
 }
 
 /// [`read_all_batch`] with the parses spread over `threads` workers (`None`:
-/// every core). Output is identical to the serial version; on a malformed file
-/// the two may surface different frames' errors — this parses every frame up
-/// front, where the serial path stops at the first bad frame.
+/// every core). On a malformed file it may report a later frame's error than
+/// the serial path, which stops at the first bad frame.
 #[cfg(feature = "parallel")]
 pub fn read_all_batch_parallel(path: impl AsRef<Path>, threads: Option<usize>) -> Result<Batch> {
     read_all_batch_parallel_from(
@@ -963,8 +905,7 @@ pub fn read_all_batch_parallel_from<R: BufRead + Send>(
     finish_or_empty(builder)
 }
 
-/// Finish a whole-file builder, mapping the empty-file case to an empty batch
-/// rather than [`BatchError::Empty`] (which `BatchIter` uses to mean EOF).
+/// Finish a whole-file builder, mapping an empty file to an empty batch.
 fn finish_or_empty(builder: BatchBuilder) -> Result<Batch> {
     match builder.finish() {
         Ok(batch) => Ok(batch),
@@ -977,30 +918,18 @@ fn finish_or_empty(builder: BatchBuilder) -> Result<Batch> {
     }
 }
 
-// ---- Projecting batch reads --------------------------------------------------
-//
-// Each frame is projected onto a fixed plan before assembly, so a mixed-schema
-// file becomes batchable: undeclared fields are dropped, absent optionals
-// filled, and a frame with an unfillable required field is left out entirely.
-// These mirror the plain batch readers (reusing the same scan/gather/assemble
-// machinery) but carry the survivors and a per-frame deviation report back to
-// the caller for policy. The core stays policy-free — it reshapes and reports.
-
 /// The outcome of a projecting batch read.
 pub struct ProjectedBatch {
     /// The concatenation of the frames that survived projection.
     pub batch: Batch,
     /// File indices of the surviving frames, in push order.
     pub survivors: Vec<usize>,
-    /// A deviation report per requested frame (survivors and drops alike), in
-    /// request/file order, so the caller can apply policy in that order.
+    /// A deviation report per requested frame, in request order.
     pub reports: Vec<(usize, Vec<Deviation>)>,
 }
 
-/// Project one frame into an in-progress batch: record its report, and push it
-/// (tracking its file index) unless it dropped. Push cannot fail on a projected
-/// frame — every survivor shares the plan's shape — but the error is surfaced
-/// rather than ignored.
+/// Project one frame into an in-progress batch, recording its report and
+/// pushing it unless it dropped.
 fn project_into(
     builder: &mut BatchBuilder,
     survivors: &mut Vec<usize>,
@@ -1019,9 +948,7 @@ fn project_into(
     Ok(())
 }
 
-/// Resolve projected single-pass outcomes against the request, in request
-/// order. Mirrors [`assemble_batch`], but projects each gathered frame and
-/// collects survivors and reports instead of demanding a uniform shape.
+/// [`assemble_batch`] for projected frames, collecting survivors and reports.
 fn assemble_projected_batch(
     indices: &[usize],
     parsed: Vec<(usize, Result<Frame>)>,
@@ -1175,9 +1102,8 @@ pub fn read_all_batch_projected_parallel_from<R: BufRead + Send>(
     })
 }
 
-/// Projecting analogue of [`BatchIter`]. Yields every window that pulled at
-/// least one frame — even one whose frames all dropped, so the caller still
-/// sees the reports; a window that hits EOF without pulling ends iteration.
+/// Projecting analogue of [`BatchIter`]. A window whose frames all dropped is
+/// still yielded, so its reports are seen.
 pub struct BatchIterProjected<R: BufRead> {
     frames: FrameIter<R>,
     frames_per_batch: usize,
@@ -1251,10 +1177,7 @@ pub struct IndexedFrames {
     /// Kept so parallel reads can open per-worker handles.
     path: std::path::PathBuf,
     index: FrameIndex,
-    /// Worker pool for parallel `get_batch`, built once and reused across
-    /// calls (one `iter_batches` loop fires `get_batch` per batch). Tagged
-    /// with its thread count so a differing request rebuilds it; `None`
-    /// requests use rayon's global pool and never populate this.
+    /// Cached pool for parallel `get_batch`, rebuilt when the thread count changes.
     #[cfg(feature = "parallel")]
     pool: Option<(usize, rayon::ThreadPool)>,
 }
@@ -1272,8 +1195,7 @@ impl IndexedFrames {
     }
 
     fn open_inner(path: &Path, with_volume: bool) -> Result<Self> {
-        // Random access seeks into the file, so a non-seekable compressed
-        // source is refused here rather than silently reading wrong bytes.
+        // Random access seeks, which a compressed source cannot do.
         if crate::decode::is_compressed(path, Compression::Infer)? {
             return Err(ExtxyzError::RandomAccessUnsupported);
         }
@@ -1325,14 +1247,9 @@ impl IndexedFrames {
         Ok(builder.finish()?)
     }
 
-    /// `get_batch` with the frame parses spread over worker threads;
-    /// `threads` of `None` uses every core. Output and errors are identical
-    /// to the serial version.
-    ///
-    /// Takes `&mut self` to reuse one [`rayon::ThreadPool`] across calls: a
-    /// streamed `iter_batches` loop calls this per batch, and rebuilding a
-    /// pool each time would spawn and park N threads per batch — pure
-    /// overhead that grows with the thread count.
+    /// `get_batch` with the parses spread over worker threads (`None`: every
+    /// core). Output and errors match the serial version. Takes `&mut self` to
+    /// reuse one pool across a streamed `iter_batches` loop.
     #[cfg(feature = "parallel")]
     pub fn get_batch_parallel(
         &mut self,
@@ -1357,8 +1274,6 @@ impl IndexedFrames {
         }
 
         let frames = match threads {
-            // None runs on rayon's global all-core pool: no per-call pool to
-            // build or cache.
             None => parse_entries_on_pool(&self.path, &entries),
             Some(n) => {
                 let path = self.path.clone();
@@ -1382,8 +1297,7 @@ impl IndexedFrames {
         indices: &[usize],
         plan: &ProjectionPlan,
     ) -> Result<ProjectedBatch> {
-        // Empty request is `Err(Empty)`, matching every other batch reader
-        // (`finish_or_empty` below is for the all-dropped-but-non-empty case).
+        // An empty request is `Err(Empty)`, as in every other batch reader.
         if indices.is_empty() {
             return Err(BatchError::Empty.into());
         }
@@ -1491,9 +1405,7 @@ fn parse_frame_at(file: &mut File, entry: FrameEntry, frame_index: usize) -> Res
     relabel_frame(item, frame_index)
 }
 
-/// Parse a frame the scanner cut out of the stream; errors carry the real
-/// frame index and file-absolute line numbers, identical to a streamed
-/// read's.
+/// Parse a frame the scanner cut out, keeping its frame index and file lines.
 fn parse_raw(raw: &RawFrame) -> Result<Frame> {
     let item = FrameIter::starting_at_line(raw.bytes.as_slice(), raw.line).next();
     relabel_frame(item, raw.frame_index)
@@ -1520,10 +1432,8 @@ fn relabel_frame(item: Option<Result<Frame>>, frame_index: usize) -> Result<Fram
 /// metadata pairs, in file order.
 type CommentHeader = (Vec<PropertySpec>, Vec<(CompactString, Value)>);
 
-/// Parse a comment line into its `Properties` column specs and the remaining
-/// metadata. `Properties` is consumed into typed columns; every other pair is
-/// typed by shape and kept in file order. Shared by the streaming reader and
-/// the parallel single-frame parser.
+/// Split a comment line into `Properties` column specs and the remaining
+/// metadata, in file order.
 fn parse_comment_line(comment: &str) -> Result<CommentHeader> {
     let pairs = parse_comment_metadata(comment)?;
 
@@ -1543,13 +1453,8 @@ fn parse_comment_line(comment: &str) -> Result<CommentHeader> {
     Ok((specs, metadata))
 }
 
-/// A frame whose byte length reaches this is parsed with its atom rows split
-/// across workers; smaller frames parse on one thread. Set from a sweep of
-/// single-frame parse times: splitting an isolated frame breaks even around
-/// ~100 KB, and finer-grained range tasks improve pool balance even when many
-/// such frames keep every core busy — so the only frames to keep whole are the
-/// small ones, where 8-way overhead would dominate. ~256 KB (~5k atoms) sits
-/// safely past break-even and above typical small-molecule frames.
+/// Frames at least this large have their atom rows split across workers.
+/// Splitting a lone frame breaks even near 100 KB; 256 KB leaves a margin.
 #[cfg(feature = "parallel")]
 const INTRA_FRAME_BYTES: usize = 256 << 10;
 
@@ -1607,9 +1512,8 @@ fn count_lines(region: &[u8]) -> usize {
     }
 }
 
-/// Split `region` into up to `parts` contiguous chunks at newline boundaries,
-/// each tagged with the index of its first row (for file-absolute line
-/// numbers). A row is never split across chunks.
+/// Split `region` at newlines into up to `parts` chunks, each tagged with the
+/// index of its first row.
 #[cfg(feature = "parallel")]
 fn split_atom_ranges(region: &[u8], parts: usize) -> Vec<(&[u8], usize)> {
     if parts <= 1 || region.is_empty() {
@@ -1638,9 +1542,8 @@ fn split_atom_ranges(region: &[u8], parts: usize) -> Vec<(&[u8], usize)> {
     ranges
 }
 
-/// Parse the atom rows in `region` into `columns` (appended), tokenising and
-/// erroring exactly as the streaming reader does. `first_line` is the file
-/// line number of the first row, for diagnostics.
+/// Parse the atom rows in `region` into `columns`, as the streaming reader
+/// would. `first_line` is the first row's file line number.
 #[cfg(feature = "parallel")]
 fn parse_atom_lines(
     region: &[u8],
@@ -1704,8 +1607,7 @@ fn parse_atom_lines(
     Ok(())
 }
 
-/// Append `src` onto `dst`. Range columns are built from the same specs, so
-/// their kinds always match — no Int/Real promotion as in cross-frame batches.
+/// Append `src` onto `dst`; both come from the same specs, so kinds match.
 #[cfg(feature = "parallel")]
 fn extend_column_data(dst: &mut ColumnData, src: ColumnData) {
     use ColumnData::{Bool, Int, Real, Str};
@@ -1718,10 +1620,8 @@ fn extend_column_data(dst: &mut ColumnData, src: ColumnData) {
     }
 }
 
-/// Parse one frame with its atom region split into newline-aligned ranges
-/// parsed in parallel, then concatenated in order. Output and errors are
-/// identical to [`parse_raw`]: file-absolute line numbers, the real frame
-/// index, and the first error in frame order.
+/// Parse one frame with its atom rows split across workers. Output and errors
+/// are identical to [`parse_raw`].
 #[cfg(feature = "parallel")]
 fn parse_raw_parallel(raw: &RawFrame) -> Result<Frame> {
     use rayon::prelude::*;
@@ -1778,8 +1678,7 @@ fn parse_raw_parallel(raw: &RawFrame) -> Result<Frame> {
         })
         .collect();
 
-    // Concatenate ranges in order; the earliest error is the first in frame
-    // order, so `?` on the ordered results reports exactly what serial would.
+    // Results are ordered, so `?` reports the first error in frame order.
     let mut columns: Vec<Column> = specs.iter().map(|spec| spec.column(n_atoms)).collect();
     for partial in partials {
         for (dst, src) in columns.iter_mut().zip(partial?) {
@@ -1794,12 +1693,8 @@ fn parse_raw_parallel(raw: &RawFrame) -> Result<Frame> {
     })
 }
 
-/// `read_frames` parallelised in a single pass over the file: the scan that
-/// finds frame boundaries and the parses share the same `threads` workers
-/// (see [`run_pipeline`]), so every byte is read exactly once. Output and
-/// errors are identical to the serial version: the first error in frame
-/// order wins. (This supersedes the two-pass behaviour, where a scan error
-/// anywhere in the file preempted parse errors in earlier frames.)
+/// `read_frames` in one parallel pass: the scan and the parses share
+/// `threads` workers. Output and errors match the serial version.
 #[cfg(feature = "parallel")]
 pub fn read_frames_parallel(path: impl AsRef<Path>, threads: Option<usize>) -> Result<Vec<Frame>> {
     read_frames_parallel_from(
@@ -1819,8 +1714,7 @@ pub fn read_frames_parallel_from<R: BufRead + Send>(
     parsed.sort_unstable_by_key(|&(frame_index, _)| frame_index);
     let mut frames = Vec::with_capacity(parsed.len());
     for (_, result) in parsed {
-        // First parse error in frame order; a scan error always sits past
-        // every parsed frame, so it is checked after.
+        // A scan error always follows every parsed frame, so it is checked last.
         frames.push(result?);
     }
     if let Some(error) = scan_error {
@@ -1829,17 +1723,13 @@ pub fn read_frames_parallel_from<R: BufRead + Send>(
     Ok(frames)
 }
 
-/// Parse tagged index entries on rayon workers, each chunk through its own
-/// file handle. Runs in the current pool context (the caller installs it, so
-/// `rayon::current_num_threads` reports the right width). Results keep request
-/// order; the reported error is the first in request order, exactly as a
-/// serial read would raise it.
+/// Parse index entries on the current rayon pool, a file handle per chunk.
+/// Results and the reported error follow request order.
 #[cfg(feature = "parallel")]
 fn parse_entries_on_pool(path: &Path, entries: &[(usize, FrameEntry)]) -> Result<Vec<Frame>> {
     use rayon::prelude::*;
 
-    // A few chunks per thread: amortises the per-chunk open() while leaving
-    // rayon room to balance.
+    // A few chunks per thread amortise each open() and leave room to balance.
     let chunk_size = entries
         .len()
         .div_ceil(rayon::current_num_threads() * 4)
@@ -1872,12 +1762,9 @@ pub struct FrameIter<R: BufRead> {
     frame_index: usize,
     /// 1-based file line number of the next unread line, for diagnostics.
     line_number: usize,
-    /// Line buffer reused across the whole stream: one allocation total
-    /// instead of one `String` per line.
+    /// Line buffer reused across the whole stream.
     buffer: Vec<u8>,
-    /// Cell boundaries within the current line, reused per atom line.
-    /// `(start, end)` offsets rather than `&str`s, so they can outlive
-    /// refills of `buffer`.
+    /// Cell offsets within the current line; offsets survive `buffer` refills.
     cells: Vec<(usize, usize)>,
     done: bool,
 }
@@ -1887,8 +1774,7 @@ impl<R: BufRead> FrameIter<R> {
         FrameIter::starting_at_line(reader, 1)
     }
 
-    /// For seek-based reads: keeps diagnostics in file line numbers even
-    /// though the reader starts mid-file.
+    /// For seek-based reads, so diagnostics keep file line numbers.
     pub(crate) fn starting_at_line(reader: R, line_number: usize) -> Self {
         FrameIter {
             reader,
@@ -1933,15 +1819,12 @@ impl<R: BufRead> FrameIter<R> {
         }
         let atom_count_line = line_str(&self.buffer)?;
 
-        // A blank line where a count is expected ends the file, as ASE's
-        // reader does: trailing blank lines are tolerated and a blank line
-        // between frames stops the read.
+        // A blank count line ends the file, as in ASE.
         if atom_count_line.trim().is_empty() {
             return Ok(None);
         }
 
-        // Trimmed in the message so streamed and scanned reads of the same
-        // bad line raise the identical error.
+        // Trimmed so streamed and scanned reads raise the same error.
         let n_atoms = atom_count_line.trim().parse::<usize>().map_err(|_| {
             at(
                 count_line,
@@ -1970,10 +1853,7 @@ impl<R: BufRead> FrameIter<R> {
             if !self.fill_line()? {
                 return Err(at(line_number, None, ExtxyzError::MissingLine("atom")));
             }
-            // Tokenise the raw bytes on ASCII whitespace. Atom rows are numbers
-            // and element symbols, so the per-line UTF-8 check the count and
-            // comment lines pay is needless here -- only string cells are
-            // validated, when pushed.
+            // Atom rows are tokenised as bytes; only string cells are checked as UTF-8.
             self.cells.clear();
             let mut i = 0;
             while i < self.buffer.len() {
@@ -2044,8 +1924,7 @@ impl<R: BufRead> Iterator for FrameIter<R> {
                 self.done = true;
                 None
             }
-            // Stop after the first error: the stream position is no longer
-            // trustworthy.
+            // The stream position is no longer trustworthy.
             Err(error) => {
                 self.done = true;
                 Some(Err(ExtxyzError::InFrame {
@@ -2068,10 +1947,7 @@ struct PropertySpec {
 /// Sanity bound on a column's declared width.
 const MAX_COLUMN_WIDTH: usize = 1 << 16;
 
-/// Cap on pre-allocation from the *declared* atom count, which is untrusted
-/// input: a corrupt count must not trigger an absurd allocation before any
-/// data is read. Buffers still grow normally past this if the file really is
-/// that large.
+/// Pre-allocation cap: the declared atom count is untrusted input.
 const MAX_PREALLOC: usize = 1 << 20;
 
 impl PropertySpec {
@@ -2097,8 +1973,8 @@ impl PropertySpec {
     }
 }
 
-/// An empty column buffer of `kind`, pre-sized to `cells` (capped at
-/// [`MAX_PREALLOC`]: the count derives from an untrusted declared atom count).
+/// An empty column buffer of `kind`, pre-sized to `cells` up to
+/// [`MAX_PREALLOC`].
 fn empty_column_data(kind: ColumnKind, cells: usize) -> ColumnData {
     let capacity = cells.min(MAX_PREALLOC);
     match kind {
@@ -2163,8 +2039,7 @@ fn parse_properties(descriptor: &str) -> Result<Vec<PropertySpec>> {
         .collect()
 }
 
-/// View a line buffer as UTF-8, failing exactly as [`io::Lines`] does so
-/// the buffer-reusing reader raises identical errors.
+/// View a line buffer as UTF-8, failing as [`io::Lines`] does.
 fn line_str(buffer: &[u8]) -> Result<&str> {
     std::str::from_utf8(buffer).map_err(|_| {
         ExtxyzError::Io(io::Error::new(
@@ -2174,11 +2049,8 @@ fn line_str(buffer: &[u8]) -> Result<&str> {
     })
 }
 
-/// Append one atom's cells onto the column's buffer. Cells are raw bytes:
-/// numbers and booleans parse straight from ASCII, and only string columns are
-/// validated as UTF-8. On failure, returns the index of the offending cell
-/// within `cells` alongside the error, so callers can locate the exact cell
-/// rather than the column's first cell.
+/// Append one atom's cells onto the column. Only string cells are checked as
+/// UTF-8. On failure, also returns the offending cell's index.
 fn push_cells<'a>(
     column: &mut Column,
     cells: impl Iterator<Item = &'a [u8]>,
@@ -2186,8 +2058,7 @@ fn push_cells<'a>(
     match &mut column.data {
         ColumnData::Real(buffer) => {
             for (idx, cell) in cells.enumerate() {
-                // fast-float2 parses straight from bytes; same accepted grammar
-                // as std, measurably faster on the 6-floats-per-atom-line shape.
+                // fast-float2: std's grammar, faster on atom lines.
                 buffer.push(
                     fast_float2::parse::<f64, _>(cell)
                         .map_err(|_| (idx, invalid_cell(&column.name, "real", cell)))?,
@@ -2220,9 +2091,7 @@ fn push_cells<'a>(
     Ok(())
 }
 
-/// Parse an integer cell, preserving std's `i64` grammar. UTF-8 is checked
-/// first (trivial for a short numeric token) so a non-UTF-8 cell is rejected
-/// rather than misread.
+/// Parse an integer cell with std's `i64` grammar, rejecting non-UTF-8.
 fn parse_int(cell: &[u8]) -> Option<i64> {
     std::str::from_utf8(cell).ok()?.parse::<i64>().ok()
 }
@@ -2245,21 +2114,12 @@ fn bool_cell(cell: &[u8]) -> Option<bool> {
     }
 }
 
-/// Characters the grammar excludes from a bare (unquoted) value — they are
-/// reserved for quoting, grouping, or separation. A bare value containing one
-/// is malformed (`kv_tests.md`'s "almost bare string" should-fail class);
-/// quoting the value permits any of them.
+/// Characters a bare (unquoted) value may not contain.
 const BARE_EXCLUDED_CHARS: [char; 8] = ['=', '"', ',', '[', ']', '{', '}', '\\'];
 
-/// Tokenise the comment line into ordered `(key, raw value, value offset)`
-/// triples; file order and duplicate keys are preserved. `value offset` is
-/// the byte index of the raw value's first byte within `comment`, so a
-/// caller typing the value can shift a byte-offset error in that value back
-/// into a column on the whole comment line.
-/// Borrows key and value slices out of `comment`: the pairs are consumed in
-/// the same scope (typed into `Value`s, or scanned for `Lattice`), so only the
-/// kept metadata key is owned later — never the raw value. Owning both here
-/// cost two allocations per key, the parse's largest allocation source.
+/// Tokenise the comment line into `(key, raw value, value byte offset)`
+/// triples, in file order with duplicates kept. Borrowing from `comment`
+/// avoids two allocations per key.
 fn parse_comment_metadata(comment: &str) -> Result<Vec<(&str, &str, usize)>> {
     let bytes = comment.as_bytes();
     let mut pairs = Vec::new();
@@ -2309,8 +2169,7 @@ fn parse_comment_metadata(comment: &str) -> Result<Vec<(&str, &str, usize)>> {
             i += 1;
             (value, value_start)
         } else if bytes[i] == b'{' || bytes[i] == b'[' {
-            // A grouped value is a single token even when it contains
-            // interior whitespace or commas (e.g. `{ 3 }`, `["a, b", "c]"]`).
+            // A group is one token even with interior whitespace or commas.
             let value_start = i;
             let end = group_end(bytes, i)?;
             i = end;
@@ -2348,10 +2207,8 @@ fn slice_comment(comment: &str, start: usize, end: usize) -> Result<&str> {
         .ok_or(ExtxyzError::InvalidMetadata { index: start })
 }
 
-/// From `bytes[open]` (a `{` or `[`), return the index just past the matching
-/// close, tracking nesting of both bracket kinds and skipping quoted spans
-/// (so a `]`, `}`, or space inside a `"..."` span does not end the group).
-/// `Err(InvalidMetadata { index: open })` if the group never closes.
+/// Index just past the group opened at `bytes[open]`, honouring nesting and
+/// quotes. `Err(InvalidMetadata { index: open })` if it never closes.
 fn group_end(bytes: &[u8], open: usize) -> Result<usize> {
     let mut depth = 0usize;
     let mut i = open;
@@ -2373,16 +2230,10 @@ fn group_end(bytes: &[u8], open: usize) -> Result<usize> {
     Err(ExtxyzError::InvalidMetadata { index: open })
 }
 
-/// Strictly type a raw comment-line value. Byte offsets in any error are
-/// relative to `raw`; the caller ([`parse_comment_line`]) shifts them by the
-/// value's offset within the comment line. The splitter already strips a
-/// surrounding `"..."` quote pair and keeps `{...}`/`[...]` groups intact, so
-/// `raw` here is either quote-stripped content (never starts with `"`), a
-/// brace group, or a bracket group.
+/// Strictly type a raw comment-line value; error offsets are relative to `raw`.
 ///
-/// The splitter tracks bracket *depth* only, so it accepts a mismatched
-/// group like `{1]`; typing is where that mismatch is finally rejected — a
-/// group opened with `{` must close with `}`, and `[` with `]`.
+/// The splitter tracks bracket depth only, so a mismatched group like `{1]` is
+/// rejected here.
 fn parse_metadata_value(raw: &str) -> Result<Value> {
     let trimmed_start = raw.trim_start();
     // New-style bracket array (1-D or 2-D).
@@ -2396,10 +2247,8 @@ fn parse_metadata_value(raw: &str) -> Result<Value> {
             None => Err(ExtxyzError::InvalidMetadata { index: 0 }),
         };
     }
-    // Quote-stripped content. A space can only appear here if the value was
-    // quoted (bare values cannot contain spaces — the splitter breaks on
-    // them). Single token -> scalar; multiple tokens -> whitespace array or
-    // a sentence.
+    // Only a quoted value can contain spaces: one token is a scalar, several an
+    // array or a sentence.
     let trimmed = raw.trim();
     let mut tokens = trimmed.split_whitespace();
     match (tokens.next(), tokens.next()) {
@@ -2412,13 +2261,9 @@ fn parse_metadata_value(raw: &str) -> Result<Value> {
     }
 }
 
-/// Classify one bare scalar token by the grammar: int, else float (incl.
-/// Fortran d/D exponent), else bool, else bare string. Never fails — an
-/// unrecognised token is a valid bare string. Numeric/bool classification is
-/// on the trimmed `token`, but the string fallback keeps the original `raw`
-/// (untrimmed, quote-stripped): a quoted value preserves its interior
-/// whitespace, so `" hello "` stays `Str(" hello ")` while `" 3 "` still
-/// trims to `Int(3)`.
+/// Classify a token as int, float (Fortran `d` exponents included), bool, or
+/// string. The string fallback keeps `raw`, so a quoted value keeps its
+/// interior whitespace.
 fn classify_scalar(token: &str, raw: &str) -> Value {
     // Integers before floats so a bare `1` stays Int, not Real.
     if let Ok(int) = token.parse::<i64>() {
@@ -2435,12 +2280,8 @@ fn classify_scalar(token: &str, raw: &str) -> Value {
     }
 }
 
-/// Float per the grammar, accepting Fortran `d`/`D` exponents by normalising
-/// them to `e` before Rust's parser sees them. Only treated as a float when
-/// the token actually has a point or an exponent marker, so a bare integer
-/// (no `.`/`e`/`d`) is never misread as one; the `d`/`D` replacement only
-/// allocates when one of those letters is actually present, keeping the
-/// (far more common) plain-float and non-float paths allocation-free.
+/// A float per the grammar, with Fortran `d`/`D` exponents. Requires a point
+/// or exponent, so a bare integer is never read as one.
 fn parse_float_grammar(token: &str) -> Option<f64> {
     let has_fortran_exponent = token.bytes().any(|b| matches!(b, b'd' | b'D'));
     if !has_fortran_exponent {
@@ -2474,12 +2315,8 @@ fn parse_group_inner(inner: &str) -> Result<Value> {
     }
 }
 
-/// Type a `[...]` bracket array: 1-D (`[1,2,3]`, `["a","b"]`), or, when an
-/// element itself nests a `[`, 2-D (`[[1,2],[3,4]]`) — flattened into the
-/// matching `*Array2D` with its `rows`/`cols` shape. Top-level splitting is
-/// quote- and bracket-aware ([`split_top_level`]), so a comma or a literal
-/// `]` inside a `"..."` element is never mistaken for a separator or a
-/// mismatched close.
+/// Type a `[...]` array: 1-D, or 2-D when an element is itself a `[...]` row.
+/// Splitting is quote- and bracket-aware ([`split_top_level`]).
 fn parse_array_value(raw: &str) -> Result<Value> {
     let inner = raw
         .strip_prefix('[')
@@ -2488,11 +2325,7 @@ fn parse_array_value(raw: &str) -> Result<Value> {
 
     let elems = split_top_level(inner);
 
-    // A top-level element that is itself a bracket group makes this a 2-D
-    // array: every element must then be a complete `[...]` row. The test is
-    // on the quote-aware split, so an element that merely *contains* a `[`
-    // inside a quoted string (e.g. `"a[b"`) starts with `"`, not `[`, and
-    // stays a 1-D string element rather than being mistaken for a row.
+    // A quoted element such as `"a[b"` starts with `"`, so it stays 1-D.
     if elems.iter().any(|(_, element)| element.starts_with('[')) {
         return parse_array_2d(&elems);
     }
@@ -2507,12 +2340,8 @@ fn parse_array_value(raw: &str) -> Result<Value> {
     Ok(array_kind_value(classify_elements(&elements)))
 }
 
-/// Type the rows of a 2-D bracket array. Each top-level element (already
-/// split by the caller) must itself be a `[...]` row; rows are parsed as
-/// 1-D element lists and must agree on length (a ragged shape is `Err`).
-/// The flattened elements are classified once, so the widest kind across
-/// every row wins — an int row next to a real row promotes the whole array
-/// to real.
+/// Type the rows of a 2-D array. Rows must agree in length, and the widest
+/// kind across all rows wins.
 fn parse_array_2d(elems: &[(usize, String)]) -> Result<Value> {
     let mut rows: Vec<Vec<String>> = Vec::with_capacity(elems.len());
     for (offset, element) in elems {
@@ -2521,13 +2350,8 @@ fn parse_array_2d(elems: &[(usize, String)]) -> Result<Value> {
             .and_then(|rest| rest.strip_suffix(']'))
             .ok_or(ExtxyzError::InvalidMetadata { index: 1 + offset })?;
 
-        // A cell that has an unquoted `[` is malformed: either it *is* a
-        // further nested row (3-D+ arrays are not supported), or it is
-        // leftover junk from a missing separator between two rows (e.g.
-        // `[[1,2][1,2]]`, whose "row" splits to a bogus `2][1` cell). A `[`
-        // *inside* a quoted string cell (e.g. a 2-D string array's `"a[b"`)
-        // is ordinary string content, not a bracket, so it does not count —
-        // mirrors the top-level 1-D/2-D test's quote-awareness.
+        // An unquoted `[` in a cell is a 3-D array or a missing separator
+        // (`[[1,2][1,2]]`); neither is valid.
         let row_elems = split_top_level(row_inner);
         if let Some((inner_offset, _)) = row_elems
             .iter()
@@ -2572,8 +2396,7 @@ fn parse_array_2d(elems: &[(usize, String)]) -> Result<Value> {
 }
 
 fn whitespace_array_value(tokens: &[&str], raw: &str) -> Value {
-    // All-integer stays IntArray; promotion to floats is the normalisation
-    // layer's call.
+    // Promotion to floats is the normalisation layer's call.
     if let Some(ints) = parse_all::<i64>(tokens) {
         return Value::IntArray(ints);
     }
@@ -2586,8 +2409,7 @@ fn whitespace_array_value(tokens: &[&str], raw: &str) -> Value {
         return Value::BoolArray(bools);
     }
 
-    // A multi-word non-numeric whitespace value is a sentence, not a string
-    // array: only new-style `[...]` produces `StrArray`.
+    // Only `[...]` produces `StrArray`; a multi-word value is a sentence.
     Value::Str(raw.into())
 }
 
@@ -2605,13 +2427,8 @@ fn bool_token(token: &str) -> Option<bool> {
     }
 }
 
-/// Split `inner` at top-level commas, treating `"..."` spans and nested
-/// `[...]`/`{...}` groups as atomic, so a comma or bracket inside a quoted
-/// element (or inside a nested array element) never splits it or is
-/// mistaken for a mismatched close. Each element is trimmed and paired with
-/// the byte offset of its first non-whitespace character within `inner`
-/// (or its untrimmed start, when empty) — for pointing a later error at the
-/// offending element rather than the whole value.
+/// Split `inner` at top-level commas, treating quoted spans and nested groups
+/// as atomic. Each element is trimmed and paired with its byte offset.
 fn split_top_level(inner: &str) -> Vec<(usize, String)> {
     let bytes = inner.as_bytes();
     let mut elems = Vec::new();
@@ -2642,12 +2459,8 @@ fn trimmed_span(inner: &str, start: usize, end: usize) -> (usize, String) {
     (start + leading, slice.trim().to_string())
 }
 
-/// One classified array's elements, by increasing generality: an int array
-/// stays exact; real, bool, or the string fallback is chosen only once every
-/// element fails the narrower kind. Quote-stripping happens only in the
-/// string fallback, so a quoted element like `"3"` never parses as a number
-/// — it stays a string, matching the grammar's intent for quoted array
-/// elements.
+/// An array's element kind, narrowest first. A quoted element such as `"3"`
+/// stays a string.
 enum ArrayKind {
     Int(Vec<i64>),
     Real(Vec<f64>),
@@ -2705,9 +2518,7 @@ fn strip_quotes(token: &str) -> &str {
         .unwrap_or(token)
 }
 
-/// Whether `needle` occurs in `haystack` outside any `"..."` span. A `"..."`
-/// span's interior is string content, so a bracket inside one (e.g. `"a[b"`)
-/// does not count — only a bare, unquoted occurrence does.
+/// Whether `needle` occurs in `haystack` outside any `"..."` span.
 fn contains_unquoted(haystack: &str, needle: char) -> bool {
     let mut in_quote = false;
     for c in haystack.chars() {
@@ -2786,9 +2597,7 @@ mod tests {
             parse_metadata_value(r#"["slab","relaxed"]"#).unwrap(),
             Value::StrArray(vec!["slab".into(), "relaxed".into()])
         );
-        // Strict grammar: a nested `[` makes it 2-D, not a raw-string
-        // fallback (changed from the prior lenient pass, which had no 2-D
-        // support at all).
+        // A nested `[` makes it 2-D.
         assert_eq!(
             parse_metadata_value("[[1,0],[0,1]]").unwrap(),
             Value::IntArray2D {
@@ -2845,12 +2654,9 @@ mod tests {
 
     #[test]
     fn types_brace_wrapped_scalars_and_arrays() {
-        // A brace-wrapped scalar with interior whitespace types the same as
-        // its bare form — the group is punctuation, not part of the value.
+        // The braces are punctuation, not part of the value.
         assert_eq!(parse_metadata_value("{3}").unwrap(), Value::Int(3));
         assert_eq!(parse_metadata_value("{ 3 }").unwrap(), Value::Int(3));
-        // A brace-wrapped whitespace array still works via the existing
-        // whitespace-array typing.
         assert_eq!(
             parse_metadata_value("{1 2 3}").unwrap(),
             Value::IntArray(vec![1, 2, 3])
@@ -2874,9 +2680,7 @@ mod tests {
 
     #[test]
     fn typing_rejects_mismatched_bracket_kind() {
-        // The splitter only tracks bracket *depth*, so it accepts `{1]` and
-        // `[1}` as balanced (depth returns to 0); typing is where the
-        // mismatched close is finally rejected.
+        // The splitter accepts `{1]` and `[1}`; typing rejects them.
         assert!(matches!(
             parse_metadata_value("{1]"),
             Err(ExtxyzError::InvalidMetadata { .. })
@@ -2927,8 +2731,6 @@ mod tests {
         ));
     }
 
-    // --- a blank count line is end of input, as in ASE ---
-
     /// One valid frame; the building block for the blank-line cases.
     const FRAME: &str = "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n";
 
@@ -2947,8 +2749,6 @@ mod tests {
 
     #[test]
     fn trailing_blank_line_is_end_of_input() {
-        // A trailing blank, several blanks, a space-only line, a tab-only
-        // line: all tolerated, and the one real frame is read.
         for text in [
             format!("{FRAME}\n"),
             format!("{FRAME}\n\n"),
@@ -2977,8 +2777,7 @@ mod tests {
 
     #[test]
     fn non_blank_bad_count_still_errors() {
-        // Only blank lines end the file; junk where a count is expected is an
-        // error, not a silent stop.
+        // Only blank lines end the file; anything else is an error.
         let text = format!("{FRAME}xyz\n{FRAME}");
         assert!(scan_count(&text).is_err());
         assert!(stream_count(&text).is_err());
@@ -2986,8 +2785,7 @@ mod tests {
 
     #[test]
     fn raw_frames_treat_blank_as_end_of_input() {
-        // The batch reader shares the rule: a frame requested after an
-        // interspersed blank is out of range, since the blank ended the file.
+        // The blank ended the file, so frame 1 is out of range.
         let text = format!("{FRAME}\n{FRAME}");
         let mut frames = RawFrames::selecting(std::io::Cursor::new(text), &[0, 1]);
         assert!(frames.next().unwrap().is_ok(), "frame 0 reads");
@@ -3002,9 +2800,7 @@ mod tests {
 
     #[test]
     fn usize_max_count_does_not_overflow() {
-        // The +1 for the comment line must not overflow on usize::MAX. Before
-        // the saturating add this panicked in debug builds (and wrapped to 0
-        // in release); now every reader reports a clean error instead.
+        // The +1 for the comment line must not overflow on usize::MAX.
         let text = format!("{}\n", usize::MAX);
         assert!(scan_frames(std::io::Cursor::new(text.as_bytes())).is_err());
 
@@ -3017,9 +2813,7 @@ mod tests {
 
     #[test]
     fn non_utf8_in_a_string_cell_errors() {
-        // Atom rows are tokenised as bytes, but a string (species) cell is
-        // still validated as UTF-8 when materialised: a stray non-UTF-8 byte
-        // there is a clean error, not a panic and not a silently mangled atom.
+        // A non-UTF-8 species cell is a clean error, not a panic or a mangled atom.
         let mut bytes = b"1\nProperties=species:S:1:pos:R:3\n".to_vec();
         bytes.extend_from_slice(&[0xFF, b' ', b'0', b' ', b'0', b' ', b'0', b'\n']);
         let mut frames = FrameIter::new(std::io::Cursor::new(bytes));
@@ -3028,8 +2822,7 @@ mod tests {
 
     #[test]
     fn non_utf8_in_a_numeric_cell_errors() {
-        // A non-UTF-8 byte in a numeric cell fails as an invalid value rather
-        // than reaching the parser, since the cell never has to be valid UTF-8.
+        // A non-UTF-8 numeric cell fails as an invalid value.
         let mut bytes = b"1\nProperties=species:S:1:pos:R:3\nH ".to_vec();
         bytes.extend_from_slice(&[0xFF, b' ', b'0', b' ', b'0', b'\n']);
         let mut frames = FrameIter::new(std::io::Cursor::new(bytes));
@@ -3073,9 +2866,8 @@ mod proptests {
     use proptest::prelude::*;
 
     proptest! {
-        /// The batch reader reads count lines too: its skip path (unselected
-        /// frames) and read path must never panic on an untrusted count,
-        /// including usize::MAX -- the `n_atoms + 1` overflow site.
+        /// The batch reader's skip and read paths must not panic on a usize::MAX
+        /// count.
         #[test]
         fn raw_frames_never_panic_on_declared_counts(
             count in any::<u64>(),

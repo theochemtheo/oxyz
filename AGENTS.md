@@ -64,6 +64,22 @@ Match the test to the promise:
 - a malformed file → assert the frame index and location, not just that an
   error was raised (**error-context**).
 
+## Comments and docstrings
+
+- Comment only what the code can't say: a non-obvious reason, constraint, or
+  workaround, usually in one line. Don't restate the code or the assertion
+  beside it, record history or provenance (versions, dates, PR or issue
+  numbers, "previously"), or add banner labels; rename or split the code
+  instead. Suppressions (`# noqa`, `# type: ignore[...]`, `#[allow]`) are fine.
+- Why a change was made belongs in the commit message and PR, not a comment.
+- A test's name states its promise; comment only a non-obvious setup.
+- Python docstrings on the public surface are the user documentation: what a
+  call does, its contract, and any gotcha. No implementation notes. Private
+  helpers get a docstring only where the name is not enough.
+- Rust `///` docs: a summary line, then the contract where it isn't obvious.
+  Not teaching material.
+- This applies to config, CI, and scripts as well as source.
+
 ## Gates before a PR
 
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean.

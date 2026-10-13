@@ -9,9 +9,7 @@ from typing import TYPE_CHECKING
 
 from oxyz import infer_schema, scan
 
-# Shared by the scan/check/freeze --compression options; every codec that can
-# be forced by name must appear here or argparse rejects it before it reaches
-# the library.
+# Every codec that can be forced by name, or argparse rejects it.
 _COMPRESSION_CHOICES = (
     "infer",
     "none",
@@ -28,8 +26,6 @@ if TYPE_CHECKING:
     from oxyz._schema import Schema
     from oxyz._schema_spec import SchemaSpec
 
-    # scan and infer_schema both report atom-count statistics; the schema adds
-    # the column/metadata detail.
     StatsSource = FrameIndex | Schema
 
 
@@ -44,8 +40,6 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return func(args)
     except (ValueError, OSError) as exc:
-        # ValueError covers ParseError and the archive/member selection errors;
-        # OSError covers missing/unreadable files.
         print(f"oxyz: {exc}", file=sys.stderr)
         return 1
 
@@ -62,11 +56,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _add_scan_parser(subparsers: argparse._SubParsersAction) -> None:
-    # The CLI `scan` is a human-facing summary that parses the whole file
-    # (distribution stats from oxyz.scan, plus the inferred schema) -- distinct
-    # from the oxyz.scan() primitive, which parses nothing. --no-schema drops
-    # back to that cheap path. Running both passes is deliberate; folding the
-    # distribution stats into infer_schema (one pass) is a future core change.
+    # Unlike oxyz.scan(), this parses the whole file for the schema;
+    # --no-schema keeps it to the structural scan.
     scan_parser = subparsers.add_parser(
         "scan",
         help="summarise a file's frames and inferred schema",
@@ -219,10 +210,7 @@ def _cmd_freeze(args: argparse.Namespace) -> int:
 
 
 def _write_spec(spec: SchemaSpec, out: Path) -> None:
-    """Write a schema to `out`, dispatching on the extension.
-
-    See `SchemaSpec.to_file`; `.toml` is rejected (no TOML serialiser).
-    """
+    """Write a schema to `out`, as `SchemaSpec.to_file` does."""
     spec.to_file(out)
 
 
@@ -239,9 +227,7 @@ def _parse_storage_options(items: list[str]) -> dict[str, str] | None:
 
 
 def _cmd_scan(args: argparse.Namespace) -> int:
-    # The schema pass keeps the per-frame atom counts, so it yields the same
-    # distribution stats as scan -- run only one. --no-schema wants no parse
-    # at all, so it falls back to the cheap structural scan.
+    # The schema pass yields the same atom-count statistics, so run one pass.
     if args.project and args.emit_schema is None:
         raise ValueError("--project only applies together with --emit-schema")
     storage_options = _parse_storage_options(args.storage_options)
@@ -266,9 +252,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             raise ValueError("--emit-schema needs the schema pass; drop --no-schema")
         out = Path(args.emit_schema)
         if getattr(args, "project", False):
-            # to_spec() collapses families to `*` globs; freeze expands them
-            # against the file and forces mode: project, giving a literal,
-            # project-ready schema.
+            # freeze expands to_spec()'s `*` globs into a literal, project-ready schema.
             frozen = schema.to_spec().freeze(
                 args.path,
                 compression=args.compression,
@@ -292,7 +276,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
 
     compiled = resolve(args.schema)
     storage_options = _parse_storage_options(args.storage_options)
-    # group key -> [count, first_frame, first_line, violation]
+    # key -> [count, first_frame, first_line, violation]
     groups: dict[tuple, list] = {}
     line = 1
     n_frames = 0
@@ -354,9 +338,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
 def _scan_payload(stats: StatsSource, schema: Schema | None) -> dict:
     payload: dict = {"stats": _stats_dict(stats)}
     if schema is not None:
-        # asdict serialises the nested schema dataclasses; drop the cached
-        # report (its text form lives in the non-JSON path) and the raw
-        # per-frame counts (the derived stats already stand for them).
+        # Drop the cached report and the raw per-frame counts.
         schema_dict = dataclasses.asdict(schema)
         schema_dict.pop("_report", None)
         schema_dict.pop("n_atoms", None)
