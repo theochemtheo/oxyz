@@ -7,6 +7,7 @@
 use std::{
     fs::File,
     io::{self, BufRead, BufReader, Cursor, Read, Seek},
+    ops::ControlFlow,
     path::Path,
     sync::{
         Arc, Mutex,
@@ -102,8 +103,9 @@ pub(crate) fn detect_for_write(path: &Path, compression: Compression) -> Codec {
 
 /// Open `path` as a streaming reader, decompressing per `compression`.
 ///
-/// `member` names an archive entry and is rejected for single streams. Without
-/// it, an archive must hold exactly one `.xyz`/`.extxyz` member.
+/// `member` names an archive entry, or is [`ALL_MEMBERS`], and is rejected for
+/// single streams. Without it, an archive must hold exactly one
+/// `.xyz`/`.extxyz` member.
 pub fn open_decoded(
     path: &Path,
     compression: Compression,
@@ -289,33 +291,66 @@ pub(crate) fn is_extxyz(name: &str) -> bool {
     lower.ends_with(".xyz") || lower.ends_with(".extxyz")
 }
 
-/// Pick the member to read: the named one, or the sole extxyz-looking one.
-fn resolve_member(names: &[String], member: Option<&str>) -> Result<String> {
+/// The `member` selector reading every extxyz member, in archive order, as one
+/// stream. A blank count line ends its member rather than the stream, and a
+/// member ending inside a frame is an error naming it. Only the members
+/// [`is_extxyz_member`] accepts are read.
+pub const ALL_MEMBERS: &str = "*";
+
+/// Whether an archive entry counts as extxyz when no name selects it: macOS
+/// resource forks carry the name of the file they describe, but hold no frames.
+fn is_extxyz_member(name: &str) -> bool {
+    let basename = name.rsplit('/').next().unwrap_or(name);
+    is_extxyz(name) && !name.starts_with("__MACOSX/") && !basename.starts_with("._")
+}
+
+enum Selection {
+    One(String),
+    All,
+}
+
+/// Pick what to read: the named member, all of them, or the sole extxyz-looking
+/// one.
+fn resolve_member(names: &[String], member: Option<&str>) -> Result<Selection> {
+    if member == Some(ALL_MEMBERS) {
+        return if names.iter().any(|name| is_extxyz_member(name)) {
+            Ok(Selection::All)
+        } else {
+            Err(ExtxyzError::NoExtxyzMember {
+                members: names.to_vec(),
+            })
+        };
+    }
     if let Some(wanted) = member {
         return names
             .iter()
             .find(|name| name.as_str() == wanted)
             .cloned()
+            .map(Selection::One)
             .ok_or_else(|| ExtxyzError::MemberNotFound {
                 member: wanted.to_owned(),
                 available: names.to_vec(),
             });
     }
 
-    let mut extxyz = names.iter().filter(|name| is_extxyz(name));
+    let mut extxyz = names.iter().filter(|name| is_extxyz_member(name));
     match (extxyz.next(), extxyz.next()) {
         (None, _) => Err(ExtxyzError::NoExtxyzMember {
             members: names.to_vec(),
         }),
-        (Some(only), None) => Ok(only.clone()),
+        (Some(only), None) => Ok(Selection::One(only.clone())),
         (Some(_), Some(_)) => Err(ExtxyzError::AmbiguousArchive {
-            members: names.iter().filter(|n| is_extxyz(n)).cloned().collect(),
+            members: names
+                .iter()
+                .filter(|n| is_extxyz_member(n))
+                .cloned()
+                .collect(),
         }),
     }
 }
 
-/// Stream one member of a zip. The central directory is at the end, so the
-/// source must seek.
+/// Stream the selected members of a zip. The central directory is at the end,
+/// so the source must seek.
 pub fn wrap_zip<R>(source: R, member: Option<&str>) -> Result<DecodedReader>
 where
     R: Read + Seek + Send + 'static,
@@ -326,7 +361,30 @@ where
         .filter(|name| !name.ends_with('/'))
         .map(str::to_owned)
         .collect();
-    let target = resolve_member(&names, member)?;
+    let target = match resolve_member(&names, member)? {
+        Selection::One(target) => target,
+        Selection::All => {
+            let indices: Vec<usize> = (0..archive.len())
+                .filter(|&i| archive.name_for_index(i).is_some_and(is_extxyz_member))
+                .collect();
+            return Ok(spawn_pipe(move |tx| {
+                let mut stream = MemberStream::new(tx);
+                for index in indices {
+                    let flow = match archive.by_index(index) {
+                        Ok(entry) => {
+                            let name = entry.name().to_owned();
+                            stream.append(&name, entry)
+                        }
+                        Err(error) => stream.fail(io::Error::other(error.to_string())),
+                    };
+                    if flow.is_break() {
+                        break;
+                    }
+                }
+                let _ = stream.flush();
+            }));
+        }
+    };
     let index = (0..archive.len())
         .find(|&i| {
             archive
@@ -343,46 +401,74 @@ where
     }))
 }
 
-/// Stream one member of a tar, decompressing it by `inner` first. `factory`
-/// yields a fresh raw stream per pass: one to enumerate, one to read.
+/// Stream the selected members of a tar, decompressing it by `inner` first.
+/// `factory` yields a fresh raw stream per pass: one to enumerate, one to read.
 pub fn wrap_tar<F>(factory: F, member: Option<&str>, inner: TarInner) -> Result<DecodedReader>
 where
     F: Fn() -> io::Result<ByteSource> + Send + 'static,
 {
     let names = tar_member_names(&factory, inner)?;
-    let target = resolve_member(&names, member)?;
+    let selection = resolve_member(&names, member)?;
 
-    Ok(spawn_pipe(move |tx| {
-        let stream = match tar_stream_from(&factory, inner) {
-            Ok(stream) => stream,
-            Err(error) => {
-                let _ = tx.send(Err(error));
-                return;
+    Ok(spawn_pipe(move |tx| match selection {
+        Selection::One(target) => visit_tar_entries(&factory, inner, tx, |entry| {
+            if entry_name(entry).as_deref() == Some(target.as_str()) {
+                pump(entry, tx);
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
             }
-        };
-        let mut archive = tar::Archive::new(stream);
-        let entries = match archive.entries() {
-            Ok(entries) => entries,
-            Err(error) => {
-                let _ = tx.send(Err(error));
-                return;
-            }
-        };
-        for entry in entries {
-            match entry {
-                Ok(mut entry) => {
-                    if entry_name(&entry).as_deref() == Some(target.as_str()) {
-                        pump(&mut entry, tx);
-                        return;
-                    }
+        }),
+        Selection::All => {
+            let mut stream = MemberStream::new(tx);
+            visit_tar_entries(&factory, inner, tx, |entry| match entry_name(entry) {
+                Some(name) if !entry.header().entry_type().is_dir() && is_extxyz_member(&name) => {
+                    stream.append(&name, entry)
                 }
-                Err(error) => {
-                    let _ = tx.send(Err(error));
+                _ => ControlFlow::Continue(()),
+            });
+            let _ = stream.flush();
+        }
+    }))
+}
+
+/// Call `visit` on each entry until it breaks, sending any tar error down `tx`.
+fn visit_tar_entries<F, V>(
+    factory: &F,
+    inner: TarInner,
+    tx: &SyncSender<io::Result<Vec<u8>>>,
+    mut visit: V,
+) where
+    F: Fn() -> io::Result<ByteSource>,
+    V: FnMut(&mut tar::Entry<'_, ByteSource>) -> ControlFlow<()>,
+{
+    let mut archive = match tar_stream_from(factory, inner) {
+        Ok(stream) => tar::Archive::new(stream),
+        Err(error) => {
+            let _ = tx.send(Err(error));
+            return;
+        }
+    };
+    let entries = match archive.entries() {
+        Ok(entries) => entries,
+        Err(error) => {
+            let _ = tx.send(Err(error));
+            return;
+        }
+    };
+    for entry in entries {
+        match entry {
+            Ok(mut entry) => {
+                if visit(&mut entry).is_break() {
                     return;
                 }
             }
+            Err(error) => {
+                let _ = tx.send(Err(error));
+                return;
+            }
         }
-    }))
+    }
 }
 
 fn tar_member_names<F>(factory: &F, inner: TarInner) -> Result<Vec<String>>
@@ -441,6 +527,95 @@ fn pump<R: Read>(reader: &mut R, tx: &SyncSender<io::Result<Vec<u8>>>) {
                 return;
             }
         }
+    }
+}
+
+/// Joins archive members into one extxyz stream, reading each by its frame
+/// structure because a bare concatenation would let one member's trailing blank
+/// line end the stream, silently dropping every later member. Small members
+/// share a chunk rather than costing a channel send each.
+struct MemberStream<'a> {
+    tx: &'a SyncSender<io::Result<Vec<u8>>>,
+    pending: Vec<u8>,
+}
+
+impl<'a> MemberStream<'a> {
+    fn new(tx: &'a SyncSender<io::Result<Vec<u8>>>) -> Self {
+        MemberStream {
+            tx,
+            pending: Vec::with_capacity(CHUNK),
+        }
+    }
+
+    /// Queue the frames of one member. Breaks once nothing further should be
+    /// read: the consumer hung up, or an error has been sent or is certain.
+    fn append<R: Read>(&mut self, name: &str, member: R) -> ControlFlow<()> {
+        match self.append_frames(name, &mut BufReader::new(member)) {
+            Ok(flow) => flow,
+            Err(error) => self.fail(error),
+        }
+    }
+
+    fn append_frames<R: BufRead>(
+        &mut self,
+        name: &str,
+        member: &mut R,
+    ) -> io::Result<ControlFlow<()>> {
+        loop {
+            let count_start = self.pending.len();
+            if member.read_until(b'\n', &mut self.pending)? == 0 {
+                return Ok(ControlFlow::Continue(()));
+            }
+            let count_line = std::str::from_utf8(&self.pending[count_start..])
+                .ok()
+                .map(str::trim);
+            let is_blank = count_line.is_some_and(str::is_empty);
+            let n_atoms = count_line.and_then(|line| line.parse::<usize>().ok());
+            if is_blank {
+                self.pending.truncate(count_start);
+                return Ok(ControlFlow::Continue(()));
+            }
+            terminate_line(&mut self.pending);
+            let Some(n_atoms) = n_atoms else {
+                // The parser rejects this line too, and reports its frame and location.
+                let _ = self.flush();
+                return Ok(ControlFlow::Break(()));
+            };
+            for _ in 0..=n_atoms {
+                if member.read_until(b'\n', &mut self.pending)? == 0 {
+                    return Err(io::Error::other(format!(
+                        "archive member {name:?} ends inside a frame"
+                    )));
+                }
+                terminate_line(&mut self.pending);
+                if self.pending.len() >= CHUNK && self.flush().is_break() {
+                    return Ok(ControlFlow::Break(()));
+                }
+            }
+        }
+    }
+
+    fn flush(&mut self) -> ControlFlow<()> {
+        if self.pending.is_empty() {
+            return ControlFlow::Continue(());
+        }
+        let chunk = std::mem::replace(&mut self.pending, Vec::with_capacity(CHUNK));
+        match self.tx.send(Ok(chunk)) {
+            Ok(()) => ControlFlow::Continue(()),
+            Err(_) => ControlFlow::Break(()),
+        }
+    }
+
+    fn fail(&mut self, error: io::Error) -> ControlFlow<()> {
+        let _ = self.flush();
+        let _ = self.tx.send(Err(error));
+        ControlFlow::Break(())
+    }
+}
+
+fn terminate_line(bytes: &mut Vec<u8>) {
+    if bytes.last() != Some(&b'\n') {
+        bytes.push(b'\n');
     }
 }
 

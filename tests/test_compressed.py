@@ -7,6 +7,7 @@ Fixtures under `data/compressed/` are compressed twins of
 from __future__ import annotations
 
 import importlib.util
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -168,3 +169,73 @@ class TestAse:
 
         atoms = ase.read(DATA_DIR / "compressed/multi_member.zip", 0, member="a.xyz")
         assert atoms.get_global_number_of_atoms() == 2
+
+
+MULTI_MEMBER = ["compressed/multi_member.zip", "compressed/multi_member.tar.gz"]
+
+
+def _member_frames() -> list[oxyz.Frame]:
+    return oxyz.read(PLAIN) + oxyz.read(DATA_DIR / "varying_atom_counts.xyz")
+
+
+@pytest.mark.parametrize("name", MULTI_MEMBER)
+class TestAllMembers:
+    def test_read_concatenates_members_in_order(self, name: str) -> None:
+        assert oxyz.read(DATA_DIR / name, member="*") == _member_frames()
+
+    def test_parallel_read_matches_serial(self, name: str) -> None:
+        path = DATA_DIR / name
+        assert oxyz.read(path, member="*", threads=4) == oxyz.read(
+            path, member="*", threads=1
+        )
+
+    def test_iread_matches_read(self, name: str) -> None:
+        assert list(oxyz.iread(DATA_DIR / name, member="*")) == _member_frames()
+
+    def test_scan_counts_every_member(self, name: str) -> None:
+        index = oxyz.scan(DATA_DIR / name, member="*")
+        assert index.n_atoms.tolist() == [f.n_atoms for f in _member_frames()]
+
+    def test_infer_schema_folds_every_member(self, name: str) -> None:
+        schema = oxyz.infer_schema(DATA_DIR / name, member="*")
+        assert schema.n_frames == len(_member_frames())
+
+
+def test_read_batch_spans_members_sharing_a_schema(tmp_path: Path) -> None:
+    path = tmp_path / "runs.zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.write(PLAIN, "a.xyz")
+        archive.write(PLAIN, "b.xyz")
+    batch = oxyz.read_batch(path, member="*")
+    assert batch.n_frames == 2 * len(oxyz.read(PLAIN))
+
+
+def test_all_members_on_plain_file_raises() -> None:
+    with pytest.raises(ValueError, match="member= given for a non-archive"):
+        oxyz.read(PLAIN, member="*")
+
+
+def test_member_ending_inside_a_frame_names_the_member(tmp_path: Path) -> None:
+    path = tmp_path / "runs.zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("short.xyz", "2\nProperties=species:S:1:pos:R:3\nH 0 0 0\n")
+    with pytest.raises(OSError, match=r"short\.xyz.*ends inside a frame"):
+        oxyz.read(path, member="*")
+
+
+def test_ambiguous_error_previews_a_huge_member_list(tmp_path: Path) -> None:
+    path = tmp_path / "runs.zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        for i in range(1000):
+            archive.writestr(f"{i}.xyz", "")
+    with pytest.raises(ValueError, match="and 990 more") as excinfo:
+        oxyz.read(path)
+    assert len(str(excinfo.value)) < 500
+
+
+@pytest.mark.skipif(importlib.util.find_spec("ase") is None, reason="ase not installed")
+def test_ase_read_takes_all_members() -> None:
+    from oxyz import ase as oxyz_ase
+
+    atoms = oxyz_ase.read(DATA_DIR / "compressed/multi_member.zip", ":", member="*")
+    assert len(atoms) == len(_member_frames())

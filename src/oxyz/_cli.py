@@ -83,11 +83,7 @@ def _add_scan_parser(subparsers: argparse._SubParsersAction) -> None:
         default="infer",
         help="codec to read PATH as (default: infer from the name)",
     )
-    scan_parser.add_argument(
-        "--member",
-        default=None,
-        help="entry to read from a multi-member archive (.zip/.tar/.tar.gz/.tar.zst)",
-    )
+    _add_member_arguments(scan_parser)
     scan_parser.add_argument(
         "--storage-option",
         action="append",
@@ -115,6 +111,22 @@ def _add_scan_parser(subparsers: argparse._SubParsersAction) -> None:
         ),
     )
     scan_parser.set_defaults(func=_cmd_scan)
+
+
+def _add_member_arguments(parser: argparse.ArgumentParser) -> None:
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--member",
+        default=None,
+        help="entry to read from a multi-member archive (.zip/.tar/.tar.gz/.tar.zst)",
+    )
+    group.add_argument(
+        "--all-members",
+        action="store_const",
+        const="*",
+        dest="member",
+        help="read every extxyz entry of an archive, in order, as one stream",
+    )
 
 
 def _add_check_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -147,7 +159,7 @@ def _add_check_parser(subparsers: argparse._SubParsersAction) -> None:
         choices=_COMPRESSION_CHOICES,
         default="infer",
     )
-    check_parser.add_argument("--member", default=None)
+    _add_member_arguments(check_parser)
     check_parser.add_argument(
         "--storage-option",
         action="append",
@@ -183,7 +195,7 @@ def _add_freeze_parser(subparsers: argparse._SubParsersAction) -> None:
         choices=_COMPRESSION_CHOICES,
         default="infer",
     )
-    freeze_parser.add_argument("--member", default=None)
+    _add_member_arguments(freeze_parser)
     freeze_parser.add_argument(
         "--storage-option",
         action="append",

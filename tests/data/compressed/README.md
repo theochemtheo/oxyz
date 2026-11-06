@@ -3,8 +3,8 @@
 Compressed twins of `../two_frame_same_schema.xyz`, one per codec, plus a few
 edge cases. Each must read back to the same two frames as the plain file.
 
-Regenerate from `tests/data/` (set `COPYFILE_DISABLE=1` so macOS `tar` omits
-`._` AppleDouble entries, which would otherwise look like extra members):
+Regenerate from `tests/data/` (set `COPYFILE_DISABLE=1` so macOS `tar` keeps
+`._` AppleDouble entries out of the fixtures):
 
 ```sh
 base=two_frame_same_schema.xyz

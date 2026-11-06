@@ -248,7 +248,11 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
         `"tar"`, `"tar.gz"`, `"tar.zst"`) instead of inferring it from `path`.
     member
         Selects one entry from a `.zip`/`.tar`/`.tar.gz`/`.tar.zst` holding
-        more than one.
+        more than one. `"*"` reads every `.xyz`/`.extxyz` entry in archive order
+        as one stream, skipping macOS resource forks. A blank count line ends
+        its entry, not the stream, and an entry ending inside a frame raises
+        `OSError` naming it. Other errors locate the frame within the stream,
+        not the entry.
     storage_options
         Endpoint/credentials for a remote store, falling back to `AWS_*` env
         vars.
@@ -350,7 +354,8 @@ def iread(
     compression
         Forces a codec instead of inferring it from `path`; see `read`.
     member
-        Selects one entry from an archive holding more than one; see `read`.
+        Selects one entry from an archive holding more than one, or all of them
+        with `"*"`; see `read`.
     storage_options
         Endpoint/credentials for a remote store; see `read`.
 

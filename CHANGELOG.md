@@ -6,6 +6,18 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `member="*"` reads every extxyz entry of a `.zip`/`.tar`/`.tar.gz`/`.tar.zst`
+  as one stream, on every reader. The CLI spells it `--all-members`.
+
+### Fixed
+
+- Errors listing archive members show the first ten and a count, instead of
+  every name.
+- macOS resource forks (`__MACOSX/`, `._*`) no longer count as extxyz members, so
+  a Finder-zipped archive holding one `.xyz` reads without `member=`.
+
 ## [1.2.1] - 2026-10-13
 
 ### Added

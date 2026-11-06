@@ -475,6 +475,7 @@ decompressing to a temporary file:
 ```python
 oxyz.read("run.xyz.gz")                    # .gz, .tar.gz, .tar.zst, .zip, .zst, .tar
 oxyz.read("runs.zip", member="run2.xyz")   # pick one archive entry
+oxyz.read("runs.zip", member="*")          # read every extxyz entry, in order
 oxyz.read("run.bin", compression="gzip")   # force a codec by hand
 ```
 
@@ -482,8 +483,11 @@ The codec is inferred from the extension (then the magic bytes), or set with
 `compression=`
 (`"none"`/`"gzip"`/`"zstd"`/`"zip"`/`"tar"`/`"tar.gz"`/`"tar.zst"`).
 An archive holding more than one extxyz file needs `member=`;
-otherwise it errors and lists what it holds. A compressed stream cannot be
-seeked, so two kinds of random access are constrained: `iread_batch` with
+otherwise it errors and previews what it holds. `member="*"` joins the entries
+into one stream, so a parse error gives a position in that stream rather than
+an entry name; a blank count line ends its entry, not the stream. A compressed
+stream cannot be seeked, so two kinds of random access are constrained:
+`iread_batch` with
 `shuffle`/`atoms_per_batch`/`memory_scales_with`, and reverse or negative ASE
 indices. These either read the whole file into memory (the ASE index path,
 as ASE itself does) or raise pointing at the limitation; decompress the
@@ -597,11 +601,14 @@ The command line mirrors a subset:
 
 ```text
 oxyz scan   <path> [--no-schema] [--emit-schema PATH [--project]] [--json]
-                   [--compression C] [--member M] [--storage-option K=V]
+                   [--compression C] [--member M | --all-members]
+                   [--storage-option K=V]
 oxyz check  <path> --schema S [--conformance strict|required|warn] [--json]
-                   [--compression C] [--member M] [--storage-option K=V]
+                   [--compression C] [--member M | --all-members]
+                   [--storage-option K=V]
 oxyz freeze <path> --schema IN --out OUT
-                   [--compression C] [--member M] [--storage-option K=V]
+                   [--compression C] [--member M | --all-members]
+                   [--storage-option K=V]
 ```
 
 ## The fine print

@@ -7,7 +7,10 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use oxyz_core::{Compression, ExtxyzError, detect_codec_name, open_decoded, read_frames};
+use oxyz_core::{
+    ALL_MEMBERS, Compression, ExtxyzError, detect_codec_name, iter_frames_from, open_decoded,
+    read_frames,
+};
 use proptest::prelude::*;
 
 fn fixture(name: &str) -> PathBuf {
@@ -403,4 +406,346 @@ proptest! {
             let _ = std::fs::remove_file(&path);
         }
     }
+}
+
+/// A zip holding the given members, in order.
+fn zip_members(members: &[(&str, &str)]) -> Vec<u8> {
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, body) in members {
+        writer
+            .start_file(*name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(body.as_bytes()).unwrap();
+    }
+    writer.finish().unwrap().into_inner()
+}
+
+/// A tar holding the given members, in order.
+fn tar_members(members: &[(&str, &str)]) -> Vec<u8> {
+    let mut builder = tar::Builder::new(Vec::new());
+    for (name, body) in members {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(body.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, *name, body.as_bytes())
+            .unwrap();
+    }
+    builder.into_inner().unwrap()
+}
+
+/// The `member="*"` stream of `members`, through both archive routes.
+fn all_members_text(members: &[(&str, &str)]) -> String {
+    let [from_zip, from_tar] =
+        [(zip_members(members), "zip"), (tar_members(members), "tar")].map(|(bytes, extension)| {
+            let path = temp_file(&bytes, extension);
+            let mut text = String::new();
+            open_decoded(&path, Compression::Infer, Some(ALL_MEMBERS))
+                .unwrap()
+                .read_to_string(&mut text)
+                .unwrap();
+            let _ = std::fs::remove_file(&path);
+            text
+        });
+    assert_eq!(from_zip, from_tar);
+    from_zip
+}
+
+const ONE_ATOM: &str = "1\nProperties=species:S:1:pos:R:3\nH 0.0 0.0 0.0\n";
+const TWO_ATOMS: &str = "2\nProperties=species:S:1:pos:R:3\nH 0.0 0.0 0.0\nO 1.0 0.0 0.0\n";
+
+#[test]
+fn all_members_concatenates_every_codec_route_in_archive_order() {
+    let first = plain();
+    let second = std::fs::read_to_string(fixture("varying_atom_counts.xyz")).unwrap();
+    let expected = format!("{first}{second}");
+    for name in [
+        "compressed/multi_member.zip",
+        "compressed/multi_member.tar.gz",
+    ] {
+        assert_eq!(
+            decoded_string(name, Compression::Infer, Some(ALL_MEMBERS)),
+            expected,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn all_members_skips_other_files_and_macos_resource_forks() {
+    let text = all_members_text(&[
+        ("README.txt", "not a frame"),
+        ("__MACOSX/._a.xyz", "\0\u{5}\u{16}\u{7}"),
+        ("sub/._b.xyz", "\0\u{5}\u{16}\u{7}"),
+        ("a.xyz", ONE_ATOM),
+        ("sub/b.extxyz", TWO_ATOMS),
+    ]);
+    assert_eq!(text, format!("{ONE_ATOM}{TWO_ATOMS}"));
+}
+
+#[test]
+fn a_blank_count_line_ends_its_member_not_the_stream() {
+    let text = all_members_text(&[
+        ("a.xyz", &format!("{ONE_ATOM}\n")),
+        (
+            "b.xyz",
+            &format!("{ONE_ATOM}  \r\n\nignored, as in a lone file\n"),
+        ),
+        ("c.xyz", TWO_ATOMS),
+    ]);
+    assert_eq!(text, format!("{ONE_ATOM}{ONE_ATOM}{TWO_ATOMS}"));
+}
+
+#[test]
+fn a_member_without_a_final_newline_does_not_merge_into_the_next() {
+    let unterminated = ONE_ATOM.trim_end();
+    let text = all_members_text(&[("a.xyz", unterminated), ("b.xyz", TWO_ATOMS)]);
+    assert_eq!(text, format!("{ONE_ATOM}{TWO_ATOMS}"));
+}
+
+#[test]
+fn an_empty_member_contributes_nothing() {
+    let text = all_members_text(&[("a.xyz", ONE_ATOM), ("empty.xyz", ""), ("b.xyz", TWO_ATOMS)]);
+    assert_eq!(text, format!("{ONE_ATOM}{TWO_ATOMS}"));
+}
+
+#[test]
+fn an_empty_comment_is_not_mistaken_for_a_member_end() {
+    let zero_atoms_blank_comment = "0\n\n";
+    let blank_comment = "1\n\nH 0.0 0.0 0.0\n";
+    let text = all_members_text(&[
+        ("a.xyz", zero_atoms_blank_comment),
+        ("b.xyz", blank_comment),
+        ("c.xyz", ONE_ATOM),
+    ]);
+    assert_eq!(
+        text,
+        format!("{zero_atoms_blank_comment}{blank_comment}{ONE_ATOM}")
+    );
+}
+
+#[test]
+fn a_member_ending_inside_a_frame_errors_naming_the_member() {
+    let truncated = "2\nProperties=species:S:1:pos:R:3\nH 0.0 0.0 0.0\n";
+    let members = [
+        ("a.xyz", ONE_ATOM),
+        ("short.xyz", truncated),
+        ("c.xyz", TWO_ATOMS),
+    ];
+    for (bytes, extension) in [
+        (zip_members(&members), "zip"),
+        (tar_members(&members), "tar"),
+    ] {
+        let path = temp_file(&bytes, extension);
+        let mut reader = open_decoded(&path, Compression::Infer, Some(ALL_MEMBERS)).unwrap();
+        let error = reader.read_to_end(&mut Vec::new()).unwrap_err().to_string();
+        assert!(error.contains("short.xyz"), "{extension}: {error}");
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+#[test]
+fn an_invalid_count_line_is_left_for_the_parser_to_report() {
+    let members = [
+        ("a.xyz", ONE_ATOM),
+        ("bad.xyz", "not a count\n"),
+        ("c.xyz", ONE_ATOM),
+    ];
+    let path = temp_file(&zip_members(&members), "zip");
+    let reader = open_decoded(&path, Compression::Infer, Some(ALL_MEMBERS)).unwrap();
+    let mut frames = iter_frames_from(reader).unwrap();
+    assert!(frames.next().unwrap().is_ok());
+    let error = frames.next().unwrap().unwrap_err().to_string();
+    assert!(error.contains("not a count"), "{error}");
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn all_members_without_an_extxyz_member_errors() {
+    let path = temp_file(&zip_member("notes.txt", "nothing"), "zip");
+    let error = open_decoded(&path, Compression::Infer, Some(ALL_MEMBERS))
+        .err()
+        .unwrap();
+    assert!(
+        matches!(error, ExtxyzError::NoExtxyzMember { .. }),
+        "{error:?}"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn all_members_on_a_non_archive_errors() {
+    let error = open_decoded(
+        &fixture("two_frame_same_schema.xyz"),
+        Compression::Infer,
+        Some(ALL_MEMBERS),
+    )
+    .err()
+    .unwrap();
+    assert!(
+        matches!(error, ExtxyzError::MemberOnNonArchive),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn many_small_members_all_arrive() {
+    let names: Vec<String> = (0..5000).map(|i| format!("{i}.xyz")).collect();
+    let members: Vec<(&str, &str)> = names.iter().map(|name| (name.as_str(), ONE_ATOM)).collect();
+    let path = temp_file(&zip_members(&members), "zip");
+    let reader = open_decoded(&path, Compression::Infer, Some(ALL_MEMBERS)).unwrap();
+    assert_eq!(iter_frames_from(reader).unwrap().count(), 5000);
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn errors_listing_members_show_a_bounded_preview_and_keep_the_full_list() {
+    let members: Vec<String> = (0..1000).map(|i| format!("wbm-{i}.extxyz")).collect();
+    let errors = [
+        ExtxyzError::AmbiguousArchive {
+            members: members.clone(),
+        },
+        ExtxyzError::NoExtxyzMember {
+            members: members.clone(),
+        },
+        ExtxyzError::MemberNotFound {
+            member: "nope.xyz".to_owned(),
+            available: members.clone(),
+        },
+    ];
+    for error in errors {
+        let message = error.to_string();
+        assert!(message.len() < 500, "{} bytes: {message}", message.len());
+        assert!(message.contains("wbm-0.extxyz"), "{message}");
+        assert!(!message.contains("wbm-999.extxyz"), "{message}");
+        assert!(message.contains("990 more"), "{message}");
+    }
+}
+
+#[test]
+fn a_short_member_list_is_shown_in_full() {
+    let message = ExtxyzError::AmbiguousArchive {
+        members: vec!["a.xyz".to_owned(), "b.xyz".to_owned()],
+    }
+    .to_string();
+    assert!(message.contains(r#"["a.xyz", "b.xyz"]"#), "{message}");
+    assert!(!message.contains("more"), "{message}");
+}
+
+#[test]
+fn the_ambiguous_error_names_the_all_members_selector() {
+    let message = ExtxyzError::AmbiguousArchive {
+        members: vec!["a.xyz".to_owned(), "b.xyz".to_owned()],
+    }
+    .to_string();
+    assert!(message.contains(r#"member="*""#), "{message}");
+}
+
+proptest! {
+    /// Any split of frames into members reads like the one concatenated file,
+    /// with or without final newlines and trailing blank lines on each member.
+    #[test]
+    fn splitting_frames_across_members_changes_nothing(
+        parts in proptest::collection::vec((1usize..4, any::<bool>(), any::<bool>()), 1..8),
+    ) {
+        let mut whole = String::new();
+        let mut bodies = Vec::new();
+        for (frames, drop_newline, blank_tail) in &parts {
+            let body = ONE_ATOM.repeat(*frames);
+            whole.push_str(&body);
+            bodies.push(match (drop_newline, blank_tail) {
+                (true, _) => body.trim_end().to_owned(),
+                (false, true) => format!("{body}\n"),
+                (false, false) => body,
+            });
+        }
+        let names: Vec<String> = (0..bodies.len()).map(|i| format!("{i}.xyz")).collect();
+        let members: Vec<(&str, &str)> = names
+            .iter()
+            .zip(&bodies)
+            .map(|(name, body)| (name.as_str(), body.as_str()))
+            .collect();
+        prop_assert_eq!(all_members_text(&members), whole);
+    }
+
+    /// Arbitrary member bytes fail cleanly, never panic.
+    #[test]
+    fn arbitrary_member_bytes_never_panic(
+        first in proptest::collection::vec(any::<u8>(), 0..256),
+        second in proptest::collection::vec(any::<u8>(), 0..256),
+    ) {
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for (name, bytes) in [("a.xyz", &first), ("b.xyz", &second)] {
+            writer.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+            writer.write_all(bytes).unwrap();
+        }
+        let path = temp_file(&writer.finish().unwrap().into_inner(), "zip");
+        let mut reader = open_decoded(&path, Compression::Infer, Some(ALL_MEMBERS)).unwrap();
+        let _ = reader.read_to_end(&mut Vec::new());
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+#[test]
+fn macos_resource_forks_do_not_make_a_single_member_archive_ambiguous() {
+    let members = [
+        ("run/a.xyz", ONE_ATOM),
+        ("__MACOSX/run/._a.xyz", "\0\u{5}\u{16}\u{7}"),
+        ("run/._a.xyz", "\0\u{5}\u{16}\u{7}"),
+    ];
+    for (bytes, extension) in [
+        (zip_members(&members), "zip"),
+        (tar_members(&members), "tar"),
+    ] {
+        let path = temp_file(&bytes, extension);
+        let mut text = String::new();
+        open_decoded(&path, Compression::Infer, None)
+            .unwrap()
+            .read_to_string(&mut text)
+            .unwrap();
+        assert_eq!(text, ONE_ATOM, "{extension}");
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+#[test]
+fn the_ambiguous_error_omits_macos_resource_forks() {
+    let members = [
+        ("a.xyz", ONE_ATOM),
+        ("__MACOSX/._a.xyz", ""),
+        ("b.xyz", ONE_ATOM),
+    ];
+    let path = temp_file(&zip_members(&members), "zip");
+    match open_decoded(&path, Compression::Infer, None).err().unwrap() {
+        ExtxyzError::AmbiguousArchive { members } => {
+            assert_eq!(members, ["a.xyz", "b.xyz"]);
+        }
+        other => panic!("expected AmbiguousArchive, got {other:?}"),
+    }
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn an_archive_holding_only_resource_forks_has_no_extxyz_member() {
+    let path = temp_file(&zip_members(&[("__MACOSX/._a.xyz", "")]), "zip");
+    let error = open_decoded(&path, Compression::Infer, None).err().unwrap();
+    assert!(
+        matches!(error, ExtxyzError::NoExtxyzMember { .. }),
+        "{error:?}"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_resource_fork_can_still_be_selected_by_name() {
+    let members = [("a.xyz", ONE_ATOM), ("._a.xyz", "fork")];
+    let path = temp_file(&zip_members(&members), "zip");
+    let mut text = String::new();
+    open_decoded(&path, Compression::Infer, Some("._a.xyz"))
+        .unwrap()
+        .read_to_string(&mut text)
+        .unwrap();
+    assert_eq!(text, "fork");
+    let _ = std::fs::remove_file(&path);
 }
