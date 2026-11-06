@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-06
+
 ### Added
 
 - `member="*"` reads every extxyz entry of a `.zip`/`.tar`/`.tar.gz`/`.tar.zst`
@@ -13,10 +15,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- Errors listing archive members show the first ten and a count, instead of
-  every name.
 - macOS resource forks (`__MACOSX/`, `._*`) no longer count as extxyz members, so
   a Finder-zipped archive holding one `.xyz` reads without `member=`.
+- Errors listing archive members show the first ten and a count, instead of
+  every name.
+
+### Internal
+
+- `rust-toolchain` re-pinned to the current tip of `stable`.
 
 ## [1.2.1] - 2026-10-13
 
@@ -518,6 +524,7 @@ for reading atomistic-simulation datasets into numpy or ASE.
 - abi3 wheels for CPython 3.11 and newer on Linux (x86_64, aarch64), macOS
   (arm64, x86_64), and Windows (x64).
 
+[1.3.0]: https://github.com/theochemtheo/oxyz/releases/tag/v1.3.0
 [1.2.1]: https://github.com/theochemtheo/oxyz/releases/tag/v1.2.1
 [1.2.0]: https://github.com/theochemtheo/oxyz/releases/tag/v1.2.0
 [1.1.0]: https://github.com/theochemtheo/oxyz/releases/tag/v1.1.0
