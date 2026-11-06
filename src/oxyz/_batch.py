@@ -353,7 +353,8 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
     compression
         Forces a codec instead of inferring it from `path`; see `read`.
     member
-        Selects one entry from an archive holding more than one; see `read`.
+        Selects one entry from an archive holding more than one, or all of them
+        with `"*"`; see `read`.
     storage_options
         Endpoint/credentials for a remote store; see `read`.
 
@@ -513,7 +514,8 @@ def iread_batch(  # noqa: C901, PLR0913, PLR0912  the keyword options are the ba
     compression
         Forces a codec instead of inferring it from `path`; see `read`.
     member
-        Selects one entry from an archive holding more than one; see `read`.
+        Selects one entry from an archive holding more than one, or all of them
+        with `"*"`; see `read`.
     storage_options
         Endpoint/credentials for a remote store; see `read`.
 

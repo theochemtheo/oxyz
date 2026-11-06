@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import json
+import zipfile
 from pathlib import Path
-from typing import TYPE_CHECKING
 
+import pytest
+
+import oxyz
 from oxyz._cli import main
 from oxyz._schema_spec import SchemaSpec
-
-if TYPE_CHECKING:
-    import pytest
 
 DATA = Path(__file__).parent / "data"
 
@@ -271,3 +271,77 @@ def test_scan_project_without_emit_errors(tmp_path: Path, capsys) -> None:
     rc = main(["scan", str(data), "--project"])
     assert rc == 1
     assert "project" in capsys.readouterr().err
+
+
+MULTI_MEMBER = str(DATA / "compressed" / "multi_member.zip")
+
+
+def test_scan_all_members_summarises_the_whole_archive(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    code = main(["scan", "--json", "--no-schema", "--all-members", MULTI_MEMBER])
+    single = capsys.readouterr().out
+    assert code == 0
+    first = main(["scan", "--json", "--no-schema", "--member", "a.xyz", MULTI_MEMBER])
+    a = capsys.readouterr().out
+    second = main(["scan", "--json", "--no-schema", "--member", "b.xyz", MULTI_MEMBER])
+    b = capsys.readouterr().out
+    assert first == second == 0
+    assert (
+        json.loads(single)["stats"]["n_frames"]
+        == json.loads(a)["stats"]["n_frames"] + json.loads(b)["stats"]["n_frames"]
+    )
+
+
+def test_scan_all_members_infers_a_schema(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["scan", "--all-members", MULTI_MEMBER]) == 0
+    assert "species" in capsys.readouterr().out
+
+
+def test_all_members_conflicts_with_member(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        main(["scan", "--all-members", "--member", "a.xyz", MULTI_MEMBER])
+    assert excinfo.value.code == 2
+    assert "not allowed with" in capsys.readouterr().err
+
+
+def test_check_all_members_validates_every_member(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    schema = tmp_path / "schema.yaml"
+    assert (
+        main(["scan", "--all-members", "--emit-schema", str(schema), MULTI_MEMBER]) == 0
+    )
+    capsys.readouterr()
+    code = main(["check", "--all-members", "--schema", str(schema), MULTI_MEMBER])
+    out = capsys.readouterr().out
+    assert code == 0
+    n_frames = len(oxyz.read(MULTI_MEMBER, member="*"))
+    assert f"{n_frames} frames" in out
+
+
+def test_freeze_all_members_reads_every_member(tmp_path: Path) -> None:
+    schema = tmp_path / "schema.yaml"
+    frozen = tmp_path / "frozen.yaml"
+    assert (
+        main(["scan", "--all-members", "--emit-schema", str(schema), MULTI_MEMBER]) == 0
+    )
+    args = ["freeze", "--all-members", "--schema", str(schema), "--out", str(frozen)]
+    assert main([*args, MULTI_MEMBER]) == 0
+    assert SchemaSpec.from_file(frozen).mode == "project"
+
+
+def test_scan_of_a_huge_ambiguous_archive_keeps_the_error_short(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "runs.zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        for i in range(1000):
+            archive.writestr(f"{i}.xyz", "")
+    assert main(["scan", str(path)]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "and 990 more" in captured.err
+    assert len(captured.err) < 500

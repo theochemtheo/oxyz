@@ -42,6 +42,27 @@ def test_read_frames_remote_zip(s3_store):
     assert len(remote) == len(local)
 
 
+@pytest.mark.parametrize("archive", ["train.zip", "train.tar.gz"])
+def test_read_frames_remote_all_members(s3_store, archive):
+    buf = io.BytesIO()
+    if archive.endswith(".zip"):
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("a.xyz", KEY_DATA)
+            zf.writestr("b.xyz", KEY_DATA)
+    else:
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            for name in ("a.xyz", "b.xyz"):
+                info = tarfile.TarInfo(name)
+                info.size = len(KEY_DATA)
+                tar.addfile(info, io.BytesIO(KEY_DATA))
+    s3_store.put(archive, buf.getvalue())
+    frames = oxyz.read(
+        s3_store.url(archive), member="*", storage_options=s3_store.options
+    )
+    one_copy = oxyz.read(DATA / "minimal_periodic.extxyz")
+    assert frames == one_copy + one_copy
+
+
 def test_read_frames_remote_targz_member(s3_store):
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:

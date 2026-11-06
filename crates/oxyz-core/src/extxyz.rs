@@ -20,6 +20,17 @@ use crate::model::{Column, ColumnData, ColumnKind, Frame, Value};
 use crate::project::{Deviation, ProjectionPlan, project_frame};
 use crate::schema::Schema;
 
+/// Member names shown in an error; an archive can hold hundreds of thousands.
+const MEMBER_PREVIEW: usize = 10;
+
+fn member_preview(members: &[String]) -> String {
+    let shown = &members[..members.len().min(MEMBER_PREVIEW)];
+    match members.len() - shown.len() {
+        0 => format!("{shown:?}"),
+        more => format!("{shown:?} and {more} more"),
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum ExtxyzError {
     #[error("I/O error")]
@@ -82,16 +93,19 @@ pub enum ExtxyzError {
     #[error("frame index {frame_index} out of range: file has {n_frames} frames")]
     FrameOutOfRange { frame_index: usize, n_frames: usize },
 
-    #[error("member {member:?} not found in archive; available members: {available:?}")]
+    #[error("member {member:?} not found in archive; available members: {}", member_preview(.available))]
     MemberNotFound {
         member: String,
         available: Vec<String>,
     },
 
-    #[error("archive has multiple extxyz members; pass member= to choose one: {members:?}")]
+    #[error(
+        "archive has multiple extxyz members; pass member= to choose one, or member=\"*\" to read them all: {}",
+        member_preview(.members)
+    )]
     AmbiguousArchive { members: Vec<String> },
 
-    #[error("archive contains no extxyz member; members: {members:?}")]
+    #[error("archive contains no extxyz member; members: {}", member_preview(.members))]
     NoExtxyzMember { members: Vec<String> },
 
     #[error("member= given for a non-archive source")]

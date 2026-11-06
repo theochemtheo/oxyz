@@ -165,7 +165,8 @@ def read(  # noqa: PLR0913  keyword options mirror the System data model
     compression
         Forces a codec instead of inferring it from `path`; see `oxyz.read`.
     member
-        Selects one entry from an archive holding more than one.
+        Selects one entry from an archive holding more than one, or all of them
+        with `"*"`; see `read`.
     storage_options
         Endpoint/credentials for a remote store; see `oxyz.read`.
 
@@ -264,7 +265,8 @@ def iread(  # noqa: PLR0913  keyword options mirror the System data model
     compression
         Forces a codec instead of inferring it from `path`; see `read`.
     member
-        Selects one entry from an archive holding more than one; see `read`.
+        Selects one entry from an archive holding more than one, or all of them
+        with `"*"`; see `read`.
     storage_options
         Endpoint/credentials for a remote store.
 
@@ -326,7 +328,8 @@ class SystemSource:
     compression
         Forces a codec instead of inferring it from `path`.
     member
-        Selects one entry from an archive holding more than one.
+        Selects one entry from an archive holding more than one, or all of them
+        with `"*"`; see `read`.
     storage_options
         Endpoint/credentials for a remote store.
     """
