@@ -293,11 +293,13 @@ pub(crate) fn is_extxyz(name: &str) -> bool {
 
 /// The `member` selector reading every extxyz member, in archive order, as one
 /// stream. A blank count line ends its member rather than the stream, and a
-/// member ending inside a frame is an error naming it. Files other than
-/// `.xyz`/`.extxyz` and macOS resource forks are skipped.
+/// member ending inside a frame is an error naming it. Only the members
+/// [`is_extxyz_member`] accepts are read.
 pub const ALL_MEMBERS: &str = "*";
 
-fn in_all_members(name: &str) -> bool {
+/// Whether an archive entry counts as extxyz when no name selects it: macOS
+/// resource forks carry the name of the file they describe, but hold no frames.
+fn is_extxyz_member(name: &str) -> bool {
     let basename = name.rsplit('/').next().unwrap_or(name);
     is_extxyz(name) && !name.starts_with("__MACOSX/") && !basename.starts_with("._")
 }
@@ -311,7 +313,7 @@ enum Selection {
 /// one.
 fn resolve_member(names: &[String], member: Option<&str>) -> Result<Selection> {
     if member == Some(ALL_MEMBERS) {
-        return if names.iter().any(|name| in_all_members(name)) {
+        return if names.iter().any(|name| is_extxyz_member(name)) {
             Ok(Selection::All)
         } else {
             Err(ExtxyzError::NoExtxyzMember {
@@ -331,14 +333,18 @@ fn resolve_member(names: &[String], member: Option<&str>) -> Result<Selection> {
             });
     }
 
-    let mut extxyz = names.iter().filter(|name| is_extxyz(name));
+    let mut extxyz = names.iter().filter(|name| is_extxyz_member(name));
     match (extxyz.next(), extxyz.next()) {
         (None, _) => Err(ExtxyzError::NoExtxyzMember {
             members: names.to_vec(),
         }),
         (Some(only), None) => Ok(Selection::One(only.clone())),
         (Some(_), Some(_)) => Err(ExtxyzError::AmbiguousArchive {
-            members: names.iter().filter(|n| is_extxyz(n)).cloned().collect(),
+            members: names
+                .iter()
+                .filter(|n| is_extxyz_member(n))
+                .cloned()
+                .collect(),
         }),
     }
 }
@@ -359,7 +365,7 @@ where
         Selection::One(target) => target,
         Selection::All => {
             let indices: Vec<usize> = (0..archive.len())
-                .filter(|&i| archive.name_for_index(i).is_some_and(in_all_members))
+                .filter(|&i| archive.name_for_index(i).is_some_and(is_extxyz_member))
                 .collect();
             return Ok(spawn_pipe(move |tx| {
                 let mut stream = MemberStream::new(tx);
@@ -416,7 +422,7 @@ where
         Selection::All => {
             let mut stream = MemberStream::new(tx);
             visit_tar_entries(&factory, inner, tx, |entry| match entry_name(entry) {
-                Some(name) if !entry.header().entry_type().is_dir() && in_all_members(&name) => {
+                Some(name) if !entry.header().entry_type().is_dir() && is_extxyz_member(&name) => {
                     stream.append(&name, entry)
                 }
                 _ => ControlFlow::Continue(()),

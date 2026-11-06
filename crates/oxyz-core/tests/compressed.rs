@@ -686,3 +686,66 @@ proptest! {
         let _ = std::fs::remove_file(&path);
     }
 }
+
+#[test]
+fn macos_resource_forks_do_not_make_a_single_member_archive_ambiguous() {
+    let members = [
+        ("run/a.xyz", ONE_ATOM),
+        ("__MACOSX/run/._a.xyz", "\0\u{5}\u{16}\u{7}"),
+        ("run/._a.xyz", "\0\u{5}\u{16}\u{7}"),
+    ];
+    for (bytes, extension) in [
+        (zip_members(&members), "zip"),
+        (tar_members(&members), "tar"),
+    ] {
+        let path = temp_file(&bytes, extension);
+        let mut text = String::new();
+        open_decoded(&path, Compression::Infer, None)
+            .unwrap()
+            .read_to_string(&mut text)
+            .unwrap();
+        assert_eq!(text, ONE_ATOM, "{extension}");
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+#[test]
+fn the_ambiguous_error_omits_macos_resource_forks() {
+    let members = [
+        ("a.xyz", ONE_ATOM),
+        ("__MACOSX/._a.xyz", ""),
+        ("b.xyz", ONE_ATOM),
+    ];
+    let path = temp_file(&zip_members(&members), "zip");
+    match open_decoded(&path, Compression::Infer, None).err().unwrap() {
+        ExtxyzError::AmbiguousArchive { members } => {
+            assert_eq!(members, ["a.xyz", "b.xyz"]);
+        }
+        other => panic!("expected AmbiguousArchive, got {other:?}"),
+    }
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn an_archive_holding_only_resource_forks_has_no_extxyz_member() {
+    let path = temp_file(&zip_members(&[("__MACOSX/._a.xyz", "")]), "zip");
+    let error = open_decoded(&path, Compression::Infer, None).err().unwrap();
+    assert!(
+        matches!(error, ExtxyzError::NoExtxyzMember { .. }),
+        "{error:?}"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_resource_fork_can_still_be_selected_by_name() {
+    let members = [("a.xyz", ONE_ATOM), ("._a.xyz", "fork")];
+    let path = temp_file(&zip_members(&members), "zip");
+    let mut text = String::new();
+    open_decoded(&path, Compression::Infer, Some("._a.xyz"))
+        .unwrap()
+        .read_to_string(&mut text)
+        .unwrap();
+    assert_eq!(text, "fork");
+    let _ = std::fs::remove_file(&path);
+}
