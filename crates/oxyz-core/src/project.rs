@@ -2,7 +2,9 @@
 //!
 //! Each output frame has exactly the plan's fields, in declaration order. The
 //! module reshapes and reports; policy (raise, warn, drop) is the Python
-//! layer's. A frame is marked `dropped` when a required field has no fill.
+//! layer's. A frame is marked `dropped` when a required field has no fill, or
+//! when any field with no fill is present with the wrong kind or width. An
+//! absent optional field with no fill is omitted from the output.
 
 use crate::model::{Column, ColumnData, ColumnKind, Frame, Value};
 use compact_str::CompactString;
@@ -23,7 +25,8 @@ pub struct PlanColumn {
     pub kind: ColumnKind,
     pub width: usize,
     pub required: bool,
-    /// `None` marks a required field with no fill: drop rather than fabricate.
+    /// `None` drops the frame when the field is required or mismatched, and
+    /// omits the field when it is optional and absent.
     pub fill: Option<Fill>,
 }
 
@@ -35,6 +38,7 @@ pub struct PlanMetadata {
     /// `None` for a scalar, `Some(n)` for an array of length n.
     pub shape: Option<usize>,
     pub required: bool,
+    /// As for [`PlanColumn::fill`].
     pub fill: Option<Fill>,
 }
 
@@ -163,6 +167,7 @@ fn project_metadata(
                 metadata.push((CompactString::from(pm.name.as_str()), value.clone()));
             }
             found => {
+                let mismatched = matches!(found, Lookup::Mismatch(_));
                 match found {
                     Lookup::Mismatch(value) => {
                         let (k, s) = value_kind_shape(value);
@@ -188,7 +193,7 @@ fn project_metadata(
                         CompactString::from(pm.name.as_str()),
                         materialise_value(pm.kind, pm.shape, fill),
                     )),
-                    None => *dropped = true,
+                    None => *dropped |= mismatched || pm.required,
                 }
             }
         }
@@ -244,6 +249,7 @@ pub fn project_frame(frame: &Frame, plan: &ProjectionPlan) -> Projected {
         match lookup_column(frame, pc) {
             Lookup::Conforming(existing) => columns.push(existing.clone()),
             found => {
+                let mismatched = matches!(found, Lookup::Mismatch(_));
                 // Optional-absent is silent.
                 match found {
                     Lookup::Mismatch(existing) => deviations.push(Deviation {
@@ -268,7 +274,7 @@ pub fn project_frame(frame: &Frame, plan: &ProjectionPlan) -> Projected {
                         width: pc.width,
                         data: materialise_column(pc.kind, pc.width, n_atoms, fill),
                     }),
-                    None => dropped = true,
+                    None => dropped |= mismatched || pc.required,
                 }
             }
         }

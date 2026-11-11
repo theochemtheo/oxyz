@@ -4,7 +4,7 @@ use oxyz_core::project::{
     Axis, DeviationKind, Fill, PlanColumn, PlanMetadata, Projected, ProjectionPlan,
 };
 use oxyz_core::{
-    ExtxyzError, iter_batches_projected_from, read_all_batch_projected_from,
+    BatchError, ExtxyzError, iter_batches_projected_from, read_all_batch_projected_from,
     read_all_batch_projected_parallel_from, read_batch_projected_from,
     read_batch_projected_parallel_from,
 };
@@ -519,6 +519,48 @@ fn kind_mismatched_fill_falls_back_instead_of_panicking() {
     assert_eq!(p.frame.metadata[7].1, Value::StrArray(vec!["".into()]));
 }
 
+#[test]
+fn optional_without_fill_is_omitted_when_absent() {
+    let plan = ProjectionPlan {
+        columns: vec![
+            real_col_plan("pos", 3, true),
+            real_plan("charge", 1, false, None),
+        ],
+        metadata: vec![real_meta("energy", None, false, None)],
+    };
+    let f = frame(1, vec![col("pos", ColumnData::Real(vec![0.0; 3]), 3)]);
+    let p = oxyz_core::project::project_frame(&f, &plan);
+    assert!(!p.dropped && p.deviations.is_empty());
+    assert_eq!(p.frame.columns.len(), 1);
+    assert!(p.frame.metadata.is_empty());
+}
+
+#[test]
+fn optional_without_fill_drops_on_wrong_kind() {
+    let plan = ProjectionPlan {
+        columns: vec![real_plan("charge", 1, false, None)],
+        metadata: vec![real_meta("energy", None, false, None)],
+    };
+    let f = Frame {
+        n_atoms: 1,
+        columns: vec![col("charge", ColumnData::Int(vec![1]), 1)],
+        metadata: vec![("energy".into(), Value::Str("high".into()))],
+    };
+    let p = oxyz_core::project::project_frame(&f, &plan);
+    assert!(p.dropped);
+    assert_eq!(p.deviations.len(), 2);
+    let charge = &p.deviations[0];
+    assert_eq!(charge.axis, Axis::Column);
+    assert_eq!(charge.name, "charge");
+    assert_eq!(charge.kind, DeviationKind::Mismatch);
+    assert_eq!(charge.found.as_deref(), Some("I:1"));
+    let energy = &p.deviations[1];
+    assert_eq!(energy.axis, Axis::Metadata);
+    assert_eq!(energy.name, "energy");
+    assert_eq!(energy.kind, DeviationKind::Mismatch);
+    assert_eq!(energy.found.as_deref(), Some("S"));
+}
+
 // --- parallel and streamed projected reads match the serial read ---------
 
 // Charge present, absent, present (2 atoms), absent.
@@ -536,6 +578,24 @@ fn drift_plan() -> ProjectionPlan {
         ],
         metadata: Vec::new(),
     }
+}
+
+#[test]
+fn projected_batch_with_mixed_presence_of_an_omitted_field_names_the_frame() {
+    let plan = ProjectionPlan {
+        columns: vec![
+            real_col_plan("pos", 3, true),
+            real_plan("charge", 1, false, None),
+        ],
+        metadata: Vec::new(),
+    };
+    let Err(err) = read_all_batch_projected_from(DRIFT.as_bytes(), &plan) else {
+        panic!("mixed presence must fail");
+    };
+    assert!(matches!(
+        err,
+        ExtxyzError::Batch(BatchError::MissingColumn { frame: 1, .. })
+    ));
 }
 
 fn assert_same_projection(a: &oxyz_core::ProjectedBatch, b: &oxyz_core::ProjectedBatch) {
