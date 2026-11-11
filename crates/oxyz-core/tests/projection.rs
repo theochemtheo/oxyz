@@ -841,3 +841,78 @@ fn promote_int_keeps_the_shape_of_a_2d_int_array() {
         }
     );
 }
+
+fn real_energy_plan() -> ProjectionPlan {
+    ProjectionPlan {
+        metadata: vec![plan_entry_meta("energy", ColumnKind::Real, None)],
+        promote_int: true,
+        ..Default::default()
+    }
+}
+
+fn real_charge_plan(width: usize) -> ProjectionPlan {
+    ProjectionPlan {
+        columns: vec![PlanColumn {
+            name: "charge".into(),
+            kind: ColumnKind::Real,
+            width,
+            required: false,
+            fill: None,
+        }],
+        promote_int: true,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_promotable_metadata_duplicate_wins_over_an_earlier_mismatch() {
+    let frame = frame_meta(
+        0,
+        vec![
+            ("energy".into(), Value::Str("x".into())),
+            ("energy".into(), Value::Int(3)),
+        ],
+    );
+    let out = project_frame(&frame, &real_energy_plan());
+    assert!(out.deviations.is_empty());
+    assert!(!out.dropped);
+    assert_eq!(out.frame.metadata[0].1, Value::Real(3.0));
+}
+
+#[test]
+fn a_promotable_column_duplicate_wins_over_an_earlier_mismatch() {
+    let frame = frame(
+        1,
+        vec![
+            col("charge", ColumnData::Str(vec!["x".into()]), 1),
+            col("charge", ColumnData::Int(vec![3]), 1),
+        ],
+    );
+    let out = project_frame(&frame, &real_charge_plan(1));
+    assert!(out.deviations.is_empty());
+    assert!(!out.dropped);
+    assert_eq!(out.frame.columns[0].data, ColumnData::Real(vec![3.0]));
+}
+
+#[test]
+fn promote_int_does_not_widen_an_int_column() {
+    let frame = frame(1, vec![col("charge", ColumnData::Int(vec![1, 2, 3]), 3)]);
+    let out = project_frame(&frame, &real_charge_plan(1));
+    assert_eq!(out.deviations.len(), 1);
+    assert_eq!(out.deviations[0].kind, DeviationKind::Mismatch);
+    assert_eq!(out.deviations[0].found.as_deref(), Some("I:3"));
+}
+
+#[test]
+fn promote_int_does_not_reshape_an_int_array() {
+    let frame = frame_meta(0, vec![("Lattice".into(), Value::IntArray(vec![1, 2, 3]))]);
+    let plan = ProjectionPlan {
+        metadata: vec![plan_entry_meta("Lattice", ColumnKind::Real, Some(9))],
+        promote_int: true,
+        ..Default::default()
+    };
+    let out = project_frame(&frame, &plan);
+    assert_eq!(out.deviations.len(), 1);
+    assert_eq!(out.deviations[0].kind, DeviationKind::Mismatch);
+    assert_eq!(out.deviations[0].found.as_deref(), Some("I[3]"));
+}

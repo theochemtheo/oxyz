@@ -420,3 +420,4 @@ def test_project_batch_promotes_too():
     lattice = np.asarray(batch.metadata["Lattice"])
     assert lattice.dtype == np.float64
     assert lattice.shape == (1, 9)
+    assert lattice[0].tolist() == [5, 0, 0, 0, 5, 0, 0, 0, 5]
