@@ -6,6 +6,17 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Projection promotes an integer value to float for a REAL rule, so an
+  integer-valued `Lattice` no longer fails a project-mode schema. Validate mode
+  is unchanged.
+
+### Added
+
+- Schema rules take `absent: omit`: under project mode an absent optional
+  field is left out of the frame instead of filled.
+
 ### Internal
 
 - ty floor raised to 0.0.100.
