@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import inspect
+import math
 import pickle
 import re
 from pathlib import Path
@@ -18,6 +19,7 @@ from oxyz import (
     Column,
     ColumnRule,
     Frame,
+    FrameRule,
     Matrix3,
     Meta,
     MetadataRule,
@@ -25,10 +27,13 @@ from oxyz import (
     SchemaError,
     SchemaSpec,
 )
+from oxyz._record_bind import bind
 from oxyz._record_fields import FieldType
 from oxyz._schema import Kind
 
-MACE = Path(__file__).parent / "data" / "mace_ref_energy_forces_stress.xyz"
+DATA = Path(__file__).parent / "data"
+MACE = DATA / "mace_ref_energy_forces_stress.xyz"
+MAD = DATA / "mad_r2scan_sample.extxyz"
 
 type Array = npt.NDArray[np.float64]
 type Forces = Annotated[Column[Array], Column("REF_forces", width=3)]
@@ -682,3 +687,449 @@ def test_repr_html_lists_every_field():
     assert rows["stress"] == ["—", "—", "None"]
     assert rows["positions"][:2] == ["float64", "(3, 3)"]
     assert rows["config_type"] == ["str", "()", "&#x27;Default&#x27;"]
+
+
+def frames_file(path: Path, *comments: str) -> Path:
+    """Write one single-hydrogen frame per comment-line tail to `path`."""
+    path.write_text(
+        "".join(
+            f"1\nProperties=species:S:1:pos:R:3 {comment}\nH 0.0 0.0 0.0\n"
+            for comment in comments
+        )
+    )
+    return path
+
+
+def unparseable(tmp_path: Path) -> Path:
+    """A file whose first line is not an atom count, so reading it fails."""
+    path = tmp_path / "unparseable.xyz"
+    path.write_text("not an atom count\n")
+    return path
+
+
+class Stepped(Record):
+    step: Meta[int] = Meta()
+    energy: Meta[float] = Meta()
+
+
+class TwoFrame(Record):
+    species: Column[list[str]] = Column()
+    positions: Column[Array] = Column("pos", width=3)
+    forces: Column[Array] = Column(width=3)
+    energy: Meta[float] = Meta()
+    cell: Cell[Array] = Cell()
+
+
+def test_every_index_form():
+    whole = oxyz.read(MAD, record=MadSample)
+    assert len(whole) == 201
+    assert all(type(r) is MadSample for r in whole)
+    assert oxyz.read(MAD, 0, record=MadSample) == whole[0]
+    assert oxyz.read(MAD, -1, record=MadSample) == whole[-1]
+    assert oxyz.read(MAD, "3", record=MadSample) == whole[3]
+    assert oxyz.read(MAD, "0:10:2", record=MadSample) == whole[0:10:2]
+    assert len(whole[0:10:2]) == 5
+    assert oxyz.read(MAD, "::-40", record=MadSample) == whole[::-40]
+    assert oxyz.read(MAD, slice(140, 160), record=MadSample) == whole[140:160]
+    picked = oxyz.read(MAD, [120, 40, 120], record=MadSample)
+    assert picked == [whole[120], whole[40], whole[120]]
+    plain = oxyz.read(MAD, [120, 40, 120])
+    assert [r.n_atoms for r in picked] == [f.n_atoms for f in plain] == [44, 28, 44]
+
+
+def test_iread_yields_what_read_returns():
+    whole = oxyz.read(MAD, record=MadSample)
+    assert list(oxyz.iread(MAD, record=MadSample)) == whole
+    assert list(oxyz.iread(MAD, 7, record=MadSample)) == [whole[7]]
+    assert list(oxyz.iread(MAD, "140:150", record=MadSample)) == whole[140:150]
+    assert list(oxyz.iread(MAD, "::-50", record=MadSample)) == whole[::-50]
+    assert list(oxyz.iread(MAD, [150, 3], record=MadSample)) == [whole[150], whole[3]]
+
+
+def test_read_equals_from_frame_over_the_spec():
+    assert oxyz.read(MAD, record=MadSample) == [
+        MadSample.from_frame(f) for f in oxyz.read(MAD, schema=MadSample.spec())
+    ]
+
+
+def test_threads_and_compression_parity():
+    whole = oxyz.read(MAD, record=MadSample)
+    assert oxyz.read(MAD, record=MadSample, threads=1) == whole
+    plain = oxyz.read(DATA / "two_frame_same_schema.xyz", record=TwoFrame)
+    assert [r.energy for r in plain] == [-6.45, -6.44]
+    gz = DATA / "compressed" / "two_frame.xyz.gz"
+    assert oxyz.read(gz, record=TwoFrame) == plain
+    assert list(oxyz.iread(gz, record=TwoFrame)) == plain
+
+
+def test_optional_fields_are_none_exactly_where_the_file_lacks_them():
+    plain = oxyz.read(MAD)
+    recs = oxyz.read(MAD, record=MadSample)
+    stressed = ["stress" in f.metadata for f in plain]
+    latticed = ["Lattice" in f.metadata for f in plain]
+    assert (sum(stressed), sum(latticed)) == (26, 152)
+    assert [r.stress is not None for r in recs] == stressed
+    assert [r.cell is not None for r in recs] == latticed
+
+
+def test_lax_reads_integer_lattice_and_matches_frame_cell(tmp_path: Path):
+    r = oxyz.read(MACE, 0, record=MaceSample)
+    assert r.cell.dtype == np.float64
+    np.testing.assert_array_equal(r.cell, oxyz.read(MACE, 0).cell)
+    zero = tmp_path / "zero.xyz"
+    zero.write_text(MACE.read_text().replace("REF_energy=-76.123", "REF_energy=0"))
+    r = oxyz.read(zero, 0, record=MaceSample)
+    assert type(r.energy) is float
+    assert r.energy == 0.0
+
+
+def test_strict_rejects_an_integer_lattice_with_context():
+    with pytest.raises(SchemaError, match="Lattice") as e:
+        oxyz.read(MACE, record=StrictMace)
+    assert (e.value.frame_index, e.value.name) == (0, "Lattice")
+    with pytest.raises(SchemaError) as e:
+        list(oxyz.iread(MACE, record=StrictMace))
+    assert (e.value.frame_index, e.value.name) == (0, "Lattice")
+
+
+def test_missing_required_key_has_frame_index_and_name(tmp_path: Path):
+    class Nope(MadSample):
+        nope: Meta[float] = Meta()
+
+    with pytest.raises(SchemaError) as e:
+        oxyz.read(MAD, record=Nope)
+    assert (e.value.frame_index, e.value.name) == (0, "nope")
+    path = frames_file(
+        tmp_path / "third.xyz", "step=0 energy=1.0", "step=1 energy=2.0", "step=2"
+    )
+    with pytest.raises(SchemaError) as e:
+        oxyz.read(path, record=Stepped)
+    assert (e.value.frame_index, e.value.name) == (2, "energy")
+    with pytest.raises(SchemaError) as e:
+        list(oxyz.iread(path, record=Stepped))
+    assert (e.value.frame_index, e.value.name) == (2, "energy")
+
+
+def test_cell_requires_lattice_unless_filled():
+    class Molecule(Record):
+        positions: Column[Array] = Column("pos", width=3)
+        cell: Cell[Array] = Cell()
+
+    class FilledMolecule(Record):
+        positions: Column[Array] = Column("pos", width=3)
+        cell: Cell[Array] = Cell(fill=0.0)
+
+    path = DATA / "no_lattice_molecule.xyz"
+    with pytest.raises(SchemaError) as e:
+        oxyz.read(path, record=Molecule)
+    assert (e.value.frame_index, e.value.name) == (0, "Lattice")
+    r = oxyz.read(path, 0, record=FilledMolecule)
+    assert r.cell.dtype == np.float64
+    np.testing.assert_array_equal(r.cell, np.zeros((3, 3)))
+    np.testing.assert_array_equal(r.cell, oxyz.read(path, 0).cell)
+
+
+class Stressed(Record):
+    stress: Matrix3[Array] = Matrix3()
+
+
+def test_matrix3_matches_ase():
+    pytest.importorskip("ase")
+    import oxyz.ase
+
+    path = DATA / "stress_matrix9.extxyz"
+    r = oxyz.read(path, 0, record=Stressed)
+    expected = oxyz.ase.to_atoms(oxyz.read(path, 0)).get_stress(voigt=False)
+    np.testing.assert_array_equal(r.stress, expected)
+
+
+def test_matrix3_reads_in_fortran_order(tmp_path: Path):
+    path = frames_file(tmp_path / "asym.xyz", 'stress="1 2 3 4 5 6 7 8 9"')
+    r = oxyz.read(path, 0, record=Stressed)
+    np.testing.assert_array_equal(r.stress, np.arange(1.0, 10.0).reshape(3, 3).T)
+
+
+def test_warn_drops_a_frame_missing_a_required_real_field(tmp_path: Path):
+    path = frames_file(tmp_path / "gap.xyz", "step=0 energy=-1.5", "step=1")
+    with pytest.warns(oxyz.SchemaWarning, match="energy"):
+        recs = oxyz.read(path, record=Stepped, conformance="warn")
+    assert [(r.step, r.energy) for r in recs] == [(0, -1.5)]
+    with pytest.warns(oxyz.SchemaWarning, match="energy"):
+        assert list(oxyz.iread(path, record=Stepped, conformance="warn")) == recs
+
+
+def test_warn_drops_a_wrong_kind_optional_field(tmp_path: Path):
+    class MaybeStressed(Record):
+        step: Meta[int] = Meta()
+        stress: Matrix3[Array | None] = Matrix3()
+
+    path = frames_file(
+        tmp_path / "kinds.xyz",
+        'step=0 stress="1 2 3 4 5 6 7 8 9"',
+        "step=1 stress=abc",
+        "step=2",
+    )
+    with pytest.warns(oxyz.SchemaWarning, match="stress"):
+        recs = oxyz.read(path, record=MaybeStressed, conformance="warn")
+    assert [r.step for r in recs] == [0, 2]
+    assert recs[1].stress is None
+    with pytest.raises(SchemaError) as e:
+        oxyz.read(path, record=MaybeStressed)
+    assert (e.value.frame_index, e.value.name) == (1, "stress")
+
+
+def test_everything_dropped_is_an_empty_list(tmp_path: Path):
+    path = frames_file(tmp_path / "none.xyz", "step=0", "step=1")
+    with pytest.warns(oxyz.SchemaWarning):
+        assert oxyz.read(path, record=Stepped, conformance="warn") == []
+    with pytest.warns(oxyz.SchemaWarning):
+        assert list(oxyz.iread(path, record=Stepped, conformance="warn")) == []
+    with pytest.warns(oxyz.SchemaWarning), pytest.raises(IndexError):
+        oxyz.read(path, 0, record=Stepped, conformance="warn")
+    assert oxyz.read(MAD, "5:5", record=MadSample) == []
+    assert list(oxyz.iread(MAD, "5:5", record=MadSample)) == []
+
+
+def test_read_fields_are_writable_and_unshared():
+    r = oxyz.read(MACE, 0, record=MaceSample)
+    (streamed,) = oxyz.iread(MACE, record=MaceSample)
+    for record in (r, streamed):
+        assert record.stress is not None
+        arrays = [record.positions, record.forces, record.stress, record.cell]
+        assert all(a.flags.writeable for a in arrays)
+        assert not any(
+            np.shares_memory(a, b)
+            for i, a in enumerate(arrays)
+            for b in arrays[i + 1 :]
+        )
+    assert not np.shares_memory(r.positions, streamed.positions)
+
+
+def test_readers_do_not_run_the_checks(monkeypatch: pytest.MonkeyPatch):
+    def refuse(self: Record) -> None:
+        raise AssertionError("__post_init__ ran")
+
+    monkeypatch.setattr(Record, "__post_init__", refuse)
+    with pytest.raises(AssertionError, match="ran"):
+        make_mace()
+    assert len(oxyz.read(MAD, record=MadSample)) == 201
+    assert len(list(oxyz.iread(MAD, record=MadSample))) == 201
+
+
+def test_schema_frame_rule_applies_to_a_record_read(tmp_path: Path):
+    ok = SchemaSpec(
+        metadata=(MetadataRule("energy", Kind.REAL),), frame=FrameRule(n_atoms_max=1)
+    )
+    with pytest.raises(SchemaError) as e:
+        oxyz.read(MAD, record=MadSample, schema=ok)
+    assert (e.value.frame_index, e.value.name) == (1, "n_atoms")
+    saved = tmp_path / "ok.yaml"
+    saved.write_text(ok.to_yaml())
+    with pytest.raises(SchemaError) as e:
+        list(oxyz.iread(MAD, record=MadSample, schema=saved))
+    assert (e.value.frame_index, e.value.name) == (1, "n_atoms")
+    assert bind(MadSample, ok).spec == dataclasses.replace(
+        MadSample.spec(), frame=ok.frame
+    )
+
+
+def test_schema_rules_for_other_keys_are_not_applied():
+    other = SchemaSpec(
+        metadata=(MetadataRule("energy", Kind.REAL), MetadataRule("subset", Kind.INT))
+    )
+    assert oxyz.read(MAD, record=MadSample, schema=other) == oxyz.read(
+        MAD, record=MadSample
+    )
+
+
+SCHEMA_DISAGREEMENTS = [
+    ("kind", MadSample, "energy", MetadataRule("energy", Kind.STR)),
+    ("pattern", MadSample, "energy", MetadataRule("ener*", Kind.STR)),
+    ("width", MadSample, "pos", ColumnRule("pos", Kind.REAL, width=2)),
+    ("shape", MadSample, "stress", MetadataRule("stress", Kind.REAL, shape=(6,))),
+    ("strict", StrictMace, "Lattice", MetadataRule("Lattice", Kind.INT, shape=(9,))),
+]
+
+
+@pytest.mark.parametrize(
+    ("record", "key", "rule"),
+    [pytest.param(*case, id=case_id) for case_id, *case in SCHEMA_DISAGREEMENTS],
+)
+def test_a_disagreeing_schema_fails_before_the_file_is_opened(
+    tmp_path: Path, record: type[Record], key: str, rule: ColumnRule | MetadataRule
+):
+    if isinstance(rule, ColumnRule):
+        schema = SchemaSpec(columns=(rule,))
+    else:
+        schema = SchemaSpec(metadata=(rule,))
+    with pytest.raises(SchemaError, match=rf"^{record.__name__}\.\w+: ") as e:
+        oxyz.read(unparseable(tmp_path), record=record, schema=schema)
+    assert (e.value.name, e.value.frame_index) == (key, None)
+    with pytest.raises(SchemaError):
+        oxyz.iread(unparseable(tmp_path), record=record, schema=schema)
+
+
+def test_an_int_schema_rule_binds_to_a_lax_float_field():
+    inferred = oxyz.infer_schema(MACE).to_spec()
+    lattice = inferred.rule_for("Lattice", "metadata")
+    assert lattice is not None
+    assert (lattice.kind, lattice.shape) == (Kind.INT, (9,))
+    assert oxyz.read(MACE, record=MaceSample, schema=inferred) == oxyz.read(
+        MACE, record=MaceSample
+    )
+    with pytest.raises(SchemaError) as e:
+        bind(StrictMace, inferred)
+    assert e.value.name == "Lattice"
+
+
+def test_mode_with_record_is_a_value_error():
+    message = "mode= cannot be combined with record=: a record read always projects"
+    for mode in ("project", "validate"):
+        with pytest.raises(ValueError, match=re.escape(message)):
+            oxyz.read(MACE, record=MaceSample, mode=mode)  # ty: ignore[invalid-argument-type]
+        with pytest.raises(ValueError, match=re.escape(message)):
+            oxyz.iread(MACE, record=MaceSample, mode=mode)  # ty: ignore[invalid-argument-type]
+
+
+@pytest.mark.parametrize("target", [int, make_mace, Frame, "MaceSample"])
+def test_record_must_be_a_record_class(target: Any):
+    with pytest.raises(TypeError, match=r"record= takes a Record subclass, got "):
+        oxyz.read(MACE, record=target)
+    with pytest.raises(TypeError, match=re.escape(repr(target))):
+        oxyz.iread(MACE, record=target)
+
+
+def test_record_instance_is_not_a_record_class():
+    with pytest.raises(TypeError, match=r"got MaceSample\(n_atoms=3"):
+        oxyz.read(MACE, record=make_mace())  # ty: ignore[no-matching-overload]
+
+
+class Squares(Record):
+    cell: Cell[Array] = Cell()
+    virial: Matrix3[Array] = Matrix3()
+    moments: Meta[Array] = Meta(shape=(9,))
+
+
+def test_two_d_metadata_reads_like_the_flat_one(tmp_path: Path):
+    flat = frames_file(
+        tmp_path / "flat.xyz",
+        'Lattice="5 1 0 0 5 2 0 0 5" virial="1.5 2 3 4 5 6 7 8 9" '
+        'moments="1 2 3 4 5 6 7 8 9"',
+    )
+    square = frames_file(
+        tmp_path / "square.xyz",
+        "Lattice=[[5,1,0],[0,5,2],[0,0,5]] virial=[[1.5,2,3],[4,5,6],[7,8,9]] "
+        "moments=[[1,2,3],[4,5,6],[7,8,9]]",
+    )
+    expected = oxyz.read(flat, 0, record=Squares)
+    np.testing.assert_array_equal(
+        expected.cell, [[5.0, 1.0, 0.0], [0.0, 5.0, 2.0], [0.0, 0.0, 5.0]]
+    )
+    np.testing.assert_array_equal(
+        expected.virial, [[1.5, 4.0, 7.0], [2.0, 5.0, 8.0], [3.0, 6.0, 9.0]]
+    )
+    np.testing.assert_array_equal(expected.moments, np.arange(1.0, 10.0))
+    assert oxyz.read(square, 0, record=Squares) == expected
+    assert list(oxyz.iread(square, record=Squares)) == [expected]
+    inferred = oxyz.infer_schema(square).to_spec()
+    assert {rule.shape for rule in inferred.metadata} == {(3, 3)}
+    assert oxyz.read(square, record=Squares, schema=inferred) == [expected]
+
+
+def test_bind_is_cached(tmp_path: Path):
+    assert bind(MadSample) is bind(MadSample)
+    spec = SchemaSpec(metadata=(MetadataRule("energy", Kind.REAL),))
+    assert bind(MadSample, spec) is bind(MadSample, dataclasses.replace(spec))
+    saved = tmp_path / "spec.yaml"
+    saved.write_text(spec.to_yaml())
+    assert bind(MadSample, saved) is bind(MadSample, spec)
+    assert bind(MadSample, spec) is not bind(MadSample)
+
+
+class Table(Record):
+    positions: Column[Array] = Column("pos", width=3)
+    labels: Column[list[str] | None] = Column(fill="X")
+    charges: Column[Array | None] = Column()
+    energy: Meta[float] = Meta()
+    charge: Meta[int] = Meta(fill=0)
+    spin: Meta[int | None] = Meta(fill=1)
+    stress: Matrix3[Array | None] = Matrix3()
+    cell: Cell[Array] = Cell(fill=0.0)
+
+
+def without_fills(plan: Any) -> tuple[list[tuple], list[tuple], bool]:
+    columns, metadata, promote = plan
+    return [e[:4] for e in columns], [e[:4] for e in metadata], promote
+
+
+def test_binding_plans_follow_the_field_table():
+    binding = bind(Table)
+    assert (binding.target, binding.record) == (Table, Table)
+    assert binding.fields == Table.__record_fields__
+    assert binding.spec == Table.spec()
+    shape = (
+        [
+            ("pos", "R", 3, True),
+            ("labels", "S", 1, False),
+            ("charges", "R", 1, False),
+        ],
+        [
+            ("energy", "R", (), True),
+            ("charge", "I", (), False),
+            ("spin", "I", (), False),
+            ("stress", "R", (9,), False),
+            ("Lattice", "R", (9,), False),
+        ],
+    )
+    assert without_fills(binding.frame_plan) == (*shape, True)
+    columns, metadata, _ = binding.frame_plan
+    assert [e[4] for e in columns] == [None, None, None]
+    assert [e[4] for e in metadata] == [None, 0, None, None, 0.0]
+    assert without_fills(binding.batch_plan) == (*shape, True)
+    columns, metadata, _ = binding.batch_plan
+    assert [e[4] for e in columns[:2]] == [None, "X"]
+    assert math.isnan(columns[2][4])
+    assert [e[4] for e in metadata[:3]] == [None, 0, 1]
+    assert math.isnan(metadata[3][4])
+    assert metadata[4][4] == 0.0
+    assert binding.optional == (
+        ("labels", 0),
+        ("charges", 1),
+        ("spin", 3),
+        ("stress", 4),
+    )
+    assert binding.omitted == {
+        ("column", "labels"),
+        ("column", "charges"),
+        ("metadata", "spin"),
+        ("metadata", "stress"),
+    }
+
+
+def test_strict_record_plans_do_not_promote():
+    assert bind(StrictMace).frame_plan[2] is False
+    assert bind(StrictMace).batch_plan[2] is False
+    assert bind(MaceSample).frame_plan[2] is True
+
+
+def test_batch_plan_needs_a_fill_for_an_optional_non_real_field():
+    class Counted(Record):
+        count: Meta[int | None] = Meta()
+
+    binding = bind(Counted)
+    assert binding.frame_plan[1] == [("count", "I", (), False, None)]
+    with pytest.raises(SchemaError, match=r"Counted\.count") as e:
+        _ = binding.batch_plan
+    assert e.value.name == "count"
+
+
+def test_cast_frame_owned_or_read_only():
+    binding = bind(MaceSample)
+    frame = oxyz.read(MACE, 0, schema=MaceSample.spec())
+    shared: Any = binding.cast_frame(frame, owned=False)
+    assert shared == oxyz.read(MACE, 0, record=MaceSample)
+    assert not shared.positions.flags.writeable
+    assert np.shares_memory(shared.positions, frame.columns["pos"])
+    owned: Any = binding.cast_frame(frame, owned=True)
+    assert owned.positions.flags.writeable
+    assert binding.caster("required")(frame, 0) == owned

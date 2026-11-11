@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence
     from pathlib import Path
 
+    from oxyz._record_bind import Binding
     from oxyz._schema_match import Conformance
     from oxyz._schema_spec import Mode, SchemaSpec
 
@@ -58,7 +59,7 @@ def nth_frame(
     path: str | Path,
     index: int,
     *,
-    schema: SchemaSpec | str | Path | None = None,
+    schema: SchemaSpec | str | Path | Binding | None = None,
     conformance: Conformance = "required",
     mode: Mode | None = None,
     compression: Compression = "infer",
@@ -131,7 +132,7 @@ def gathered_frames(  # noqa: PLR0913  the read/schema/projection options are th
     indices: Sequence[int],
     threads: int | None = None,
     *,
-    schema: SchemaSpec | str | Path | None = None,
+    schema: SchemaSpec | str | Path | Binding | None = None,
     conformance: Conformance = "required",
     mode: Mode | None = None,
     compression: Compression = "infer",
@@ -184,7 +185,7 @@ def frames_for_read(  # noqa: PLR0913  the read/schema/projection options are th
     frames: slice,
     threads: int | None = None,
     *,
-    schema: SchemaSpec | str | Path | None = None,
+    schema: SchemaSpec | str | Path | Binding | None = None,
     conformance: Conformance = "required",
     mode: Mode | None = None,
     compression: Compression = "infer",
@@ -232,7 +233,7 @@ def sliced_frames(
     path: str | Path,
     frames: slice,
     *,
-    schema: SchemaSpec | str | Path | None = None,
+    schema: SchemaSpec | str | Path | Binding | None = None,
     conformance: Conformance = "required",
     mode: Mode | None = None,
     compression: Compression = "infer",

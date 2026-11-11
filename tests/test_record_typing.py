@@ -19,6 +19,7 @@ from typing import Annotated, reveal_type
 import numpy as np
 import numpy.typing as npt
 
+import oxyz
 from oxyz import Cell, Column, Meta, Record
 
 type Array = npt.NDArray[np.float64]
@@ -38,6 +39,7 @@ a: Array = np.zeros((3, 3))
 r = MaceSample(
     n_atoms=3, positions=a, forces=a, energy=1.0, stress=None, cell=a, config_type="x"
 )
+p = "frames.xyz"
 """
 
 REVEALS = """\
@@ -47,6 +49,14 @@ reveal_type(r.forces)             # T: ndarray[_AnyShape, dtype[float64]]
 reveal_type(r.stress)             # T: ndarray[_AnyShape, dtype[float64]] | None
 reveal_type(MaceSample.energy)    # T: Meta[float]
 reveal_type(MaceSample.forces)    # T: Column[Array]
+reveal_type(oxyz.read(p, record=MaceSample))          # T: list[MaceSample]
+reveal_type(oxyz.read(p, 0, record=MaceSample))       # T: MaceSample
+reveal_type(oxyz.read(p, "0", record=MaceSample))     # T: MaceSample | list[MaceSample]
+reveal_type(oxyz.read(p, [0], record=MaceSample))     # T: list[MaceSample]
+reveal_type(oxyz.iread(p, record=MaceSample))         # T: Iterator[MaceSample]
+reveal_type(MaceSample.from_frame(oxyz.read(p, 0)))   # T: MaceSample
+reveal_type(oxyz.read(p))                             # T: list[Frame]
+reveal_type(oxyz.iread(p))                            # T: Iterator[Frame]
 """
 
 ERRORS = """\
@@ -59,6 +69,9 @@ MaceSample(
 MaceSample.typo                                                  # error
 class P(Record): energy: float = Meta()                          # error
 class Q(Record): energy: Meta[float] = Column()                  # error
+oxyz.read(p, record=MaceSample, mode="project")                  # error
+oxyz.iread(p, record=MaceSample, mode="project")                 # error
+oxyz.read(p, record=r)                                           # error
 # ty applies no class field specifier, so a default-form field reads as optional.
 MaceSample(n_atoms=3, positions=a, forces=a, stress=None, cell=a, config_type="x")
 """

@@ -400,10 +400,11 @@ class Record(metaclass=RecordMeta):
     slotted: they have no `__dict__`, and assigning to a field raises
     `dataclasses.FrozenInstanceError`.
 
-    `from_frame` builds a record from an `oxyz.Frame`, and `spec` gives
-    the `SchemaSpec` that describes the record's fields. Records compare
-    equal when they are of the same class and hold equal values, NaN
-    equal to NaN; they are unhashable.
+    `oxyz.read(path, record=MaceSample)` and `oxyz.iread` read a file
+    into records, `from_frame` builds one from an `oxyz.Frame`, and `spec`
+    gives the `SchemaSpec` that describes the record's fields. Records
+    compare equal when they are of the same class and hold equal values,
+    NaN equal to NaN; they are unhashable.
 
     On the class, a field name gives the field's key, such as
     `MaceSample.energy`: a copy of its specifier with `name` and `owner`
@@ -419,9 +420,12 @@ class Record(metaclass=RecordMeta):
     Other Parameters
     ----------------
     strict : bool, optional
-        Class keyword, as in `class MaceSample(Record, strict=True)`. Under
-        `strict`, a float field does not accept an integer value from a
-        frame. Inherited from the base record; `False` by default.
+        Class keyword, as in `class MaceSample(Record, strict=True)`. By
+        default a float field accepts an integer value in the file or frame
+        and converts it, as for an integer `Lattice`. Under `strict` it
+        does not: a read treats the value as the wrong kind, and
+        `from_frame` raises `oxyz.SchemaError`. Inherited from the base
+        record.
 
     Raises
     ------

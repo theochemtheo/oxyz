@@ -383,7 +383,7 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
     projection = None
     spec = None
     if schema is not None:
-        projection, spec = _projection(schema, mode)
+        projection, spec, _ = _projection(schema, mode)
 
     selection = _resolve_batch_indices(
         index, path, compression, member, storage_options
@@ -569,7 +569,7 @@ def iread_batch(  # noqa: C901, PLR0913, PLR0912  the keyword options are the ba
     projection = None
     spec = None
     if schema is not None:
-        projection, spec = _projection(schema, mode)
+        projection, spec, _ = _projection(schema, mode)
 
     remote = _remote.is_remote(path)
     # Non-seekable sources support only streaming frames_per_batch.

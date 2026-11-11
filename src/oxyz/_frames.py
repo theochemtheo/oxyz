@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 import numpy as np
 
@@ -9,11 +9,13 @@ from oxyz import _convert, _html, _remote, _rust, _summary
 from oxyz._lookup import NameLookup
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator, Sequence
+    from collections.abc import Callable, Iterable, Iterator, Sequence
     from pathlib import Path
 
     from ase import Atoms
 
+    from oxyz._record import Record
+    from oxyz._record_bind import Binding
     from oxyz._rust import ProjectedFrame, ProjectionPlan
     from oxyz._schema_match import CompiledSpec, Conformance
     from oxyz._schema_spec import Mode, SchemaSpec
@@ -159,10 +161,56 @@ class Frame(NameLookup[ColumnValues, MetadataValue]):  # noqa: PLW1641  a dict o
 
 
 @overload
+def read[R: Record](
+    path: str | Path,
+    index: int,
+    *,
+    record: type[R],
+    threads: int | None = ...,
+    schema: SchemaSpec | str | Path | None = ...,
+    conformance: Conformance = ...,
+    compression: Compression = ...,
+    member: str | None = ...,
+    storage_options: _remote.StorageOptions | None = ...,
+) -> R: ...
+
+
+@overload
+def read[R: Record](
+    path: str | Path,
+    index: str,
+    *,
+    record: type[R],
+    threads: int | None = ...,
+    schema: SchemaSpec | str | Path | None = ...,
+    conformance: Conformance = ...,
+    compression: Compression = ...,
+    member: str | None = ...,
+    storage_options: _remote.StorageOptions | None = ...,
+) -> R | list[R]: ...
+
+
+@overload
+def read[R: Record](
+    path: str | Path,
+    index: slice | Sequence[int] = ...,
+    *,
+    record: type[R],
+    threads: int | None = ...,
+    schema: SchemaSpec | str | Path | None = ...,
+    conformance: Conformance = ...,
+    compression: Compression = ...,
+    member: str | None = ...,
+    storage_options: _remote.StorageOptions | None = ...,
+) -> list[R]: ...
+
+
+@overload
 def read(
     path: str | Path,
     index: int,
     *,
+    record: None = ...,
     threads: int | None = ...,
     schema: SchemaSpec | str | Path | None = ...,
     conformance: Conformance = ...,
@@ -178,6 +226,7 @@ def read(
     path: str | Path,
     index: str,
     *,
+    record: None = ...,
     threads: int | None = ...,
     schema: SchemaSpec | str | Path | None = ...,
     conformance: Conformance = ...,
@@ -193,6 +242,7 @@ def read(
     path: str | Path,
     index: slice | Sequence[int] = ...,
     *,
+    record: None = ...,
     threads: int | None = ...,
     schema: SchemaSpec | str | Path | None = ...,
     conformance: Conformance = ...,
@@ -203,10 +253,11 @@ def read(
 ) -> list[Frame]: ...
 
 
-def read(  # noqa: PLR0913  the index/schema/projection/source options are the contract
+def read[R: Record](  # noqa: PLR0913  the index/schema/projection/source options are the contract
     path: str | Path,
     index: int | str | slice | Sequence[int] = ":",
     *,
+    record: type[R] | None = None,
     threads: int | None = None,
     schema: SchemaSpec | str | Path | None = None,
     conformance: Conformance = "required",
@@ -214,7 +265,7 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
-) -> Frame | list[Frame]:
+) -> Frame | list[Frame] | R | list[R]:
     """Read frames from an extxyz file into numpy-backed `Frame` objects.
 
     Parses on all cores by default, and a selection stops reading after its
@@ -231,6 +282,18 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
         Which frames to return: `":"` (default) reads all; an `int` returns a
         single `Frame`; a slice or slice-string (`"1:10:2"`) or a sequence of
         non-negative ints selects a subset, in order (repeats allowed).
+    record
+        A `Record` subclass to read each frame into instead of a `Frame`.
+        Each frame is projected onto the record's fields, as `Record.spec`
+        describes them, and its arrays are writable and belong to that
+        record alone. Cannot be combined with `mode`. With `record`,
+        `schema` describes the dataset rather than reshaping it: its frame
+        rule applies, and its rule for any key the record reads must agree
+        with the field's kind and width or shape (an integer rule agrees
+        with a float field unless the record is `strict`); rules for other
+        keys are not applied. Under `conformance="warn"`, a frame missing a
+        required field, or carrying a field of the wrong kind, is dropped
+        with a warning, so the result may be shorter than the selection.
     threads
         `None` parses on every core; `1` is serial. Results and errors are
         identical.
@@ -260,12 +323,21 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
     Returns
     -------
     Frame or list[Frame]
-        A single `Frame` for an integer `index`, otherwise a list.
+        A single `Frame` for an integer `index`, otherwise a list. With
+        `record`, instances of it in place of frames.
 
     Raises
     ------
     oxyz.ParseError
         On malformed input, carrying the frame index and location.
+    oxyz.SchemaError
+        With `record`, under `conformance="strict"` or `"required"`: a frame
+        lacks a required field or has one of the wrong kind, with the frame
+        index and key. Before reading: `schema` disagrees with the record.
+    TypeError
+        `record` is not a `Record` subclass.
+    ValueError
+        `mode` is given with `record`.
 
     Examples
     --------
@@ -281,14 +353,15 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
     from oxyz._select import frames_for_read, gathered_frames, nth_frame, parse_index
 
     _check_threads(threads)
-    _require_schema_for_mode(schema, mode)
+    source = schema if record is None else _bind_record(record, schema, mode)
+    _require_schema_for_mode(source, mode)
     if isinstance(index, str):
         index = parse_index(index)
     if isinstance(index, int):
         return nth_frame(
             path,
             index,
-            schema=schema,
+            schema=source,
             conformance=conformance,
             mode=mode,
             compression=compression,
@@ -301,7 +374,7 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
                 path,
                 index,
                 threads,
-                schema=schema,
+                schema=source,
                 conformance=conformance,
                 mode=mode,
                 compression=compression,
@@ -313,7 +386,7 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
         path,
         index,
         threads,
-        schema=schema,
+        schema=source,
         conformance=conformance,
         mode=mode,
         compression=compression,
@@ -322,17 +395,47 @@ def read(  # noqa: PLR0913  the index/schema/projection/source options are the c
     )
 
 
+@overload
+def iread[R: Record](
+    path: str | Path,
+    index: int | str | slice | Sequence[int] = ...,
+    *,
+    record: type[R],
+    schema: SchemaSpec | str | Path | None = ...,
+    conformance: Conformance = ...,
+    compression: Compression = ...,
+    member: str | None = ...,
+    storage_options: _remote.StorageOptions | None = ...,
+) -> Iterator[R]: ...
+
+
+@overload
 def iread(
+    path: str | Path,
+    index: int | str | slice | Sequence[int] = ...,
+    *,
+    record: None = ...,
+    schema: SchemaSpec | str | Path | None = ...,
+    conformance: Conformance = ...,
+    mode: Mode | None = ...,
+    compression: Compression = ...,
+    member: str | None = ...,
+    storage_options: _remote.StorageOptions | None = ...,
+) -> Iterator[Frame]: ...
+
+
+def iread[R: Record](  # noqa: PLR0913  the index/schema/projection/source options are the contract
     path: str | Path,
     index: int | str | slice | Sequence[int] = ":",
     *,
+    record: type[R] | None = None,
     schema: SchemaSpec | str | Path | None = None,
     conformance: Conformance = "required",
     mode: Mode | None = None,
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
-) -> Iterator[Frame]:
+) -> Iterator[Frame] | Iterator[R]:
     """Iterate frames one at a time, in memory bounded by the largest frame.
 
     The file stays open until the iterator is dropped. After a parse error the
@@ -345,6 +448,10 @@ def iread(
         File path, an S3-compatible URL, or `"-"` for stdin.
     index
         Selection grammar; see `read`.
+    record
+        A `Record` subclass to yield instances of instead of frames; see
+        `read`. Under `conformance="warn"` a frame that does not fit it is
+        skipped with a warning.
     schema
         A `SchemaSpec`, or a path to a schema file; see `read`.
     conformance
@@ -362,12 +469,20 @@ def iread(
     Returns
     -------
     Iterator[Frame]
-        Frames in file order (or in `index` order, for a sequence).
+        Frames, or records with `record`, in file order (or in `index`
+        order, for a sequence).
 
     Raises
     ------
     oxyz.ParseError
         On malformed input, carrying the frame index and location.
+    oxyz.SchemaError
+        With `record`, as for `read`. A disagreeing `schema` raises from
+        this call, before any frame is read.
+    TypeError
+        `record` is not a `Record` subclass.
+    ValueError
+        `mode` is given with `record`.
 
     Examples
     --------
@@ -377,7 +492,8 @@ def iread(
     """
     from oxyz._select import gathered_frames, nth_frame, parse_index, sliced_frames
 
-    _require_schema_for_mode(schema, mode)
+    source = schema if record is None else _bind_record(record, schema, mode)
+    _require_schema_for_mode(source, mode)
     if isinstance(index, str):
         index = parse_index(index)
     if isinstance(index, int):
@@ -386,7 +502,7 @@ def iread(
                 nth_frame(
                     path,
                     index,
-                    schema=schema,
+                    schema=source,
                     conformance=conformance,
                     mode=mode,
                     compression=compression,
@@ -399,7 +515,7 @@ def iread(
         return sliced_frames(
             path,
             index,
-            schema=schema,
+            schema=source,
             conformance=conformance,
             mode=mode,
             compression=compression,
@@ -411,7 +527,7 @@ def iread(
             path,
             index,
             None,
-            schema=schema,
+            schema=source,
             conformance=conformance,
             mode=mode,
             compression=compression,
@@ -427,15 +543,34 @@ def _check_threads(threads: int | None) -> None:
         raise ValueError(f"threads must be a positive integer or None, got {threads!r}")
 
 
+def _bind_record(
+    record: type[Record], schema: SchemaSpec | str | Path | None, mode: Mode | None
+) -> Binding:
+    from oxyz._record_bind import bind
+
+    if mode is not None:
+        raise ValueError(
+            "mode= cannot be combined with record=: a record read always projects"
+        )
+    return bind(record, schema)
+
+
 def _projection(
-    schema: SchemaSpec | str | Path, mode: Mode | None
-) -> tuple[ProjectionPlan | None, SchemaSpec]:
-    """Resolve `schema` and its projection plan (`None` under validate mode)."""
+    schema: SchemaSpec | str | Path | Binding, mode: Mode | None
+) -> tuple[ProjectionPlan | None, SchemaSpec, Binding | None]:
+    """Resolve `schema` and its projection plan (`None` under validate mode).
+
+    A `Binding` brings its own plan and spec, and is returned as the third
+    element so the reader can cast each kept frame.
+    """
     from oxyz._project import compile_projection, effective_mode
+    from oxyz._record_bind import Binding
     from oxyz._schema_spec import SchemaSpec
 
+    if isinstance(schema, Binding):
+        return schema.frame_plan, schema.spec, schema
     spec = schema if isinstance(schema, SchemaSpec) else SchemaSpec.from_file(schema)
-    return compile_projection(spec, effective_mode(spec, mode)), spec
+    return compile_projection(spec, effective_mode(spec, mode)), spec, None
 
 
 def _require_schema_for_mode(schema: object, mode: Mode | None) -> None:
@@ -457,28 +592,39 @@ def _keep_projected(
     conformance: Conformance,
     spec: SchemaSpec,
     indices: Iterable[int],
+    binding: Binding | None = None,
 ) -> list[Frame]:
-    """Apply projection policy to `(data, deviations)` items; return kept frames."""
+    """Apply projection policy to `(data, deviations)` items; return kept frames.
+
+    With a `binding`, each kept frame is cast to its record.
+    """
     from oxyz import _schema_match
     from oxyz._project import enforce_projection
 
     frame_compiled = _frame_rule_compiled(spec)
-    out: list[Frame] = []
+    cast = _caster(binding, conformance)
+    out: list[Any] = []
     for index, (data, deviations) in zip(indices, raw, strict=True):
         keep = enforce_projection(deviations, conformance, index, dropped=data is None)
         if keep and data is not None:
             frame = _frame_from_data(data)
             if frame_compiled is not None:
                 _schema_match.enforce_frame(frame, frame_compiled, conformance, index)
-            out.append(frame)
+            out.append(frame if cast is None else cast(frame, index))
     return out
+
+
+def _caster(
+    binding: Binding | None, conformance: Conformance
+) -> Callable[[Frame, int], Any] | None:
+    return None if binding is None else binding.caster(conformance)
 
 
 def _read_all(
     path: str | Path,
     *,
     threads: int | None = None,
-    schema: SchemaSpec | str | Path | None = None,
+    schema: SchemaSpec | str | Path | Binding | None = None,
     conformance: Conformance = "required",
     mode: Mode | None = None,
     compression: Compression = "infer",
@@ -488,9 +634,9 @@ def _read_all(
     """Read and materialise every frame."""
     _check_threads(threads)
     _require_schema_for_mode(schema, mode)
-    plan = spec = None
+    plan = spec = binding = None
     if schema is not None:
-        plan, spec = _projection(schema, mode)
+        plan, spec, binding = _projection(schema, mode)
 
     if plan is not None:
         assert spec is not None  # noqa: S101 — set alongside plan above
@@ -508,7 +654,7 @@ def _read_all(
             raw = _rust.read_frames_projected(
                 str(path), threads, compression, member, plan=plan
             )
-        return _keep_projected(raw, conformance, spec, range(len(raw)))
+        return _keep_projected(raw, conformance, spec, range(len(raw)), binding)
 
     if _remote.is_remote(path):
         src = _remote.open_source(
@@ -521,10 +667,10 @@ def _read_all(
     else:
         data = _rust.read_frames(str(path), threads, compression, member)
     frames = [_frame_from_data(frame) for frame in data]
-    if schema is not None:
+    if spec is not None:
         from oxyz import _schema_match
 
-        compiled = _schema_match.resolve(schema)
+        compiled = _schema_match.compile_spec(spec)
         for index, frame in enumerate(frames):
             _schema_match.enforce_frame(frame, compiled, conformance, index)
     return frames
@@ -535,7 +681,7 @@ def _read_all_sliced(  # noqa: PLR0913  the read/schema/projection options are t
     frames: slice,
     threads: int | None = None,
     *,
-    schema: SchemaSpec | str | Path | None = None,
+    schema: SchemaSpec | str | Path | Binding | None = None,
     conformance: Conformance = "required",
     mode: Mode | None = None,
     compression: Compression = "infer",
@@ -544,9 +690,9 @@ def _read_all_sliced(  # noqa: PLR0913  the read/schema/projection options are t
 ) -> list[Frame]:
     """Read every frame, wrapping only those `frames` keeps."""
     _require_schema_for_mode(schema, mode)
-    plan = spec = None
+    plan = spec = binding = None
     if schema is not None:
-        plan, spec = _projection(schema, mode)
+        plan, spec, binding = _projection(schema, mode)
 
     if plan is not None:
         assert spec is not None  # noqa: S101 — set alongside plan above
@@ -565,7 +711,7 @@ def _read_all_sliced(  # noqa: PLR0913  the read/schema/projection options are t
                 str(path), threads, compression, member, plan=plan
             )
         indices = range(len(raw))[frames]
-        return _keep_projected(raw[frames], conformance, spec, indices)
+        return _keep_projected(raw[frames], conformance, spec, indices, binding)
 
     if _remote.is_remote(path):
         src = _remote.open_source(
@@ -579,10 +725,10 @@ def _read_all_sliced(  # noqa: PLR0913  the read/schema/projection options are t
         data = _rust.read_frames(str(path), threads, compression, member)
     indices = range(len(data))[frames]
     result = [_frame_from_data(frame) for frame in data[frames]]
-    if schema is not None:
+    if spec is not None:
         from oxyz import _schema_match
 
-        compiled = _schema_match.resolve(schema)
+        compiled = _schema_match.compile_spec(spec)
         for index, frame in zip(indices, result, strict=True):
             _schema_match.enforce_frame(frame, compiled, conformance, index)
     return result
@@ -604,7 +750,7 @@ class IndexedFrames:
 def _iter_all(
     path: str | Path,
     *,
-    schema: SchemaSpec | str | Path | None = None,
+    schema: SchemaSpec | str | Path | Binding | None = None,
     conformance: Conformance = "required",
     mode: Mode | None = None,
     compression: Compression = "infer",
@@ -613,9 +759,9 @@ def _iter_all(
 ) -> Iterator[Frame]:
     """Stream every frame; the file closes when the iterator is dropped."""
     _require_schema_for_mode(schema, mode)
-    plan = spec = None
+    plan = spec = binding = None
     if schema is not None:
-        plan, spec = _projection(schema, mode)
+        plan, spec, binding = _projection(schema, mode)
 
     if plan is not None:
         assert spec is not None  # noqa: S101 — set alongside plan above
@@ -635,6 +781,7 @@ def _iter_all(
         else:
             projected = _rust.FrameIterProjected(str(path), plan, compression, member)
         frame_compiled = _frame_rule_compiled(spec)
+        cast = _caster(binding, conformance)
         for index, (data, deviations) in enumerate(projected):
             keep = enforce_projection(
                 deviations, conformance, index, dropped=data is None
@@ -645,7 +792,7 @@ def _iter_all(
                     _schema_match.enforce_frame(
                         frame, frame_compiled, conformance, index
                     )
-                yield frame
+                yield frame if cast is None else cast(frame, index)
         return
 
     if _remote.is_remote(path):
@@ -659,10 +806,10 @@ def _iter_all(
     else:
         iterator = _rust.FrameIter(str(path), compression, member)
     compiled = None
-    if schema is not None:
+    if spec is not None:
         from oxyz import _schema_match
 
-        compiled = _schema_match.resolve(schema)
+        compiled = _schema_match.compile_spec(spec)
     for index, data in enumerate(iterator):
         frame = _frame_from_data(data)
         if compiled is not None:

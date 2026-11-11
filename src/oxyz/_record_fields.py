@@ -234,13 +234,15 @@ def field_value(
     owned: bool,
     checked: bool,
 ) -> object:
-    """Look a field's key up in `stored`, check its signature and cast it.
+    """Look a field's key up in `stored` and cast it, checking it if `checked`.
 
     An absent key gives `None` for an optional field, else the declared fill.
-    An integer value satisfies a REAL field unless `strict`. Unless `owned`,
-    arrays come back read-only. With `checked`, the cast value must also pass
-    `FieldType.check`, columns at `rows` rows, for values nothing validated
-    upstream. Raises `SchemaError` naming the key.
+    Unless `owned`, arrays come back read-only. With `checked`, for values
+    nothing validated upstream, the stored value's kind and width or shape
+    must match the field, an integer satisfying a REAL field unless `strict`,
+    and the cast value must pass `FieldType.check`, columns at `rows` rows.
+    Without it, a present value is trusted to fit, as after projection.
+    Raises `SchemaError` naming the key.
     """
     key = spec.key
     assert key is not None  # noqa: S101 — type-narrowing only
@@ -254,6 +256,18 @@ def field_value(
             value.flags.writeable = False
         return value
     raw = stored[key]
+    if not checked:
+        return field.cast(raw, owned=owned)
+    _check_signature(field, key, raw, strict=strict)
+    value = field.cast(raw, owned=owned)
+    try:
+        field.check(value, rows=rows if field.axis == "column" else None)
+    except (TypeError, ValueError) as error:
+        raise SchemaError(f"{field.axis} {key!r}: {error}", name=key) from None
+    return value
+
+
+def _check_signature(field: FieldType, key: str, raw: object, *, strict: bool) -> None:
     if field.axis == "column":
         kind, width = column_signature(raw)
         found, expected = column_sig(kind, width), column_sig(field.kind, field.width)
@@ -272,13 +286,6 @@ def field_value(
             f"{field.axis} {key!r}: expected {expected}, found {found}{reason}",
             name=key,
         )
-    value = field.cast(raw, owned=owned)
-    if checked:
-        try:
-            field.check(value, rows=rows if field.axis == "column" else None)
-        except (TypeError, ValueError) as error:
-            raise SchemaError(f"{field.axis} {key!r}: {error}", name=key) from None
-    return value
 
 
 def _metadata_signature(raw: object, key: str) -> tuple[Kind, tuple[int, ...]]:
