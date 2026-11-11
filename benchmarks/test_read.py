@@ -153,7 +153,7 @@ def ase_read_first(path: Path) -> object:
 @row("numpy frames", "serial")
 def cextxyz_read_all(path: Path) -> list:
     # No 3.14 wheels, so unresolvable for ty.
-    from extxyz import read_dicts  # ty: ignore[unresolved-import]
+    from extxyz import read_dicts  # ty: ignore[import-not-found]
 
     frames = read_dicts(str(path))
     # `read_dicts` returns Frame | list[Frame] depending on count; narrow it.
@@ -163,7 +163,7 @@ def cextxyz_read_all(path: Path) -> list:
 
 @row("numpy frames", "serial")
 def cextxyz_read_first(path: Path) -> object:
-    from extxyz import iread_dicts  # ty: ignore[unresolved-import]
+    from extxyz import iread_dicts  # ty: ignore[import-not-found]
 
     return next(iter(iread_dicts(str(path))))
 

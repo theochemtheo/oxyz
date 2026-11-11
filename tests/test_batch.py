@@ -21,7 +21,7 @@ def test_iread_batch_is_the_public_streaming_batch_name() -> None:
 
 
 def as_array(value: object) -> np.ndarray:
-    """Same ty-limitation shim as test_extxyz.as_array; delete with the canary."""
+    """Assert that ``value`` is an ndarray and narrow it for ty."""
     assert isinstance(value, np.ndarray)
     return value
 

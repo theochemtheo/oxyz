@@ -113,7 +113,7 @@ def main() -> None:
         sys.exit("oxyz._rust is a debug build; run: uv run maturin develop --release")
 
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from conftest import trajectory_files
+    from conftest import trajectory_files  # ty: ignore[import-not-found]
 
     fixtures = trajectory_files()
     workloads = ["many_small_frames", "large_frames"]

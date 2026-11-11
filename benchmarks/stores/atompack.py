@@ -24,7 +24,7 @@ def ensure(src: Path) -> Path:
 
 
 def _ingest(src: Path, dest: Path) -> None:
-    import atompack  # ty: ignore[unresolved-import]
+    import atompack  # ty: ignore[import-not-found]
 
     db = atompack.Database(str(dest), overwrite=True)
     chunk = []
@@ -49,7 +49,7 @@ def _ingest(src: Path, dest: Path) -> None:
 
 
 def open_db(path: Path):
-    import atompack  # ty: ignore[unresolved-import]
+    import atompack  # ty: ignore[import-not-found]
 
     # mmap-backed read-only handle: the mode whose batch reads parallelise.
     return atompack.Database.open(str(path))

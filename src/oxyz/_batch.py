@@ -117,8 +117,7 @@ class Batch(NameLookup[ColumnValues, ColumnValues]):  # noqa: PLW1641  a dict of
     def __getitem__(self, key: int | np.integer) -> Frame: ...
     @overload
     def __getitem__(self, key: slice | Sequence[int] | np.ndarray) -> Batch: ...
-    # ty does not yet accept an overloaded override of NameLookup's signature.
-    def __getitem__(  # ty: ignore[invalid-method-override]
+    def __getitem__(
         self, key: str | int | np.integer | slice | Sequence[int] | np.ndarray
     ) -> ColumnValues | Frame | Batch:
         """Look up a field by name, a frame by position, or frames by selection.

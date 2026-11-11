@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
     from importlib.machinery import ModuleSpec
     from types import ModuleType
 
@@ -46,7 +46,7 @@ class _Blocker:
 
 
 @contextlib.contextmanager
-def _hidden(target: str, roots: tuple[str, ...]) -> Iterator[None]:
+def _hidden(target: str, roots: tuple[str, ...]) -> Generator[None]:
     """Make `roots` unimportable and force `target` to re-run its guard."""
 
     def touched() -> list[str]:

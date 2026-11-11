@@ -18,7 +18,7 @@ def ensure(src: Path) -> Path:
 
 
 def _ingest(src: Path, dest: Path) -> None:
-    import lmdb  # ty: ignore[unresolved-import]
+    import lmdb  # ty: ignore[import-not-found]
 
     env = lmdb.open(str(dest), map_size=MAP_SIZE, subdir=False)
     with env.begin(write=True) as txn:
@@ -29,7 +29,7 @@ def _ingest(src: Path, dest: Path) -> None:
 
 
 def open_env(path: Path):
-    import lmdb  # ty: ignore[unresolved-import]
+    import lmdb  # ty: ignore[import-not-found]
 
     return lmdb.open(str(path), subdir=False, readonly=True, lock=False)
 

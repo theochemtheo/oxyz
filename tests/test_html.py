@@ -74,7 +74,7 @@ class Rendered(HTMLParser):
 
 
 def render(obj: object) -> Rendered:
-    return Rendered(obj._repr_html_())  # ty: ignore[unresolved-attribute]
+    return Rendered(obj._repr_html_())  # ty: ignore[missing-attribute]
 
 
 def test_frame_lists_columns_and_metadata_with_values() -> None:
@@ -332,7 +332,7 @@ def test_frame_index_of_an_empty_file_shows_dashes(tmp_path: Path) -> None:
     ids=["Frame", "Batch", "Schema", "SchemaSpec", "FrameIndex"],
 )
 def test_every_rendering_is_one_plain_div(obj: object) -> None:
-    markup = obj._repr_html_()  # ty: ignore[unresolved-attribute]
+    markup = obj._repr_html_()  # ty: ignore[missing-attribute]
 
     assert markup.startswith('<div class="oxyz-repr">')
     assert markup.endswith("</div>")

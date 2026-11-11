@@ -6,6 +6,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Internal
+
+- ty floor raised to 0.0.84.
+
 ## [1.3.0] - 2026-11-06
 
 ### Added

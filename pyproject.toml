@@ -77,7 +77,7 @@ dev = [
     "torch>=2",
     "torch-sim-atomistic",
     "types-pyyaml",
-    "ty>=0.0.64",
+    "ty>=0.0.84",
     { include-group = "test" },
     { include-group = "s3-test" },
 ]
