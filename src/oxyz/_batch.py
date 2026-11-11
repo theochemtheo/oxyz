@@ -404,14 +404,14 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
                 member=member,
                 storage_options=storage_options,
             )
-            triple = _rust.read_batch_projected_reader(
+            projected = _rust.read_batch_projected_reader(
                 src.obj, src.codec, selection, threads, src.member, plan=projection
             )
         else:
-            triple = _rust.read_batch_projected(
+            projected = _rust.read_batch_projected(
                 str(path), selection, threads, compression, member, plan=projection
             )
-        result = _resolve_projected_batch(triple, conformance, spec)
+        result = _resolve_projected_batch(projected, conformance, spec)
         return result if result is not None else _empty_batch()
 
     if spec is not None:
@@ -649,8 +649,8 @@ def _sequential_batches(
             iterator = _rust.BatchIterProjected(
                 str(path), frames_per_batch, projection, compression, member
             )
-        for triple in iterator:
-            batch = _resolve_projected_batch(triple, conformance, spec)
+        for projected in iterator:
+            batch = _resolve_projected_batch(projected, conformance, spec)
             if batch is not None:  # a fully-dropped window is skipped
                 yield batch
         return
@@ -735,8 +735,8 @@ def _planned_batches(  # noqa: PLR0913  the planning knobs plus projection
 
     for plan in plans:
         if projection is not None:
-            triple = reader.get_batch_projected(plan, projection, threads)
-            batch = _resolve_projected_batch(triple, conformance, spec)
+            projected = reader.get_batch_projected(plan, projection, threads)
+            batch = _resolve_projected_batch(projected, conformance, spec)
             if batch is not None:  # a fully-dropped batch is skipped
                 yield batch
         elif validate_compiled is not None:
@@ -831,17 +831,17 @@ def _empty_batch() -> Batch:
 
 
 def _resolve_projected_batch(
-    triple: ProjectedBatch,
+    projected: ProjectedBatch,
     conformance: Conformance,
     spec: SchemaSpec | None = None,
 ) -> Batch | None:
-    """Apply projection policy to a `(batch_data, survivors, reports)` triple.
+    """Apply projection policy to a `read_batch_projected`-shaped result.
 
     Returns the surviving `Batch`, or `None` when every frame dropped.
     """
     from oxyz._project import enforce_projection
 
-    data, survivors, reports = triple
+    data, survivors, reports, _presence = projected
     survived = set(survivors)
     for req_index, deviations in reports:
         dropped = req_index not in survived

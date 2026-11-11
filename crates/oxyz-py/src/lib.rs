@@ -738,8 +738,10 @@ fn read_batch<'py>(
     batch_to_pydict(py, batch)
 }
 
-/// `(BatchData, survivors, reports)`: the surviving frames' batch, their file
-/// indices, and an `(index, deviations)` report per requested frame.
+/// `(BatchData, survivors, reports, presence)`: the surviving frames' batch,
+/// their file indices, an `(index, deviations)` report per requested frame,
+/// and a `(n_survivors, n_optional)` bool array of which optional plan entries
+/// each survivor carried.
 fn projected_batch_to_py<'py>(
     py: Python<'py>,
     projected: oxyz_core::ProjectedBatch,
@@ -748,7 +750,12 @@ fn projected_batch_to_py<'py>(
         batch,
         survivors,
         reports,
+        presence,
+        n_optional,
     } = projected;
+    let presence = Array2::from_shape_vec((survivors.len(), n_optional), presence)
+        .map_err(|error| PyValueError::new_err(error.to_string()))?
+        .into_pyarray(py);
     let batch_data = batch_to_pydict(py, batch)?;
     let survivors_list = PyList::new(py, survivors)?;
     let reports_list = PyList::empty(py);
@@ -762,12 +769,14 @@ fn projected_batch_to_py<'py>(
             batch_data.into_any(),
             survivors_list.into_any(),
             reports_list.into_any(),
+            presence.into_any(),
         ],
     )
 }
 
 /// Projected variant of [`read_batch`]: returns `(BatchData, survivors,
-/// reports)` where the batch holds only frames that survived projection.
+/// reports, presence)` where the batch holds only frames that survived
+/// projection.
 #[pyfunction]
 #[pyo3(signature = (path, indices=None, threads=None, compression="infer", member=None, *, plan))]
 fn read_batch_projected<'py>(
@@ -826,7 +835,7 @@ fn read_batch_projected_reader<'py>(
 }
 
 /// Projected variant of [`BatchIter`]: `__next__` yields `(BatchData,
-/// survivors, reports)`.
+/// survivors, reports, presence)`.
 #[pyclass]
 struct BatchIterProjected {
     inner: oxyz_core::BatchIterProjected<DecodedReader>,

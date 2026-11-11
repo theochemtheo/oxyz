@@ -59,8 +59,11 @@ class DeviationData(TypedDict):
 type ProjectionPlan = tuple[list[tuple], list[tuple], bool]
 # A dropped frame has None in place of its FrameData; deviations report why.
 type ProjectedFrame = tuple[FrameData | None, list[DeviationData]]
-# Survivors' data, their file indices, and a report per requested frame.
-type ProjectedBatch = tuple[BatchData, list[int], list[tuple[int, list[DeviationData]]]]
+# Survivors' data, their file indices, a report per requested frame, and a bool
+# array (n_survivors, n_optional) of which optional plan entries each survivor carried.
+type ProjectedBatch = tuple[
+    BatchData, list[int], list[tuple[int, list[DeviationData]]], np.ndarray
+]
 
 class ColumnVariantData(TypedDict):
     """Raw crossing dict for one observed (kind, width) of a column."""
@@ -187,7 +190,7 @@ class FrameIterProjected:
 
 @final
 class BatchIterProjected:
-    """Projected `BatchIter`: yields `(BatchData, survivors, reports)`."""
+    """Projected `BatchIter`: yields `(BatchData, survivors, reports, presence)`."""
 
     def __new__(
         cls,
@@ -280,7 +283,7 @@ def read_batch_projected(
     *,
     plan: ProjectionPlan,
 ) -> ProjectedBatch:
-    """Projected `read_batch`: `(BatchData, survivors, reports)`."""
+    """Projected `read_batch`: `(BatchData, survivors, reports, presence)`."""
 
 def read_batch_projected_reader(
     source: object,

@@ -51,6 +51,14 @@ pub struct ProjectionPlan {
     pub promote_int: bool,
 }
 
+impl ProjectionPlan {
+    /// The number of entries, on both axes, with `required == false`.
+    pub fn n_optional(&self) -> usize {
+        self.columns.iter().filter(|pc| !pc.required).count()
+            + self.metadata.iter().filter(|pm| !pm.required).count()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Axis {
     Column,
@@ -79,6 +87,10 @@ pub struct Projected {
     pub frame: Frame,
     pub deviations: Vec<Deviation>,
     pub dropped: bool,
+    /// One flag per optional plan entry, columns then metadata: whether the
+    /// frame has a field of that name, of any kind, rather than a fill or
+    /// nothing.
+    pub present: Vec<bool>,
 }
 
 /// `R:3`-style signature for a column plan field.
@@ -160,11 +172,16 @@ fn project_metadata(
     plan: &ProjectionPlan,
     deviations: &mut Vec<Deviation>,
     dropped: &mut bool,
+    present: &mut Vec<bool>,
 ) -> Vec<(CompactString, Value)> {
     let mut metadata = Vec::with_capacity(plan.metadata.len());
     for pm in &plan.metadata {
         let expected = metadata_sig(pm.kind, pm.shape);
-        match lookup_metadata(frame, pm, plan.promote_int) {
+        let lookup = lookup_metadata(frame, pm, plan.promote_int);
+        if !pm.required {
+            present.push(!matches!(lookup, Lookup::Absent));
+        }
+        match lookup {
             Lookup::Conforming(value) => {
                 metadata.push((CompactString::from(pm.name.as_str()), value.clone()));
             }
@@ -311,12 +328,17 @@ fn promote_value(value: &Value) -> Value {
 pub fn project_frame(frame: &Frame, plan: &ProjectionPlan) -> Projected {
     let mut deviations = Vec::new();
     let mut dropped = false;
+    let mut present = Vec::with_capacity(plan.n_optional());
     let n_atoms = frame.n_atoms;
 
     let mut columns = Vec::with_capacity(plan.columns.len());
     for pc in &plan.columns {
         let expected = column_sig(pc.kind, pc.width);
-        match lookup_column(frame, pc, plan.promote_int) {
+        let lookup = lookup_column(frame, pc, plan.promote_int);
+        if !pc.required {
+            present.push(!matches!(lookup, Lookup::Absent));
+        }
+        match lookup {
             Lookup::Conforming(existing) => columns.push(existing.clone()),
             Lookup::Promotable(existing) => columns.push(promote_column(existing)),
             found => {
@@ -351,7 +373,7 @@ pub fn project_frame(frame: &Frame, plan: &ProjectionPlan) -> Projected {
         }
     }
 
-    let metadata = project_metadata(frame, plan, &mut deviations, &mut dropped);
+    let metadata = project_metadata(frame, plan, &mut deviations, &mut dropped, &mut present);
 
     Projected {
         frame: Frame {
@@ -361,5 +383,6 @@ pub fn project_frame(frame: &Frame, plan: &ProjectionPlan) -> Projected {
         },
         deviations,
         dropped,
+        present,
     }
 }

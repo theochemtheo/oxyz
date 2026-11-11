@@ -3,8 +3,8 @@
 
 use std::io::Cursor;
 
-use oxyz_core::model::{Column, ColumnData, Frame};
-use oxyz_core::project::{Fill, PlanColumn, ProjectionPlan, project_frame};
+use oxyz_core::model::{Column, ColumnData, ColumnKind, Frame, Value};
+use oxyz_core::project::{Fill, PlanColumn, PlanMetadata, ProjectionPlan, project_frame};
 use oxyz_core::{BatchBuilder, BatchError, FrameIter, scan_frames, scan_frames_with_volume};
 use proptest::prelude::*;
 
@@ -116,9 +116,6 @@ proptest! {
         plan_widths in proptest::collection::vec(1usize..4, 0..4),
         frame_cols in proptest::collection::vec((0usize..6, 0usize..4, 1usize..4), 0..6),
     ) {
-        // Column, ColumnData and Frame come from the module-level import.
-        use oxyz_core::model::ColumnKind;
-
         let plan = ProjectionPlan {
             columns: plan_widths
                 .iter()
@@ -156,6 +153,146 @@ proptest! {
             prop_assert_eq!(col.width, w);
             prop_assert_eq!(col.data.len(), n_atoms * w);
         }
+    }
+}
+
+fn kind_of(index: usize) -> ColumnKind {
+    match index {
+        0 => ColumnKind::Real,
+        1 => ColumnKind::Int,
+        2 => ColumnKind::Bool,
+        _ => ColumnKind::Str,
+    }
+}
+
+fn fill_of(kind: ColumnKind) -> Fill {
+    match kind {
+        ColumnKind::Real => Fill::Real(0.0),
+        ColumnKind::Int => Fill::Int(0),
+        ColumnKind::Bool => Fill::Bool(false),
+        ColumnKind::Str => Fill::Str(String::new()),
+    }
+}
+
+fn value_of(kind: ColumnKind, shape: Option<usize>) -> Value {
+    match (kind, shape) {
+        (ColumnKind::Real, None) => Value::Real(1.0),
+        (ColumnKind::Int, None) => Value::Int(1),
+        (ColumnKind::Bool, None) => Value::Bool(true),
+        (ColumnKind::Str, None) => Value::Str("x".into()),
+        (ColumnKind::Real, Some(n)) => Value::RealArray(vec![1.0; n]),
+        (ColumnKind::Int, Some(n)) => Value::IntArray(vec![1; n]),
+        (ColumnKind::Bool, Some(n)) => Value::BoolArray(vec![true; n]),
+        (ColumnKind::Str, Some(n)) => Value::StrArray(vec!["x".into(); n]),
+    }
+}
+
+/// `(name index, kind index, width, required, has fill)` per plan column.
+fn plan_columns() -> impl Strategy<Value = Vec<(usize, usize, usize, bool, bool)>> {
+    proptest::collection::vec(
+        (
+            0usize..4,
+            0usize..4,
+            1usize..4,
+            any::<bool>(),
+            any::<bool>(),
+        ),
+        0..5,
+    )
+}
+
+/// `(name index, kind index, shape, required, has fill)` per plan metadata key.
+fn plan_metadata() -> impl Strategy<Value = Vec<(usize, usize, Option<usize>, bool, bool)>> {
+    proptest::collection::vec(
+        (
+            0usize..4,
+            0usize..4,
+            proptest::option::of(1usize..4),
+            any::<bool>(),
+            any::<bool>(),
+        ),
+        0..5,
+    )
+}
+
+proptest! {
+    /// Each optional entry's presence flag says whether the frame has a field
+    /// of that name on that axis, whatever its kind or the entry's fill. Both
+    /// axes draw from one name pool, so a flag read off the wrong axis shows.
+    #[test]
+    fn presence_flags_agree_with_frame_keys(
+        n_atoms in 0usize..4,
+        frame_cols in proptest::collection::vec((0usize..4, 0usize..4, 1usize..4), 0..5),
+        frame_meta in proptest::collection::vec(
+            (0usize..4, 0usize..4, proptest::option::of(1usize..4)),
+            0..5,
+        ),
+        columns in plan_columns(),
+        metadata in plan_metadata(),
+        promote_int in any::<bool>(),
+    ) {
+        let plan = ProjectionPlan {
+            columns: columns
+                .iter()
+                .map(|&(name_i, kind_i, width, required, has_fill)| PlanColumn {
+                    name: format!("f{name_i}"),
+                    kind: kind_of(kind_i),
+                    width,
+                    required,
+                    fill: has_fill.then(|| fill_of(kind_of(kind_i))),
+                })
+                .collect(),
+            metadata: metadata
+                .iter()
+                .map(|&(name_i, kind_i, shape, required, has_fill)| PlanMetadata {
+                    name: format!("f{name_i}"),
+                    kind: kind_of(kind_i),
+                    shape,
+                    required,
+                    fill: has_fill.then(|| fill_of(kind_of(kind_i))),
+                })
+                .collect(),
+            promote_int,
+        };
+        let frame = Frame {
+            n_atoms,
+            columns: frame_cols
+                .iter()
+                .map(|&(name_i, kind_i, width)| {
+                    let count = n_atoms * width;
+                    let data = match kind_of(kind_i) {
+                        ColumnKind::Real => ColumnData::Real(vec![1.0; count]),
+                        ColumnKind::Int => ColumnData::Int(vec![1; count]),
+                        ColumnKind::Bool => ColumnData::Bool(vec![true; count]),
+                        ColumnKind::Str => ColumnData::Str(vec!["x".into(); count]),
+                    };
+                    Column { name: format!("f{name_i}").into(), width, data }
+                })
+                .collect(),
+            metadata: frame_meta
+                .iter()
+                .map(|&(name_i, kind_i, shape)| {
+                    (format!("f{name_i}").into(), value_of(kind_of(kind_i), shape))
+                })
+                .collect(),
+        };
+
+        let expected: Vec<bool> = plan
+            .columns
+            .iter()
+            .filter(|pc| !pc.required)
+            .map(|pc| frame.columns.iter().any(|c| c.name == pc.name))
+            .chain(
+                plan.metadata
+                    .iter()
+                    .filter(|pm| !pm.required)
+                    .map(|pm| frame.metadata.iter().any(|(key, _)| *key == pm.name)),
+            )
+            .collect();
+
+        let projected = project_frame(&frame, &plan);
+        prop_assert_eq!(projected.present.len(), plan.n_optional());
+        prop_assert_eq!(projected.present, expected);
     }
 }
 

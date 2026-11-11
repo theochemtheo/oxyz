@@ -105,6 +105,7 @@ fn keeps_declared_drops_undeclared_in_plan_order() {
         frame,
         deviations,
         dropped,
+        ..
     } = project_frame(&f, &plan);
     assert!(!dropped);
     assert!(deviations.is_empty());
@@ -127,6 +128,7 @@ fn fills_absent_optional_real_silently() {
         frame,
         deviations,
         dropped,
+        ..
     } = project_frame(&f, &plan);
     assert!(!dropped);
     assert!(deviations.is_empty()); // optional fill is silent
@@ -175,6 +177,7 @@ fn wrong_kind_reports_mismatch_and_fills_when_possible() {
         frame,
         deviations,
         dropped,
+        ..
     } = project_frame(&f, &plan);
     assert!(!dropped);
     assert_eq!(deviations.len(), 1);
@@ -205,6 +208,7 @@ fn projects_metadata_keep_drop_fill_in_order() {
         frame,
         deviations,
         dropped,
+        ..
     } = project_frame(&f, &plan);
     assert!(!dropped);
     assert!(deviations.is_empty());
@@ -225,6 +229,7 @@ fn metadata_array_mismatch_reports_bracket_signature() {
         deviations,
         dropped,
         frame,
+        ..
     } = project_frame(&f, &plan);
     assert!(!dropped);
     assert_eq!(deviations[0].kind, DeviationKind::Mismatch);
@@ -330,6 +335,7 @@ fn duplicate_metadata_prefers_conforming_occurrence() {
         frame,
         deviations,
         dropped,
+        ..
     } = project_frame(&f, &plan);
     assert!(!dropped);
     assert!(deviations.is_empty());
@@ -631,12 +637,16 @@ fn assert_same_projection(a: &oxyz_core::ProjectedBatch, b: &oxyz_core::Projecte
     assert_eq!(a.survivors, b.survivors);
     assert_eq!(a.batch, b.batch);
     assert_eq!(a.reports, b.reports);
+    assert_eq!(a.presence, b.presence);
+    assert_eq!(a.n_optional, b.n_optional);
 }
 
 #[test]
 fn projected_whole_file_parallel_matches_serial() {
     let plan = drift_plan();
     let serial = read_all_batch_projected_from(DRIFT.as_bytes(), &plan).unwrap();
+    assert_eq!(serial.n_optional, 1);
+    assert_eq!(serial.presence, vec![true, false, true, false]);
     for threads in [None, Some(1), Some(3)] {
         let par = read_all_batch_projected_parallel_from(DRIFT.as_bytes(), threads, &plan).unwrap();
         assert_same_projection(&par, &serial);
@@ -656,13 +666,18 @@ fn projected_selection_parallel_matches_serial() {
 fn projected_streamed_batches_cover_every_surviving_frame() {
     let whole = read_all_batch_projected_from(DRIFT.as_bytes(), &drift_plan()).unwrap();
     let mut survivors = Vec::new();
+    let mut presence = Vec::new();
     let mut n_frames = 0;
     for item in iter_batches_projected_from(DRIFT.as_bytes(), 2, drift_plan()).unwrap() {
         let pb = item.unwrap();
+        assert_eq!(pb.n_optional, whole.n_optional);
+        assert_eq!(pb.presence.len(), pb.survivors.len() * pb.n_optional);
         survivors.extend(pb.survivors);
+        presence.extend(pb.presence);
         n_frames += pb.batch.n_frames();
     }
     assert_eq!(survivors, whole.survivors);
+    assert_eq!(presence, whole.presence);
     assert_eq!(n_frames, whole.batch.n_frames());
 }
 
@@ -915,4 +930,67 @@ fn promote_int_does_not_reshape_an_int_array() {
     assert_eq!(out.deviations.len(), 1);
     assert_eq!(out.deviations[0].kind, DeviationKind::Mismatch);
     assert_eq!(out.deviations[0].found.as_deref(), Some("I[3]"));
+}
+
+#[test]
+fn presence_flags_found_filled_and_mismatched() {
+    let plan = ProjectionPlan {
+        columns: vec![
+            real_col_plan("pos", 3, true),
+            real_plan("charge", 1, false, Some(-1.5)),
+            PlanColumn {
+                name: "tag".into(),
+                kind: ColumnKind::Str,
+                width: 1,
+                required: false,
+                fill: Some(Fill::Str("x".into())),
+            },
+        ],
+        metadata: vec![real_meta("energy", None, false, None)],
+        ..Default::default()
+    };
+    let f = Frame {
+        n_atoms: 1,
+        columns: vec![
+            col("pos", ColumnData::Real(vec![0.0; 3]), 3),
+            col("charge", ColumnData::Int(vec![2]), 1),
+        ],
+        metadata: vec![("energy".into(), Value::Real(-1.0))],
+    };
+    let p = project_frame(&f, &plan);
+    assert!(!p.dropped);
+    assert_eq!(plan.n_optional(), 3);
+    assert_eq!(p.present, vec![true, false, true]);
+}
+
+#[test]
+fn projected_batch_presence_has_a_row_per_survivor_only() {
+    let input = "1\nProperties=species:S:1:pos:R:3:charge:R:1\nH 0 0 0 0.5\n\
+                 1\nProperties=species:S:1:pos:R:3:id:I:1\nH 0 0 0 7\n";
+    let plan = ProjectionPlan {
+        columns: vec![
+            real_col_plan("pos", 3, true),
+            PlanColumn {
+                name: "id".into(),
+                kind: ColumnKind::Int,
+                width: 1,
+                required: true,
+                fill: None,
+            },
+            real_plan("charge", 1, false, Some(-1.5)),
+        ],
+        metadata: Vec::new(),
+        ..Default::default()
+    };
+    let pb = read_all_batch_projected_from(input.as_bytes(), &plan).unwrap();
+    assert_eq!(pb.survivors, vec![1]);
+    assert_eq!(pb.n_optional, 1);
+    assert_eq!(pb.presence, vec![false]);
+}
+
+#[test]
+fn presence_flags_count_a_promoted_field_as_present() {
+    let p = project_frame(&int_frame(), &real_plan_over_int_frame(true));
+    assert!(p.deviations.is_empty());
+    assert_eq!(p.present, vec![true, true, true]);
 }

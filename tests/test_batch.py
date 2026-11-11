@@ -523,6 +523,57 @@ def test_get_batch_projected_empty_indices_errors():
         idx.get_batch_projected([], plan)
 
 
+def _presence_entry_points():
+    from oxyz import _rust
+
+    path = DATA_DIR / "mixed_schema_optional_column.xyz"
+
+    def chunks():
+        yield path.read_bytes()
+
+    return {
+        "path": lambda plan, threads: _rust.read_batch_projected(
+            str(path), None, threads, "infer", None, plan=plan
+        ),
+        "reader": lambda plan, threads: _rust.read_batch_projected_reader(
+            chunks(), "plain", None, threads, None, plan=plan
+        ),
+        "indexed": lambda plan, threads: _rust.IndexedFrames(
+            str(path), False
+        ).get_batch_projected([0, 1], plan, threads),
+        "streamed": lambda plan, _threads: next(
+            iter(_rust.BatchIterProjected(str(path), 2, plan, "infer", None))
+        ),
+    }
+
+
+@pytest.mark.parametrize("threads", [1, None])
+@pytest.mark.parametrize("entry", ["path", "reader", "indexed", "streamed"])
+def test_projected_batch_reports_presence_per_survivor(entry, threads):
+    plan = ([("pos", "R", 3, True, None), ("charge", "R", 1, False, -1.5)], [], True)
+    data, survivors, _reports, presence = _presence_entry_points()[entry](plan, threads)
+    assert survivors == [0, 1]
+    assert data["columns"]["charge"].tolist() == [0.5, -0.5, -1.5, -1.5]
+    assert presence.dtype == np.bool_
+    assert presence.tolist() == [[True], [False]]
+
+
+def test_projected_batch_presence_is_shaped_by_survivors_and_optionals():
+    from oxyz import _rust
+
+    path = DATA_DIR / "mixed_schema_optional_column.xyz"
+    plan = ([("pos", "R", 3, True, None)], [], False)
+    *_, presence = _rust.read_batch_projected(str(path), None, 1, plan=plan)
+    assert presence.shape == (2, 0)
+    none_survive = (
+        [("id", "I", 1, True, None), ("charge", "R", 1, False, -1.5)],
+        [],
+        False,
+    )
+    *_, presence = _rust.read_batch_projected(str(path), None, 1, plan=none_survive)
+    assert presence.shape == (0, 1)
+
+
 def test_build_plan_rejects_multidim_metadata_shape():
     from oxyz import _rust
 
