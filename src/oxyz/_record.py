@@ -251,6 +251,7 @@ def _bind_fields(
     defaults: dict[str, FieldSpec[Any]],
 ) -> tuple[tuple[str, FieldType, FieldSpec[Any]], ...]:
     from oxyz._record_fields import field_type, unwrap
+    from oxyz._schema_match import _is_pattern
 
     hints = _resolve(cls, annotations)
     fields: dict[str, tuple[FieldType, FieldSpec[Any]]] = {}
@@ -266,7 +267,13 @@ def _bind_fields(
             ft = field_type(bare, spec)
         except TypeError as error:
             raise TypeError(f"{cls.__name__}.{field}: {error}") from None
-        fields[field] = (ft, spec._bound(field, cls))  # noqa: SLF001 — same module
+        key = spec._bound(field, cls)  # noqa: SLF001 — same module
+        if key.key is not None and _is_pattern(key.key):
+            raise TypeError(
+                f"{cls.__name__}.{field}: key {key.key!r} would be read as a "
+                f"pattern, not a literal name"
+            )
+        fields[field] = (ft, key)
     claimed: dict[tuple[str, str | None], str] = {}
     for field, (_, key) in fields.items():
         other = claimed.setdefault((key.axis, key.key), field)
@@ -422,9 +429,10 @@ class Record(metaclass=RecordMeta):
         At class definition, naming the field: an unsupported annotation,
         a specifier whose class differs from the annotation's, no
         specifier or two, a width, shape or fill inconsistent with the
-        annotation, two fields with one key on one axis, or a reserved
-        field name. From `__init__`, naming the field: a wrong type or
-        dtype.
+        annotation, two fields with one key on one axis, a key that a
+        `SchemaSpec` would read as a pattern (`*`, `?`, `[` or a `re:`
+        prefix), or a reserved field name. From `__init__`, naming the
+        field: a wrong type or dtype.
     ValueError
         From `__init__`, naming the field: a wrong width, shape or row
         count, or a negative `n_atoms`.
@@ -464,10 +472,11 @@ class Record(metaclass=RecordMeta):
     def spec(cls) -> SchemaSpec:
         """Return the project-mode `SchemaSpec` that describes this record's fields.
 
-        One rule per field, in declaration order: a field without a fill is
-        required, one with `fill=` is optional with that fill, and an
-        `X | None` field is optional with `absent="omit"`. The record's
-        `strict` setting is not part of the spec.
+        One rule per field, in declaration order: a field that is neither
+        `X | None` nor given a fill is required, one with `fill=` is
+        optional with that fill, and an `X | None` field is optional with
+        `absent="omit"`. The record's `strict` setting is not part of the
+        spec.
         """
         from oxyz._schema_spec import ColumnRule, MetadataRule, SchemaSpec
 
@@ -530,7 +539,13 @@ class Record(metaclass=RecordMeta):
             stored = frame.columns if field.axis == "column" else frame.metadata
             try:
                 values[name] = field_value(
-                    field, key, stored, rows=frame.n_atoms, strict=strict, owned=False
+                    field,
+                    key,
+                    stored,
+                    rows=frame.n_atoms,
+                    strict=strict,
+                    owned=False,
+                    checked=True,
                 )
             except SchemaError as error:
                 raise SchemaError(f"{cls.__name__}: {error}", name=error.name) from None

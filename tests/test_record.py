@@ -310,6 +310,8 @@ DEFINITION_ERRORS = [
     ("two", "energy: Annotated[Meta[float], Meta(), Meta()]", "energy", "more than"),
     ("width", "labels: Column[list[str]] = Column(width=3)", "labels", "width=3"),
     ("fill", 'energy: Meta[float] = Meta(fill="x")', "energy", "fill 'x'"),
+    ("glob-key", 'energy: Meta[float] = Meta("E*")', "energy", "'E\\*' would be"),
+    ("regex-key", 'pos: Column[Array] = Column("re:p.s")', "pos", "'re:p.s' would be"),
     (
         "duplicate-key",
         'a: Meta[float] = Meta("e")\nb: Meta[float] = Meta("e")',
@@ -462,14 +464,20 @@ def test_declaration_forms_give_identical_specs():
     assert all(spec == specs[0] for spec in specs)
 
 
-def mace_frame(**metadata: Any) -> Frame:
-    """The MACE fixture's first frame, with metadata entries replaced or removed."""
+def mace_frame(
+    columns: dict[str, Any] | None = None, metadata: dict[str, Any] | None = None
+) -> Frame:
+    """The MACE fixture's first frame with entries replaced, or removed by `None`."""
     frame = oxyz.read(MACE, 0)
-    merged = {**frame.metadata, **metadata}
+
+    def merged(stored: dict[str, Any], changes: dict[str, Any] | None) -> dict:
+        both = {**stored, **(changes or {})}
+        return {key: value for key, value in both.items() if value is not None}
+
     return Frame(
         n_atoms=frame.n_atoms,
-        columns=frame.columns,
-        metadata={key: value for key, value in merged.items() if value is not None},
+        columns=merged(frame.columns, columns),
+        metadata=merged(frame.metadata, metadata),
     )
 
 
@@ -511,7 +519,7 @@ def test_from_frame_lax_promotes_integers_read_only():
 
 def test_from_frame_reads_two_dimensional_metadata_flattened():
     square = np.arange(9.0).reshape(3, 3)
-    r = MaceSample.from_frame(mace_frame(Lattice=square))
+    r = MaceSample.from_frame(mace_frame(metadata={"Lattice": square}))
     np.testing.assert_array_equal(r.cell, square)
 
 
@@ -519,37 +527,75 @@ class StrictMace(MaceSample, strict=True):
     pass
 
 
+class IntCounts(Record):
+    counts: Column[npt.NDArray[np.int64]] = Column()
+
+
+class Charges(Record):
+    charges: Column[Array] = Column()
+
+
+FROM_FRAME_ERRORS = [
+    ("missing", MaceSample, None, {"REF_energy": None}, "REF_energy", "missing"),
+    ("bool-real", MaceSample, None, {"REF_energy": True}, "REF_energy", "found L"),
+    ("int-str", MaceSample, None, {"config_type": 1}, "config_type", "found I"),
+    ("shape", MaceSample, None, {"REF_stress": np.zeros(3)}, "REF_stress", r"R\[3\]"),
+    (
+        "flat-length",
+        MaceSample,
+        None,
+        {"Lattice": np.zeros((2, 2))},
+        "Lattice",
+        r"R\[4\]",
+    ),
+    ("strict-array", StrictMace, None, None, "Lattice", r"found I\[9\].*strict"),
+    ("strict-scalar", StrictMace, None, {"REF_energy": 0}, "REF_energy", "I.*strict"),
+    ("zero-d", MaceSample, None, {"REF_energy": np.array(1.0)}, "REF_energy", "0-d"),
+    ("width", MaceSample, {"REF_forces": np.zeros(3)}, None, "REF_forces", "R:1"),
+    ("absent-column", MaceSample, {"REF_forces": None}, None, "REF_forces", "missing"),
+    (
+        "float32",
+        MaceSample,
+        {"pos": np.zeros((3, 3), np.float32)},
+        None,
+        "pos",
+        "dtype float64, got float32",
+    ),
+    (
+        "uint8",
+        IntCounts,
+        {"counts": np.zeros(3, np.uint8)},
+        None,
+        "counts",
+        "dtype int64, got uint8",
+    ),
+    ("rows", MaceSample, {"pos": np.zeros((5, 3))}, None, "pos", "expected 3 rows"),
+    ("ndim", Charges, {"charges": np.zeros((3, 3, 3))}, None, "charges", "shape"),
+]
+
+
 @pytest.mark.parametrize(
-    ("record", "frame", "key", "reason"),
-    [
-        (MaceSample, mace_frame(REF_energy=None), "REF_energy", "missing"),
-        (MaceSample, mace_frame(REF_energy=True), "REF_energy", "expected R, found L"),
-        (MaceSample, mace_frame(config_type=1), "config_type", "expected S, found I"),
-        (MaceSample, mace_frame(REF_stress=np.zeros(3)), "REF_stress", r"R\[3\]"),
-        (MaceSample, mace_frame(Lattice=np.zeros((2, 2))), "Lattice", r"R\[4\]"),
-        (StrictMace, mace_frame(), "Lattice", r"found I\[9\].*strict"),
-        (StrictMace, mace_frame(REF_energy=0), "REF_energy", "found I.*strict"),
-    ],
+    ("record", "columns", "metadata", "key", "reason"),
+    [pytest.param(*case, id=case_id) for case_id, *case in FROM_FRAME_ERRORS],
 )
-def test_from_frame_errors_carry_the_key_and_no_frame_index(record, frame, key, reason):
-    with pytest.raises(
-        SchemaError, match=rf"^{record.__name__}: .*{key}.*{reason}"
-    ) as e:
+def test_from_frame_errors_carry_the_key_and_no_frame_index(
+    record, columns, metadata, key, reason
+):
+    frame = mace_frame(columns, metadata)
+    pattern = rf"^{record.__name__}: \w+ '{key}': .*{reason}"
+    with pytest.raises(SchemaError, match=pattern) as e:
         record.from_frame(frame)
     assert (e.value.name, e.value.frame_index) == (key, None)
 
 
-def test_from_frame_column_errors_carry_the_key():
+def test_from_frame_copies_string_columns():
+    class Species(Record):
+        species: Column[list[str]] = Column()
+
     frame = oxyz.read(MACE, 0)
-    columns = {**frame.columns, "REF_forces": np.zeros(3)}
-    narrow = Frame(n_atoms=3, columns=columns, metadata=frame.metadata)
-    with pytest.raises(SchemaError, match=r"REF_forces.*expected R:3, found R:1") as e:
-        MaceSample.from_frame(narrow)
-    assert (e.value.name, e.value.frame_index) == ("REF_forces", None)
-    del columns["REF_forces"]
-    with pytest.raises(SchemaError, match=r"REF_forces.*missing") as e:
-        MaceSample.from_frame(narrow)
-    assert e.value.name == "REF_forces"
+    r = Species.from_frame(frame)
+    assert r.species == frame.columns["species"] == ["O", "H", "H"]
+    assert r.species is not frame.columns["species"]
 
 
 def test_from_frame_optional_and_fill():
@@ -561,7 +607,9 @@ def test_from_frame_optional_and_fill():
     class MaybeCell(Record):
         cell: Cell[Array | None] = Cell(fill=0.0)
 
-    assert MaceSample.from_frame(mace_frame(REF_stress=None)).stress is None
+    assert (
+        MaceSample.from_frame(mace_frame(metadata={"REF_stress": None})).stress is None
+    )
     empty = Frame(n_atoms=2, columns={}, metadata={})
     assert MaybeCell.from_frame(empty).cell is None
     r = Filled.from_frame(empty)

@@ -232,12 +232,15 @@ def field_value(
     rows: int,
     strict: bool,
     owned: bool,
+    checked: bool,
 ) -> object:
     """Look a field's key up in `stored`, check its signature and cast it.
 
     An absent key gives `None` for an optional field, else the declared fill.
     An integer value satisfies a REAL field unless `strict`. Unless `owned`,
-    arrays come back read-only. Raises `SchemaError` naming the key.
+    arrays come back read-only. With `checked`, the cast value must also pass
+    `FieldType.check`, columns at `rows` rows, for values nothing validated
+    upstream. Raises `SchemaError` naming the key.
     """
     key = spec.key
     assert key is not None  # noqa: S101 — type-narrowing only
@@ -269,12 +272,20 @@ def field_value(
             f"{field.axis} {key!r}: expected {expected}, found {found}{reason}",
             name=key,
         )
-    return field.cast(raw, owned=owned)
+    value = field.cast(raw, owned=owned)
+    if checked:
+        try:
+            field.check(value, rows=rows if field.axis == "column" else None)
+        except (TypeError, ValueError) as error:
+            raise SchemaError(f"{field.axis} {key!r}: {error}", name=key) from None
+    return value
 
 
 def _metadata_signature(raw: object, key: str) -> tuple[Kind, tuple[int, ...]]:
     """`metadata_signature`, counting a 2-D array as its flattened length."""
-    if isinstance(raw, np.ndarray) and raw.ndim > 1:
+    if isinstance(raw, np.ndarray) and raw.ndim != 1:
+        if raw.ndim == 0:
+            raise SchemaError(f"metadata {key!r}: a 0-d array is not a value", name=key)
         raw = raw.reshape(-1)
     try:
         return metadata_signature(raw)
