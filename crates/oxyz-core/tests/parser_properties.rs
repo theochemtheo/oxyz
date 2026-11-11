@@ -93,6 +93,7 @@ proptest! {
                 })
                 .collect(),
             metadata: Vec::new(),
+            ..Default::default()
         };
         // An empty frame forces every column to be filled to the plan shape.
         let frame = oxyz_core::model::Frame { n_atoms, columns: Vec::new(), metadata: Vec::new() };
@@ -131,6 +132,7 @@ proptest! {
                 })
                 .collect(),
             metadata: Vec::new(),
+            ..Default::default()
         };
         let columns = frame_cols
             .iter()

@@ -54,9 +54,9 @@ class DeviationData(TypedDict):
     expected: str
     found: str | None
 
-# (columns, metadata), each a list of field tuples built in oxyz._project:
-# (name, letter, width or shape, required, fill or None).
-type ProjectionPlan = tuple[list[tuple], list[tuple]]
+# (columns, metadata, promote_int); columns and metadata are lists of field
+# tuples built in oxyz._project: (name, letter, width or shape, required, fill or None).
+type ProjectionPlan = tuple[list[tuple], list[tuple], bool]
 # A dropped frame has None in place of its FrameData; deviations report why.
 type ProjectedFrame = tuple[FrameData | None, list[DeviationData]]
 # Survivors' data, their file indices, and a report per requested frame.

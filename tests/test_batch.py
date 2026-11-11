@@ -518,7 +518,7 @@ def test_get_batch_projected_empty_indices_errors():
     from oxyz import _rust
 
     idx = _rust.IndexedFrames(str(DATA_DIR / "mixed_schema_optional_column.xyz"))
-    plan = ([("pos", "R", 3, True, float("nan"))], [])
+    plan = ([("pos", "R", 3, True, float("nan"))], [], False)
     with pytest.raises(ValueError, match="empty"):
         idx.get_batch_projected([], plan)
 
@@ -526,7 +526,7 @@ def test_get_batch_projected_empty_indices_errors():
 def test_build_plan_rejects_multidim_metadata_shape():
     from oxyz import _rust
 
-    plan = ([], [("stress", "R", (2, 3), False, 0.0)])  # 2-D shape unsupported
+    plan = ([], [("stress", "R", (2, 3), False, 0.0)], False)  # 2-D shape unsupported
     with pytest.raises(ValueError, match="dimension"):
         _rust.read_first_frame_projected(
             str(DATA_DIR / "mixed_schema_optional_column.xyz"), plan=plan

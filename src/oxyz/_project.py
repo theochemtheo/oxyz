@@ -238,7 +238,7 @@ def compile_projection(spec: SchemaSpec, mode: Mode) -> ProjectionPlan | None:
         )
     columns = [_plan_entry(rule, is_metadata=False) for rule in spec.columns]
     metadata = [_plan_entry(rule, is_metadata=True) for rule in spec.metadata]
-    return (columns, metadata)
+    return (columns, metadata, True)
 
 
 def _to_violation(deviation: DeviationData) -> Violation:

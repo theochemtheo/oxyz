@@ -47,6 +47,8 @@ pub struct PlanMetadata {
 pub struct ProjectionPlan {
     pub columns: Vec<PlanColumn>,
     pub metadata: Vec<PlanMetadata>,
+    /// Let a REAL entry accept integer data, converted to `f64`.
+    pub promote_int: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -162,9 +164,12 @@ fn project_metadata(
     let mut metadata = Vec::with_capacity(plan.metadata.len());
     for pm in &plan.metadata {
         let expected = metadata_sig(pm.kind, pm.shape);
-        match lookup_metadata(frame, pm) {
+        match lookup_metadata(frame, pm, plan.promote_int) {
             Lookup::Conforming(value) => {
                 metadata.push((CompactString::from(pm.name.as_str()), value.clone()));
+            }
+            Lookup::Promotable(value) => {
+                metadata.push((CompactString::from(pm.name.as_str()), promote_value(value)));
             }
             found => {
                 let mismatched = matches!(found, Lookup::Mismatch(_));
@@ -202,37 +207,102 @@ fn project_metadata(
 }
 
 /// A plan field looked up in a frame that may repeat the name: a conforming
-/// occurrence if any, so a stray duplicate does not report a mismatch.
+/// occurrence if any, so a stray duplicate does not report a mismatch, else
+/// one that promotes to the plan's REAL kind.
 enum Lookup<T> {
     Conforming(T),
+    Promotable(T),
     Mismatch(T),
     Absent,
 }
 
-fn lookup_column<'a>(frame: &'a Frame, pc: &PlanColumn) -> Lookup<&'a Column> {
+fn lookup_column<'a>(frame: &'a Frame, pc: &PlanColumn, promote_int: bool) -> Lookup<&'a Column> {
+    let mut promotable = None;
     let mut mismatch = None;
     for column in &frame.columns {
         if column.name == pc.name {
-            if column.data.kind() == pc.kind && column.width == pc.width {
+            let kind = column.data.kind();
+            if kind == pc.kind && column.width == pc.width {
                 return Lookup::Conforming(column);
             }
-            mismatch.get_or_insert(column);
+            if promote_int
+                && pc.kind == ColumnKind::Real
+                && kind == ColumnKind::Int
+                && column.width == pc.width
+            {
+                promotable.get_or_insert(column);
+            } else {
+                mismatch.get_or_insert(column);
+            }
         }
     }
-    mismatch.map_or(Lookup::Absent, Lookup::Mismatch)
+    promotable.map_or_else(
+        || mismatch.map_or(Lookup::Absent, Lookup::Mismatch),
+        Lookup::Promotable,
+    )
 }
 
-fn lookup_metadata<'a>(frame: &'a Frame, pm: &PlanMetadata) -> Lookup<&'a Value> {
+fn lookup_metadata<'a>(
+    frame: &'a Frame,
+    pm: &PlanMetadata,
+    promote_int: bool,
+) -> Lookup<&'a Value> {
+    let mut promotable = None;
     let mut mismatch = None;
     for (key, value) in &frame.metadata {
         if *key == pm.name {
-            if value_kind_shape(value) == (pm.kind, pm.shape) {
+            let (kind, shape) = value_kind_shape(value);
+            if kind == pm.kind && shape == pm.shape {
                 return Lookup::Conforming(value);
             }
-            mismatch.get_or_insert(value);
+            if promote_int
+                && pm.kind == ColumnKind::Real
+                && kind == ColumnKind::Int
+                && shape == pm.shape
+            {
+                promotable.get_or_insert(value);
+            } else {
+                mismatch.get_or_insert(value);
+            }
         }
     }
-    mismatch.map_or(Lookup::Absent, Lookup::Mismatch)
+    promotable.map_or_else(
+        || mismatch.map_or(Lookup::Absent, Lookup::Mismatch),
+        Lookup::Promotable,
+    )
+}
+
+fn ints_to_reals(data: &[i64]) -> Vec<f64> {
+    #[allow(clippy::cast_precision_loss)]
+    data.iter().map(|&x| x as f64).collect()
+}
+
+/// The `f64` form of an integer column of the width the plan asked for.
+fn promote_column(column: &Column) -> Column {
+    let data = match &column.data {
+        ColumnData::Int(v) => ColumnData::Real(ints_to_reals(v)),
+        other => other.clone(),
+    };
+    Column {
+        name: column.name.clone(),
+        width: column.width,
+        data,
+    }
+}
+
+/// The `f64` form of an integer scalar or array, keeping 2-D shape.
+fn promote_value(value: &Value) -> Value {
+    match value {
+        #[allow(clippy::cast_precision_loss)]
+        Value::Int(x) => Value::Real(*x as f64),
+        Value::IntArray(v) => Value::RealArray(ints_to_reals(v)),
+        Value::IntArray2D { rows, cols, data } => Value::RealArray2D {
+            rows: *rows,
+            cols: *cols,
+            data: ints_to_reals(data),
+        },
+        other => other.clone(),
+    }
 }
 
 /// Project `frame` onto `plan`: undeclared fields dropped, absent optionals
@@ -246,8 +316,9 @@ pub fn project_frame(frame: &Frame, plan: &ProjectionPlan) -> Projected {
     let mut columns = Vec::with_capacity(plan.columns.len());
     for pc in &plan.columns {
         let expected = column_sig(pc.kind, pc.width);
-        match lookup_column(frame, pc) {
+        match lookup_column(frame, pc, plan.promote_int) {
             Lookup::Conforming(existing) => columns.push(existing.clone()),
+            Lookup::Promotable(existing) => columns.push(promote_column(existing)),
             found => {
                 let mismatched = matches!(found, Lookup::Mismatch(_));
                 // Optional-absent is silent.

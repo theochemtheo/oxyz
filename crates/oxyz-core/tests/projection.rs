@@ -74,6 +74,7 @@ fn plan_types_are_constructible() {
             fill: Some(Fill::Real(f64::NAN)),
         }],
         metadata: Vec::new(),
+        ..Default::default()
     };
     assert_eq!(plan.columns.len(), 1);
     assert_eq!(plan.columns[0].kind, ColumnKind::Real);
@@ -98,6 +99,7 @@ fn keeps_declared_drops_undeclared_in_plan_order() {
     let plan = ProjectionPlan {
         columns: vec![real_plan("pos", 3, true, Some(f64::NAN))],
         metadata: Vec::new(),
+        ..Default::default()
     };
     let Projected {
         frame,
@@ -119,6 +121,7 @@ fn fills_absent_optional_real_silently() {
             real_plan("charge", 1, false, Some(f64::NAN)),
         ],
         metadata: Vec::new(),
+        ..Default::default()
     };
     let Projected {
         frame,
@@ -146,6 +149,7 @@ fn absent_required_without_fill_drops_frame_with_missing() {
             fill: None, // integer has no natural null
         }],
         metadata: Vec::new(),
+        ..Default::default()
     };
     let Projected {
         deviations,
@@ -165,6 +169,7 @@ fn wrong_kind_reports_mismatch_and_fills_when_possible() {
     let plan = ProjectionPlan {
         columns: vec![real_plan("val", 1, true, Some(f64::NAN))],
         metadata: Vec::new(),
+        ..Default::default()
     };
     let Projected {
         frame,
@@ -194,6 +199,7 @@ fn projects_metadata_keep_drop_fill_in_order() {
             real_meta("energy", None, true, Some(f64::NAN)),
             real_meta("weight", None, false, Some(1.0)),
         ],
+        ..Default::default()
     };
     let Projected {
         frame,
@@ -213,6 +219,7 @@ fn metadata_array_mismatch_reports_bracket_signature() {
     let plan = ProjectionPlan {
         columns: Vec::new(),
         metadata: vec![real_meta("stress", Some(9), true, Some(f64::NAN))],
+        ..Default::default()
     };
     let Projected {
         deviations,
@@ -243,6 +250,7 @@ fn projected_whole_file_batch_fills_and_reports() {
             real_col_plan("charge", 1, false),
         ],
         metadata: Vec::new(),
+        ..Default::default()
     };
     let pb = read_all_batch_projected_from(input.as_bytes(), &plan).unwrap();
     assert_eq!(pb.survivors, vec![0, 1]); // species dropped, both frames kept
@@ -277,6 +285,7 @@ fn projected_batch_drops_unfillable_and_records_survivors() {
             },
         ],
         metadata: Vec::new(),
+        ..Default::default()
     };
     let pb = read_all_batch_projected_from(input.as_bytes(), &plan).unwrap();
     assert_eq!(pb.survivors, vec![1]); // frame 0 dropped (no id), frame 1 kept
@@ -294,6 +303,7 @@ fn projected_selection_preserves_request_order() {
     let plan = ProjectionPlan {
         columns: vec![real_col_plan("pos", 3, true), real_col_plan("e", 1, true)],
         metadata: Vec::new(),
+        ..Default::default()
     };
     let pb = read_batch_projected_from(input.as_bytes(), &[2, 0], &plan).unwrap();
     assert_eq!(pb.survivors, vec![2, 0]); // request order, not file order
@@ -314,6 +324,7 @@ fn duplicate_metadata_prefers_conforming_occurrence() {
     let plan = ProjectionPlan {
         columns: Vec::new(),
         metadata: vec![real_meta("energy", None, true, Some(f64::NAN))],
+        ..Default::default()
     };
     let Projected {
         frame,
@@ -354,6 +365,7 @@ fn materialises_non_real_fills() {
             },
         ],
         metadata: Vec::new(),
+        ..Default::default()
     };
     let p = project_frame(&f, &plan);
     assert!(!p.dropped);
@@ -396,6 +408,7 @@ fn keeps_conforming_metadata_of_every_kind_and_shape() {
             plain_meta("ba", ColumnKind::Bool, Some(2), Fill::Bool(false)),
             plain_meta("sa", ColumnKind::Str, Some(2), Fill::Str(String::new())),
         ],
+        ..Default::default()
     };
     let p = project_frame(&f, &plan);
     assert!(!p.dropped);
@@ -421,6 +434,7 @@ fn materialises_absent_optional_metadata_of_every_kind() {
             plain_meta("ba", ColumnKind::Bool, Some(2), Fill::Bool(true)),
             plain_meta("sa", ColumnKind::Str, Some(2), Fill::Str("none".into())),
         ],
+        ..Default::default()
     };
     let p = project_frame(&f, &plan);
     assert!(!p.dropped);
@@ -449,6 +463,7 @@ fn required_metadata_absent_without_fill_drops_frame() {
             required: true,
             fill: None,
         }],
+        ..Default::default()
     };
     let p = project_frame(&f, &plan);
     assert!(p.dropped);
@@ -494,6 +509,7 @@ fn kind_mismatched_fill_falls_back_instead_of_panicking() {
             plain_meta("mba", ColumnKind::Bool, Some(1), Fill::Int(1)),
             plain_meta("msa", ColumnKind::Str, Some(1), Fill::Int(1)),
         ],
+        ..Default::default()
     };
     let p = project_frame(&f, &plan);
     assert!(!p.dropped);
@@ -527,6 +543,7 @@ fn optional_without_fill_is_omitted_when_absent() {
             real_plan("charge", 1, false, None),
         ],
         metadata: vec![real_meta("energy", None, false, None)],
+        ..Default::default()
     };
     let f = frame(1, vec![col("pos", ColumnData::Real(vec![0.0; 3]), 3)]);
     let p = project_frame(&f, &plan);
@@ -540,6 +557,7 @@ fn optional_column_without_fill_drops_on_wrong_kind() {
     let plan = ProjectionPlan {
         columns: vec![real_plan("charge", 1, false, None)],
         metadata: Vec::new(),
+        ..Default::default()
     };
     let f = frame(1, vec![col("charge", ColumnData::Int(vec![1]), 1)]);
     let p = project_frame(&f, &plan);
@@ -557,6 +575,7 @@ fn optional_metadata_without_fill_drops_on_wrong_kind() {
     let plan = ProjectionPlan {
         columns: Vec::new(),
         metadata: vec![real_meta("energy", None, false, None)],
+        ..Default::default()
     };
     let f = frame_meta(1, vec![("energy".into(), Value::Str("high".into()))]);
     let p = project_frame(&f, &plan);
@@ -585,6 +604,7 @@ fn drift_plan() -> ProjectionPlan {
             real_plan("charge", 1, false, Some(-1.5)),
         ],
         metadata: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -596,6 +616,7 @@ fn projected_batch_with_mixed_presence_of_an_omitted_field_names_the_frame() {
             real_plan("charge", 1, false, None),
         ],
         metadata: Vec::new(),
+        ..Default::default()
     };
     let Err(err) = read_all_batch_projected_from(DRIFT.as_bytes(), &plan) else {
         panic!("mixed presence must fail");
@@ -666,4 +687,157 @@ fn iter_batches_projected_rejects_zero_frames_per_batch() {
             oxyz_core::BatchError::ZeroFramesPerBatch
         ))
     ));
+}
+
+fn plan_entry_meta(name: &str, kind: ColumnKind, shape: Option<usize>) -> PlanMetadata {
+    PlanMetadata {
+        name: name.into(),
+        kind,
+        shape,
+        required: false,
+        fill: None,
+    }
+}
+
+fn int_frame() -> Frame {
+    Frame {
+        n_atoms: 2,
+        columns: vec![col("charge", ColumnData::Int(vec![1, 2]), 1)],
+        metadata: vec![
+            ("energy".into(), Value::Int(0)),
+            (
+                "Lattice".into(),
+                Value::IntArray(vec![5, 0, 0, 0, 5, 0, 0, 0, 5]),
+            ),
+        ],
+    }
+}
+
+fn real_plan_over_int_frame(promote_int: bool) -> ProjectionPlan {
+    ProjectionPlan {
+        columns: vec![PlanColumn {
+            name: "charge".into(),
+            kind: ColumnKind::Real,
+            width: 1,
+            required: false,
+            fill: None,
+        }],
+        metadata: vec![
+            plan_entry_meta("energy", ColumnKind::Real, None),
+            plan_entry_meta("Lattice", ColumnKind::Real, Some(9)),
+        ],
+        promote_int,
+    }
+}
+
+#[test]
+fn promote_int_accepts_int_column_scalar_and_array_for_real_entries() {
+    let out = project_frame(&int_frame(), &real_plan_over_int_frame(true));
+    assert!(out.deviations.is_empty());
+    assert!(!out.dropped);
+    assert_eq!(out.frame.columns[0].data, ColumnData::Real(vec![1.0, 2.0]));
+    assert_eq!(out.frame.metadata[0].1, Value::Real(0.0));
+    assert_eq!(
+        out.frame.metadata[1].1,
+        Value::RealArray(vec![5.0, 0.0, 0.0, 0.0, 5.0, 0.0, 0.0, 0.0, 5.0])
+    );
+}
+
+#[test]
+fn without_promote_int_an_int_value_is_a_mismatch() {
+    let out = project_frame(&int_frame(), &real_plan_over_int_frame(false));
+    assert_eq!(out.deviations.len(), 3);
+    assert!(
+        out.deviations
+            .iter()
+            .all(|d| d.kind == DeviationKind::Mismatch)
+    );
+    assert!(out.dropped);
+}
+
+#[test]
+fn an_int_entry_never_accepts_real() {
+    let frame = Frame {
+        n_atoms: 1,
+        columns: vec![col("charge", ColumnData::Real(vec![1.0]), 1)],
+        metadata: vec![("energy".into(), Value::Real(0.0))],
+    };
+    let plan = ProjectionPlan {
+        columns: vec![PlanColumn {
+            name: "charge".into(),
+            kind: ColumnKind::Int,
+            width: 1,
+            required: false,
+            fill: None,
+        }],
+        metadata: vec![plan_entry_meta("energy", ColumnKind::Int, None)],
+        promote_int: true,
+    };
+    let out = project_frame(&frame, &plan);
+    assert_eq!(out.deviations.len(), 2);
+    assert!(
+        out.deviations
+            .iter()
+            .all(|d| d.kind == DeviationKind::Mismatch)
+    );
+}
+
+#[test]
+fn an_exact_real_occurrence_wins_over_a_promotable_duplicate() {
+    let frame = Frame {
+        n_atoms: 1,
+        columns: vec![
+            col("charge", ColumnData::Int(vec![7]), 1),
+            col("charge", ColumnData::Real(vec![0.5]), 1),
+        ],
+        metadata: vec![
+            ("energy".into(), Value::Int(7)),
+            ("energy".into(), Value::Real(0.5)),
+        ],
+    };
+    let plan = ProjectionPlan {
+        columns: vec![PlanColumn {
+            name: "charge".into(),
+            kind: ColumnKind::Real,
+            width: 1,
+            required: false,
+            fill: None,
+        }],
+        metadata: vec![plan_entry_meta("energy", ColumnKind::Real, None)],
+        promote_int: true,
+    };
+    let out = project_frame(&frame, &plan);
+    assert!(out.deviations.is_empty());
+    assert_eq!(out.frame.columns[0].data, ColumnData::Real(vec![0.5]));
+    assert_eq!(out.frame.metadata[0].1, Value::Real(0.5));
+}
+
+#[test]
+fn promote_int_keeps_the_shape_of_a_2d_int_array() {
+    let frame = frame_meta(
+        0,
+        vec![(
+            "m".into(),
+            Value::IntArray2D {
+                rows: 2,
+                cols: 3,
+                data: vec![1, 2, 3, 4, 5, 6],
+            },
+        )],
+    );
+    let plan = ProjectionPlan {
+        metadata: vec![plan_entry_meta("m", ColumnKind::Real, Some(6))],
+        promote_int: true,
+        ..Default::default()
+    };
+    let out = project_frame(&frame, &plan);
+    assert!(out.deviations.is_empty());
+    assert_eq!(
+        out.frame.metadata[0].1,
+        Value::RealArray2D {
+            rows: 2,
+            cols: 3,
+            data: vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        }
+    );
 }

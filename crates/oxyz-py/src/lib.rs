@@ -446,12 +446,13 @@ fn opt_fill(kind: ColumnKind, obj: Bound<'_, PyAny>) -> PyResult<Option<Fill>> {
     }
 }
 
-/// Read a projection plan from `(columns, metadata)`. A column is `(name,
-/// letter, width, required, fill | None)`; a metadata entry is `(name, letter,
-/// shape, required, fill | None)`, with shape `()` for a scalar.
+/// Read a projection plan from `(columns, metadata, promote_int)`. A column is
+/// `(name, letter, width, required, fill | None)`; a metadata entry is `(name,
+/// letter, shape, required, fill | None)`, with shape `()` for a scalar.
 fn build_plan(py_plan: &Bound<'_, PyTuple>) -> PyResult<ProjectionPlan> {
     let columns_obj = py_plan.get_item(0)?;
     let metadata_obj = py_plan.get_item(1)?;
+    let promote_int: bool = py_plan.get_item(2)?.extract()?;
 
     let mut columns = Vec::new();
     for entry in columns_obj.try_iter()? {
@@ -497,7 +498,11 @@ fn build_plan(py_plan: &Bound<'_, PyTuple>) -> PyResult<ProjectionPlan> {
         });
     }
 
-    Ok(ProjectionPlan { columns, metadata })
+    Ok(ProjectionPlan {
+        columns,
+        metadata,
+        promote_int,
+    })
 }
 
 /// Emit deviations as a list of dicts for the Python policy layer.

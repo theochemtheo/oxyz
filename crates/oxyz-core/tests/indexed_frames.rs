@@ -55,6 +55,7 @@ fn charge_plan() -> ProjectionPlan {
             },
         ],
         metadata: Vec::new(),
+        ..Default::default()
     }
 }
 

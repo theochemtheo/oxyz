@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import warnings
+from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from oxyz import (
     Kind,
     iread,
     read,
+    read_batch,
 )
 from oxyz._schema_match import SchemaError, SchemaWarning
 from oxyz._schema_spec import ColumnRule, MetadataRule, SchemaSpec
@@ -278,8 +281,8 @@ def test_wrong_kind_under_warn_fills_nan_and_warns(tmp_path):
     import oxyz
 
     f = tmp_path / "w.xyz"
-    # 'val' is Int in the file but the schema declares it Real -> wrong kind
-    f.write_text("1\nProperties=species:S:1:pos:R:3:val:I:1\nH 0 0 0 7\n")
+    # 'val' is a string in the file but the schema declares it Real -> wrong kind
+    f.write_text("1\nProperties=species:S:1:pos:R:3:val:S:1\nH 0 0 0 seven\n")
     spec = SchemaSpec(
         columns=(
             ColumnRule("species", Kind.STR),
@@ -290,7 +293,7 @@ def test_wrong_kind_under_warn_fills_nan_and_warns(tmp_path):
     )
     with pytest.warns(SchemaWarning, match="val"):
         frames = oxyz.read(f, schema=spec, conformance="warn")
-    # the real int 7 is discarded and replaced with a NaN fill (data loss)
+    # the string is discarded and replaced with a NaN fill (data loss)
     assert np.isnan(np.asarray(frames[0].columns["val"])[0])
 
 
@@ -391,3 +394,29 @@ def test_omit_rule_with_mixed_presence_cannot_batch():
         oxyz.read_batch(
             DATA / "mixed_schema_optional_column.xyz", schema=_charge_omit_spec()
         )
+
+
+LATTICE = SchemaSpec(
+    metadata=(MetadataRule("Lattice", Kind.REAL, shape=(9,)),), mode="project"
+)
+INTEGER_LATTICE_FILE = DATA / "mace_ref_energy_forces_stress.xyz"
+
+
+def test_project_mode_promotes_an_integer_lattice():
+    frame = read(INTEGER_LATTICE_FILE, 0, schema=LATTICE)
+    lattice = np.asarray(frame.metadata["Lattice"])
+    assert lattice.dtype == np.float64
+    assert lattice.tolist() == [5, 0, 0, 0, 5, 0, 0, 0, 5]
+
+
+def test_validate_mode_still_reports_an_integer_lattice():
+    with pytest.raises(SchemaError) as e:
+        read(INTEGER_LATTICE_FILE, schema=replace(LATTICE, mode="validate"))
+    assert (e.value.frame_index, e.value.name) == (0, "Lattice")
+
+
+def test_project_batch_promotes_too():
+    batch = read_batch(INTEGER_LATTICE_FILE, schema=LATTICE)
+    lattice = np.asarray(batch.metadata["Lattice"])
+    assert lattice.dtype == np.float64
+    assert lattice.shape == (1, 9)
