@@ -249,6 +249,7 @@ def test_spec_tabulates_its_rules_with_unset_fields_blank() -> None:
             ColumnRule("pos", Kind.REAL, width=3),
             ColumnRule("d_*", Kind.REAL, count=5),
             ColumnRule("tag", Kind.INT, required=False, fill=0),
+            ColumnRule("q", Kind.REAL, required=False, absent="omit"),
         ),
         metadata=(MetadataRule("Lattice", Kind.REAL, shape=(9,), required=False),),
         frame=FrameRule(n_atoms_max=500),
@@ -265,13 +266,15 @@ def test_spec_tabulates_its_rules_with_unset_fields_blank() -> None:
         "min",
         "max",
         "fill",
+        "absent",
     ]
     assert page.tables["columns"] == [
-        ["pos", "R:3", "yes", "", "", "", ""],
-        ["d_*", "R:1", "yes", "5", "", "", ""],
-        ["tag", "I:1", "no", "", "", "", "0"],
+        ["pos", "R:3", "yes", "", "", "", "", ""],
+        ["d_*", "R:1", "yes", "5", "", "", "", ""],
+        ["tag", "I:1", "no", "", "", "", "0", ""],
+        ["q", "R:1", "no", "", "", "", "", "omit"],
     ]
-    assert page.tables["metadata"] == [["Lattice", "R[9]", "no", "", "", "", ""]]
+    assert page.tables["metadata"] == [["Lattice", "R[9]", "no", "", "", "", "", ""]]
 
 
 def test_frame_index_tabulates_atom_count_and_volume_statistics() -> None:

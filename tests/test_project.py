@@ -123,3 +123,39 @@ def test_optional_no_natural_null_without_fill_is_spec_error(kind):
     spec = SchemaSpec(columns=(ColumnRule("x", kind, required=False),))
     with pytest.raises(SchemaError, match="fill"):
         compile_projection(spec, "project")
+
+
+@pytest.mark.parametrize("kind", list(Kind))
+def test_omit_rule_compiles_without_a_fill_for_every_kind(kind):
+    plan = compile_projection(
+        SchemaSpec(columns=(ColumnRule("x", kind, required=False, absent="omit"),)),
+        "project",
+    )
+    assert plan is not None
+    assert plan[0][0][3:] == (False, None)
+
+
+def test_omit_takes_precedence_over_a_declared_fill():
+    plan = compile_projection(
+        SchemaSpec(
+            columns=(
+                ColumnRule("x", Kind.REAL, required=False, absent="omit", fill=0.5),
+            ),
+            metadata=(
+                MetadataRule("k", Kind.INT, required=False, absent="omit", fill=3),
+            ),
+        ),
+        "project",
+    )
+    assert plan is not None
+    assert plan[0][0][4] is None
+    assert plan[1][0][4] is None
+
+
+def test_omit_on_a_required_rule_has_no_effect():
+    plan = compile_projection(
+        SchemaSpec(columns=(ColumnRule("x", Kind.REAL, absent="omit"),)), "project"
+    )
+    assert plan is not None
+    assert plan[0][0][3] is True
+    assert math.isnan(plan[0][0][4])

@@ -359,3 +359,35 @@ def test_reverse_slice_with_schema_projects(tmp_path):
     atoms = list(oxyz.ase.iread(f, "::-1", schema=_proj_spec()))
     assert len(atoms) == 2
     assert all(len(a) == 1 for a in atoms)
+
+
+def _charge_omit_spec(width=1, kind=Kind.REAL, name="charge"):
+    return SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+            ColumnRule(name, kind, width=width, required=False, absent="omit"),
+        ),
+        mode="project",
+    )
+
+
+def test_omit_rule_leaves_the_key_out_of_frames_that_lack_it():
+    frames = read(DATA / "mixed_schema_optional_column.xyz", schema=_charge_omit_spec())
+    assert ["charge" in f.columns for f in frames] == [True, False]
+
+
+def test_omit_rule_of_the_wrong_kind_raises_with_frame_and_name():
+    spec = _charge_omit_spec(width=3, name="magmom")
+    with pytest.raises(SchemaError) as excinfo:
+        read(DATA / "schema_drift_type.extxyz", schema=spec)
+    assert (excinfo.value.frame_index, excinfo.value.name) == (1, "magmom")
+
+
+def test_omit_rule_with_mixed_presence_cannot_batch():
+    import oxyz
+
+    with pytest.raises(oxyz.ParseError, match="charge"):
+        oxyz.read_batch(
+            DATA / "mixed_schema_optional_column.xyz", schema=_charge_omit_spec()
+        )

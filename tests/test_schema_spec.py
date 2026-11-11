@@ -284,3 +284,53 @@ def test_freeze_optional_non_real_without_fill_raises(tmp_path):
     spec = SchemaSpec(columns=(ColumnRule("label*", Kind.STR),), mode="project")
     with pytest.raises(SchemaError, match="fill"):
         spec.freeze(f)
+
+
+def test_absent_omit_round_trips_and_is_written_only_when_set():
+    spec = SchemaSpec(
+        columns=(
+            ColumnRule("charge", Kind.REAL, required=False, absent="omit"),
+            ColumnRule("pos", Kind.REAL, width=3),
+        ),
+        metadata=(MetadataRule("id", Kind.INT, required=False, absent="omit"),),
+        mode="project",
+    )
+    assert SchemaSpec.from_dict(spec.to_dict()) == spec
+    assert SchemaSpec.from_yaml(spec.to_yaml()) == spec
+    assert SchemaSpec.from_json(spec.to_json()) == spec
+    assert spec.to_dict()["columns"] == {
+        "charge": {"kind": "R", "required": False, "absent": "omit"},
+        "pos": {"kind": "R", "width": 3},
+    }
+    assert spec.to_dict()["metadata"]["id"]["absent"] == "omit"
+    assert "charge: R:1?" in repr(spec).replace("'", "")
+
+
+def test_absent_fill_is_the_default_and_is_not_written():
+    rule = ColumnRule("charge", Kind.REAL, required=False)
+    assert rule.absent == "fill"
+    assert "absent" not in SchemaSpec(columns=(rule,)).to_dict()["columns"]["charge"]
+
+
+@pytest.mark.parametrize("axis", ["columns", "metadata"])
+def test_unknown_absent_value_is_rejected(axis):
+    with pytest.raises(ValueError, match="absent"):
+        SchemaSpec.from_dict({axis: {"q": {"kind": "R", "absent": "drop"}}})
+
+
+def test_freeze_carries_absent_and_needs_no_fill_for_omit(tmp_path):
+    f = tmp_path / "mixed.xyz"
+    f.write_text(
+        "1\nProperties=species:S:1:pos:R:3:n:I:1 tag=3\nH 0 0 0 1\n"
+        "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n"
+    )
+    spec = SchemaSpec(
+        columns=(ColumnRule("n*", Kind.INT, absent="omit"),),
+        metadata=(MetadataRule("ta*", Kind.INT, absent="omit"),),
+        mode="project",
+    )
+    frozen = spec.freeze(f)
+    (column,) = [r for r in frozen.columns if r.name == "n"]
+    (meta,) = [r for r in frozen.metadata if r.key == "tag"]
+    assert (column.required, column.fill, column.absent) == (False, None, "omit")
+    assert (meta.required, meta.fill, meta.absent) == (False, None, "omit")

@@ -211,6 +211,7 @@ def spec(obj: SchemaSpec) -> str:
             html.escape(column_sig(r.kind, r.width)),
             "yes" if r.required else "no",
             *bounds(r),
+            "omit" if r.absent == "omit" else "",
         ]
         for r in obj.columns
     ]
@@ -220,10 +221,11 @@ def spec(obj: SchemaSpec) -> str:
             html.escape(metadata_sig(r.kind, r.shape)),
             "yes" if r.required else "no",
             *bounds(r),
+            "omit" if r.absent == "omit" else "",
         ]
         for r in obj.metadata
     ]
-    header = ["name", "type", "required", "count", "min", "max", "fill"]
+    header = ["name", "type", "required", "count", "min", "max", "fill", "absent"]
     frame_line = (
         "" if obj.frame is None else f"<p>frame: {html.escape(repr(obj.frame))}</p>"
     )
