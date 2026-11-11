@@ -139,30 +139,37 @@ def test_field_type_table(annotation, spec, expected):
     assert field_type(annotation, spec) == expected
 
 
+UNSUPPORTED = "is not a supported field type"
+
+
 @pytest.mark.parametrize(
-    ("annotation", "spec"),
+    ("annotation", "spec", "match"),
     [
-        (Meta[float], Column()),
-        (float, Meta()),
-        (Meta, Meta()),
-        (Column[npt.NDArray[np.float32]], Column()),
-        (Meta[float], Meta(shape=(3,))),
-        (Meta[Array], Meta()),
-        (Column[list[str]], Column(width=2)),
-        (Column[list[list[str]]], Column()),
-        (Meta[Array], Meta(shape=(3, 3))),
-        (Meta[Array], Meta(shape=(0,))),
-        (Meta[list[list[str]]], Meta(shape=(2,))),
-        (Meta[float | str], Meta()),
-        (Cell[npt.NDArray[np.int64]], Cell()),
-        (Matrix3[float], Matrix3()),
-        (Meta[int], Meta(fill=1.5)),
-        (Meta[bool], Meta(fill=1)),
-        (Column[Array], Column(width=0)),
+        (Meta[float], Column(), r"is not Column\[\.\.\.\]"),
+        (float, Meta(), r"is not Meta\[\.\.\.\]"),
+        (Meta, Meta(), r"is not Meta\[\.\.\.\]"),
+        (Column[npt.NDArray[np.float32]], Column(), rf"float32.*{UNSUPPORTED}"),
+        (Meta[float], Meta(shape=(3,)), rf"shape=\(3,\) {UNSUPPORTED}"),
+        (Meta[Array], Meta(), rf"shape=\(\) {UNSUPPORTED}"),
+        (Column[list[str]], Column(width=2), f"width=2 {UNSUPPORTED}"),
+        (Column[list[list[str]]], Column(), f"width=1 {UNSUPPORTED}"),
+        (Meta[Array], Meta(shape=(3, 3)), rf"shape=\(3, 3\) {UNSUPPORTED}"),
+        (Meta[Array], Meta(shape=(0,)), rf"shape=\(0,\) {UNSUPPORTED}"),
+        (
+            Meta[list[list[str]]],
+            Meta(shape=(2,)),
+            rf"list\[list\[str\]\]\].*{UNSUPPORTED}",
+        ),
+        (Meta[float | str], Meta(), rf"float \| str.*{UNSUPPORTED}"),
+        (Cell[npt.NDArray[np.int64]], Cell(), rf"int64.*{UNSUPPORTED}"),
+        (Matrix3[float], Matrix3(), rf"Matrix3\[float\].*{UNSUPPORTED}"),
+        (Meta[int], Meta(fill=1.5), "fill 1.5 is not a valid Int value"),
+        (Meta[bool], Meta(fill=1), "fill 1 is not a valid Bool value"),
+        (Column[Array], Column(width=0), f"width=0 {UNSUPPORTED}"),
     ],
 )
-def test_field_type_rejects(annotation, spec):
-    with pytest.raises(TypeError):
+def test_field_type_rejects(annotation, spec, match):
+    with pytest.raises(TypeError, match=match):
         field_type(annotation, spec)
 
 
@@ -243,6 +250,27 @@ def test_accepts_sees_through_aliases():
     assert not REAL_META.batched().accepts(Array | None)
     assert FieldType(Kind.STR, "metadata").batched().accepts(list[str])
     assert not FieldType(Kind.STR, "metadata").batched().accepts(list[list[str]])
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        REAL_META,
+        FieldType(Kind.REAL, "metadata", optional=True),
+        FieldType(Kind.STR, "column", width=2, optional=True),
+        FieldType(Kind.REAL, "metadata", shape=(6,), optional=True).batched(),
+        CELL,
+    ],
+)
+def test_accepts_its_own_annotation(field):
+    assert field.accepts(field.annotation())
+
+
+def test_accepts_tells_optional_from_required():
+    optional = FieldType(Kind.REAL, "metadata", optional=True)
+    assert optional.accepts(float | None)
+    assert not optional.accepts(float)
+    assert not REAL_META.accepts(float | None)
 
 
 def test_cell_and_matrix3_frame_casts_are_views_in_ase_layout():
@@ -372,7 +400,11 @@ def test_unbox_gives_python_scalars_views_and_list_copies():
         (REAL_META, True, None, TypeError, "float"),
         (FieldType(Kind.INT, "metadata"), 1.0, None, TypeError, "int"),
         (FieldType(Kind.INT, "metadata"), True, None, TypeError, "int"),
-        (FieldType(Kind.BOOL, "metadata"), np.True_, None, TypeError, "bool"),
+        (FieldType(Kind.INT, "metadata"), np.True_, None, TypeError, "int"),
+        (FieldType(Kind.INT, "metadata"), np.float64(1.0), None, TypeError, "int"),
+        (REAL_META, np.True_, None, TypeError, "float"),
+        (FieldType(Kind.BOOL, "metadata"), np.int64(1), None, TypeError, "bool"),
+        (FieldType(Kind.BOOL, "metadata"), 1, None, TypeError, "bool"),
         (REAL_META, None, None, TypeError, "not optional"),
         (
             FieldType(Kind.REAL, "metadata", optional=True).batched(),
@@ -407,6 +439,12 @@ def test_check_names_type_and_shape_faults(field, value, rows, error, match):
         (REAL_META, 1.5, None),
         (REAL_META, 1, None),
         (REAL_META, np.float64(1.5), None),
+        (REAL_META, np.float32(1.5), None),
+        (REAL_META, np.int64(1), None),
+        (FieldType(Kind.INT, "metadata"), np.int64(1), None),
+        (FieldType(Kind.INT, "metadata"), np.arange(3).sum(), None),
+        (FieldType(Kind.BOOL, "metadata"), np.True_, None),
+        (FieldType(Kind.BOOL, "metadata"), True, None),
         (FieldType(Kind.REAL, "metadata", optional=True), None, None),
         (FieldType(Kind.STR, "metadata"), "x", None),
         (CELL, np.zeros((3, 3)), None),
@@ -439,3 +477,59 @@ def test_equal_and_summarise():
     assert REAL_META.summarise(None) == "None"
     assert FieldType(Kind.STR, "metadata").summarise("x") == "'x'"
     assert CELL.summarise(np.zeros((3, 3))) == "float64[3, 3]"
+
+
+def _assert_same_value(out: object, expected: object) -> None:
+    assert type(out) is type(expected)
+    if isinstance(expected, np.ndarray):
+        assert isinstance(out, np.ndarray)
+        assert (out.dtype, out.shape) == (expected.dtype, expected.shape)
+        np.testing.assert_array_equal(out, expected)
+    else:
+        assert out == expected
+
+
+@pytest.mark.parametrize(
+    ("field", "fill", "rows", "expected"),
+    [
+        (REAL_META, 0, 4, 0.0),
+        (FieldType(Kind.INT, "metadata"), 3, 4, 3),
+        (FieldType(Kind.BOOL, "metadata"), True, 4, True),
+        (FieldType(Kind.STR, "metadata"), "x", 4, "x"),
+        (FieldType(Kind.REAL, "metadata", shape=(6,)), 1.5, 4, np.full(6, 1.5)),
+        (FieldType(Kind.INT, "metadata", shape=(3,)), 1, 4, np.ones(3, np.int64)),
+        (FieldType(Kind.STR, "metadata", shape=(2,)), "a", 4, ["a", "a"]),
+        (CELL, 0.0, 4, np.zeros((3, 3))),
+        (MATRIX3, 2, 4, np.full((3, 3), 2.0)),
+        (REAL_COLUMN, 0, 2, np.zeros(2)),
+        (FieldType(Kind.REAL, "column", width=3), 1.0, 2, np.ones((2, 3))),
+        (FieldType(Kind.BOOL, "column"), False, 2, np.zeros(2, np.bool_)),
+        (FieldType(Kind.STR, "column"), "X", 2, ["X", "X"]),
+        (FieldType(Kind.STR, "column", width=2), "X", 2, [["X", "X"], ["X", "X"]]),
+        (REAL_META.batched(), 1, 2, np.ones(2)),
+        (
+            FieldType(Kind.INT, "metadata", shape=(3,)).batched(),
+            0,
+            2,
+            np.zeros((2, 3), np.int64),
+        ),
+        (CELL.batched(), 0.0, 2, np.zeros((2, 3, 3))),
+        (FieldType(Kind.STR, "metadata").batched(), "a", 2, ["a", "a"]),
+        (
+            FieldType(Kind.STR, "metadata", shape=(2,)).batched(),
+            "a",
+            2,
+            [["a", "a"], ["a", "a"]],
+        ),
+    ],
+)
+def test_filled_is_the_fill_as_a_well_formed_value(field, fill, rows, expected):
+    out = field.filled(fill, rows=rows)
+    _assert_same_value(out, expected)
+    field.check(out, rows=rows)
+
+
+def test_filled_string_rows_are_distinct_lists():
+    out = FieldType(Kind.STR, "column", width=2).filled("X", rows=2)
+    assert isinstance(out, list)
+    assert out[0] is not out[1]

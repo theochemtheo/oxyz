@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
     from oxyz._batch import Batch
     from oxyz._frames import Frame
+    from oxyz._record import Record
     from oxyz._scan import FrameIndex
     from oxyz._schema import ColumnSchema, MetadataSchema, Schema
     from oxyz._schema_spec import ColumnRule, MetadataRule, SchemaSpec
@@ -29,6 +30,8 @@ DASH = "—"
 
 def number(value: object) -> str:
     """Format one scalar: floats to `DECIMALS` places, strings as `repr`."""
+    if value is None:
+        return "None"
     if isinstance(value, (bool, np.bool_)):
         return str(bool(value))
     if isinstance(value, (int, np.integer)):
@@ -72,6 +75,8 @@ def rows_text(value: object) -> str:
 
 
 def dtype_text(value: object) -> str:
+    if value is None:
+        return DASH
     if isinstance(value, np.ndarray):
         return str(value.dtype)
     if isinstance(value, list):
@@ -80,6 +85,8 @@ def dtype_text(value: object) -> str:
 
 
 def shape_text(value: object) -> str:
+    if value is None:
+        return DASH
     if isinstance(value, np.ndarray):
         return str(value.shape)
     if isinstance(value, list):
@@ -156,6 +163,15 @@ def batch(obj: Batch) -> str:
         [f"{obj.n_frames} frames", _atoms(obj.n_atoms, obj.total_atoms)],
         _fields("columns", "preview", obj.columns, rows_text),
         _fields("metadata", "value", obj.metadata, rows_text),
+    )
+
+
+def record(obj: Record) -> str:
+    values = {name: getattr(obj, name) for name, _, _ in type(obj).__record_fields__}
+    return _page(
+        type(obj).__name__,
+        [f"{obj.n_atoms} atoms"],
+        _fields("fields", "value", values, value_text),
     )
 
 

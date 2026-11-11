@@ -16,8 +16,14 @@ from typing import (
     overload,
 )
 
+import numpy as np
+
+from oxyz import _html, _summary
+
 if TYPE_CHECKING:
+    from oxyz._frames import Frame
     from oxyz._record_fields import FieldType
+    from oxyz._schema_spec import Absent, ColumnRule, MetadataRule, SchemaSpec
 
 type Fill = float | int | bool | str
 
@@ -334,6 +340,8 @@ class RecordMeta(type):
         strict: bool | None = None,
         **kwargs: object,
     ) -> RecordMeta:
+        if strict is not None and not isinstance(strict, bool):
+            raise TypeError(f"{name}: strict must be a bool, got {strict!r}")
         namespace = dict(namespace)
         annotations = _namespace_annotations(namespace)
         root = not any(isinstance(base, RecordMeta) for base in bases)
@@ -346,7 +354,7 @@ class RecordMeta(type):
         # Shadows an inherited map, so `dataclass()` finds each slot, not a base's key.
         namespace["__record_keys__"] = {}
         cls = super().__new__(mcls, name, bases, namespace, **kwargs)
-        dataclasses.dataclass(frozen=True, kw_only=True, eq=False)(cls)
+        dataclasses.dataclass(frozen=True, kw_only=True, eq=False, repr=False)(cls)
         fields = () if root else _bind_fields(cls, annotations, defaults)
         cls.__record_fields__ = fields
         if strict is None:
@@ -377,14 +385,24 @@ class Record(metaclass=RecordMeta):
             energy: Meta[float] = Meta("REF_energy")
 
     The `Annotated` form allows an alias shared across records. Every
-    field, and `n_atoms`, is a required keyword argument of `__init__`.
-    Instances are frozen and slotted: they have no `__dict__`, and
-    assigning to a field raises `dataclasses.FrozenInstanceError`.
+    field, and `n_atoms`, is a required keyword argument of `__init__`,
+    which checks each value against its field: Python type or dtype,
+    width or shape, `None` only where the annotation allows it, and
+    `n_atoms` rows for a per-atom field. Values are kept as given, neither
+    copied nor converted nor made read-only. Instances are frozen and
+    slotted: they have no `__dict__`, and assigning to a field raises
+    `dataclasses.FrozenInstanceError`.
+
+    `from_frame` builds a record from an `oxyz.Frame`, and `spec` gives
+    the `SchemaSpec` that describes the record's fields. Records compare
+    equal when they are of the same class and hold equal values, NaN
+    equal to NaN; they are unhashable.
 
     On the class, a field name gives the field's key, such as
     `MaceSample.energy`: a copy of its specifier with `name` and `owner`
-    set and `key` defaulting to the field name. A subclass shares its
-    base's keys.
+    set. Its `key` is the file key the field reads: the one given to the
+    specifier, else the field name (`Lattice` for `Cell`). A subclass
+    shares its base's keys.
 
     Parameters
     ----------
@@ -395,8 +413,8 @@ class Record(metaclass=RecordMeta):
     ----------------
     strict : bool, optional
         Class keyword, as in `class MaceSample(Record, strict=True)`. Under
-        `strict`, a float field does not accept an integer value from the
-        file. Inherited from the base record; `False` by default.
+        `strict`, a float field does not accept an integer value from a
+        frame. Inherited from the base record; `False` by default.
 
     Raises
     ------
@@ -405,10 +423,148 @@ class Record(metaclass=RecordMeta):
         a specifier whose class differs from the annotation's, no
         specifier or two, a width, shape or fill inconsistent with the
         annotation, two fields with one key on one axis, or a reserved
-        field name.
+        field name. From `__init__`, naming the field: a wrong type or
+        dtype.
+    ValueError
+        From `__init__`, naming the field: a wrong width, shape or row
+        count, or a negative `n_atoms`.
     """
 
     n_atoms: int
+
+    __hash__ = None
+
+    def __post_init__(self) -> None:
+        cls = type(self)
+        n_atoms = self.n_atoms
+        if isinstance(n_atoms, (bool, np.bool_)) or not isinstance(
+            n_atoms, (int, np.integer)
+        ):
+            raise TypeError(
+                f"{cls.__name__}.n_atoms: expected int, got {type(n_atoms).__name__}"
+            )
+        if n_atoms < 0:
+            raise ValueError(f"{cls.__name__}.n_atoms: is negative ({n_atoms})")
+        for name, field, _ in cls.__record_fields__:
+            rows = n_atoms if field.axis == "column" else None
+            try:
+                field.check(getattr(self, name), rows=rows)
+            except (TypeError, ValueError) as error:
+                raise type(error)(f"{cls.__name__}.{name}: {error}") from None
+
+    @classmethod
+    def _trusted(cls, **values: object) -> Self:
+        """Build an instance from values already known to fit, unchecked."""
+        record = object.__new__(cls)
+        for name, value in values.items():
+            object.__setattr__(record, name, value)
+        return record
+
+    @classmethod
+    def spec(cls) -> SchemaSpec:
+        """Return the project-mode `SchemaSpec` that describes this record's fields.
+
+        One rule per field, in declaration order: a field without a fill is
+        required, one with `fill=` is optional with that fill, and an
+        `X | None` field is optional with `absent="omit"`. The record's
+        `strict` setting is not part of the spec.
+        """
+        from oxyz._schema_spec import ColumnRule, MetadataRule, SchemaSpec
+
+        columns: list[ColumnRule] = []
+        metadata: list[MetadataRule] = []
+        for _, field, key in cls.__record_fields__:
+            assert key.key is not None  # noqa: S101 — type-narrowing only
+            required = not field.optional and key.fill is None
+            absent: Absent = "omit" if field.optional else "fill"
+            if field.axis == "column":
+                rule = ColumnRule(
+                    key.key,
+                    field.kind,
+                    width=field.width,
+                    required=required,
+                    fill=key.fill,
+                    absent=absent,
+                )
+                columns.append(rule)
+            else:
+                rule = MetadataRule(
+                    key.key,
+                    field.kind,
+                    shape=field.shape,
+                    required=required,
+                    fill=key.fill,
+                    absent=absent,
+                )
+                metadata.append(rule)
+        return SchemaSpec(
+            columns=tuple(columns), metadata=tuple(metadata), mode="project"
+        )
+
+    @classmethod
+    def from_frame(cls, frame: Frame) -> Self:
+        """Build a record from a frame, checking it against the record's fields.
+
+        Each field's key is looked up in the frame's columns or metadata. An
+        absent key gives `None` for an `X | None` field and the fill for a
+        field declared with `fill=`. An integer value is accepted for a
+        float field, and converted, unless the record is `strict`.
+
+        Arrays in the record are read-only. Those taken unchanged from the
+        frame are views of its arrays, so a later write to the frame shows
+        through the record; call `.copy()` on a field for an independent
+        array. String lists are copied.
+
+        Raises
+        ------
+        oxyz.SchemaError
+            A required key is absent, or a value has the wrong kind, width
+            or shape. `name` is the key and `frame_index` is `None`.
+        """
+        from oxyz._record_fields import field_value
+        from oxyz._schema_match import SchemaError
+
+        strict = cls.__record_strict__
+        values: dict[str, object] = {"n_atoms": frame.n_atoms}
+        for name, field, key in cls.__record_fields__:
+            stored = frame.columns if field.axis == "column" else frame.metadata
+            try:
+                values[name] = field_value(
+                    field, key, stored, rows=frame.n_atoms, strict=strict, owned=False
+                )
+            except SchemaError as error:
+                raise SchemaError(f"{cls.__name__}: {error}", name=error.name) from None
+        return cls._trusted(**values)
+
+    def __eq__(self, other: object) -> bool:
+        """Compare class, atom count and every field, NaN equal to NaN."""
+        if not isinstance(other, Record):
+            return NotImplemented
+        cls = type(self)
+        if type(other) is not cls or self.n_atoms != other.n_atoms:
+            return False
+        return all(
+            field.equal(getattr(self, name), getattr(other, name))
+            for name, field, _ in cls.__record_fields__
+        )
+
+    def __repr__(self) -> str:
+        """Summarise the fields: scalars by value, arrays by dtype and shape."""
+        cls = type(self)
+        fields = cls.__record_fields__
+        shown = [f"n_atoms={self.n_atoms}"]
+        shown += [
+            f"{name}={field.summarise(getattr(self, name))}"
+            for name, field, _ in fields[: _summary._MAX_ENTRIES]  # noqa: SLF001 — shared repr limit
+        ]
+        elided = len(fields) - _summary._MAX_ENTRIES  # noqa: SLF001 — shared repr limit
+        if elided > 0:
+            shown.append(f"+{elided} more")
+        return f"{cls.__name__}({', '.join(shown)})"
+
+    def _repr_html_(self) -> str:
+        """Render the fields as a table for a notebook."""
+        return _html.record(self)
 
     def __getstate__(self) -> dict[str, object]:
         return {

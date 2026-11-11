@@ -22,12 +22,13 @@ import numpy.typing as npt
 
 from oxyz import _summary
 from oxyz._project import _fill_matches_kind
-from oxyz._schema import Kind
+from oxyz._schema import Kind, column_sig, metadata_sig
+from oxyz._schema_match import SchemaError, column_signature, metadata_signature
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
-    from oxyz._record import FieldSpec
+    from oxyz._record import FieldSpec, Fill
 
 type _Form = Literal["scalar", "array", "list", "rows"]
 
@@ -85,7 +86,7 @@ class FieldType:
             _check_strings(value, [(rows, "rows"), *dims] if leading else dims)
         elif leading or trailing:
             self._check_array(value, rows=rows, leading=leading, trailing=trailing)
-        elif not _fill_matches_kind(value, self.kind):
+        elif not _scalar_matches(value, self.kind):
             expected = _SCALAR_TYPES[self.kind].__name__
             raise TypeError(f"expected {expected}, got {type(value).__name__}")
 
@@ -134,8 +135,27 @@ class FieldType:
 
     def accepts(self, annotation: object) -> bool:
         """Report whether `annotation` declares this form's value."""
-        found = _describe(_bare(annotation))
-        return found is not None and found == _describe(_bare(self.annotation()))
+        value, optional = _strip_none(_bare(annotation))
+        own_value, own_optional = _strip_none(_bare(self.annotation()))
+        found = _describe(value)
+        return (
+            found is not None
+            and found == _describe(own_value)
+            and optional == own_optional
+        )
+
+    def filled(self, fill: Fill, *, rows: int) -> object:
+        """Return `fill` as a value of this form; `rows` sizes a leading row axis."""
+        if self.axis == "column":
+            dims = (rows,) if self.width == 1 else (rows, self.width)
+        else:
+            dims = (rows, *self.shape) if self.batch_form else self.shape
+        if self.kind == Kind.STR:
+            return _repeated(fill, dims)
+        if not dims:
+            return _SCALAR_TYPES[self.kind](fill)
+        full = np.full(dims, fill, dtype=_DTYPES[self.kind])
+        return self._cast_array(full, owned=True)
 
     def empty(self) -> object:
         """Return a zero-row value of the batch form."""
@@ -202,6 +222,64 @@ class FieldType:
                 out = raw.view()
             out.flags.writeable = False
         return out
+
+
+def field_value(
+    field: FieldType,
+    spec: FieldSpec[Any],
+    stored: Mapping[str, object],
+    *,
+    rows: int,
+    strict: bool,
+    owned: bool,
+) -> object:
+    """Look a field's key up in `stored`, check its signature and cast it.
+
+    An absent key gives `None` for an optional field, else the declared fill.
+    An integer value satisfies a REAL field unless `strict`. Unless `owned`,
+    arrays come back read-only. Raises `SchemaError` naming the key.
+    """
+    key = spec.key
+    assert key is not None  # noqa: S101 — type-narrowing only
+    if key not in stored:
+        if field.optional:
+            return None
+        if spec.fill is None:
+            raise SchemaError(f"{field.axis} {key!r}: missing (required)", name=key)
+        value = field.filled(spec.fill, rows=rows)
+        if isinstance(value, np.ndarray) and not owned:
+            value.flags.writeable = False
+        return value
+    raw = stored[key]
+    if field.axis == "column":
+        kind, width = column_signature(raw)
+        found, expected = column_sig(kind, width), column_sig(field.kind, field.width)
+        agrees = width == field.width
+    else:
+        kind, shape = _metadata_signature(raw, key)
+        found, expected = (
+            metadata_sig(kind, shape),
+            metadata_sig(field.kind, field.shape),
+        )
+        agrees = shape == field.shape
+    promotes = kind == Kind.INT and field.kind == Kind.REAL
+    if not agrees or (kind != field.kind and not promotes) or (promotes and strict):
+        reason = "; the record is strict" if agrees and promotes else ""
+        raise SchemaError(
+            f"{field.axis} {key!r}: expected {expected}, found {found}{reason}",
+            name=key,
+        )
+    return field.cast(raw, owned=owned)
+
+
+def _metadata_signature(raw: object, key: str) -> tuple[Kind, tuple[int, ...]]:
+    """`metadata_signature`, counting a 2-D array as its flattened length."""
+    if isinstance(raw, np.ndarray) and raw.ndim > 1:
+        raw = raw.reshape(-1)
+    try:
+        return metadata_signature(raw)
+    except TypeError as error:
+        raise SchemaError(f"metadata {key!r}: {error}", name=key) from None
 
 
 def unwrap(annotation: object) -> tuple[object, tuple[object, ...]]:
@@ -319,6 +397,24 @@ def _unsupported(annotation: object, spec: FieldSpec[Any]) -> TypeError:
     else:
         parameters = f"shape={spec.shape}"
     return TypeError(f"{annotation!r} with {parameters} is not a supported field type")
+
+
+def _scalar_matches(value: object, kind: Kind) -> bool:
+    if isinstance(value, (bool, np.bool_)):
+        return kind == Kind.BOOL
+    if kind == Kind.INT:
+        return isinstance(value, (int, np.integer))
+    if kind == Kind.REAL:
+        return isinstance(value, (int, float, np.integer, np.floating))
+    if kind == Kind.STR:
+        return isinstance(value, str)
+    return False
+
+
+def _repeated(fill: Fill, dims: tuple[int, ...]) -> object:
+    if not dims:
+        return fill
+    return [_repeated(fill, dims[1:]) for _ in range(dims[0])]
 
 
 def _check_strings(value: object, dims: Sequence[tuple[int | None, str]]) -> None:

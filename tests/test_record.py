@@ -4,18 +4,35 @@ import copy
 import dataclasses
 import inspect
 import pickle
+import re
+from pathlib import Path
 from typing import Annotated, Any
 
 import numpy as np
 import numpy.typing as npt
 import pytest
 
-from oxyz import Cell, Column, Matrix3, Meta, Record
+import oxyz
+from oxyz import (
+    Cell,
+    Column,
+    ColumnRule,
+    Frame,
+    Matrix3,
+    Meta,
+    MetadataRule,
+    Record,
+    SchemaError,
+    SchemaSpec,
+)
 from oxyz._record_fields import FieldType
 from oxyz._schema import Kind
 
+MACE = Path(__file__).parent / "data" / "mace_ref_energy_forces_stress.xyz"
+
 type Array = npt.NDArray[np.float64]
 type Forces = Annotated[Column[Array], Column("REF_forces", width=3)]
+type Energy = Annotated[Meta[float | None], Meta("E", fill=0.0)]
 
 
 class MaceSample(Record):
@@ -313,3 +330,307 @@ DEFINITION_ERRORS = [
 def test_definition_errors(body: str, field: str, reason: str):
     with pytest.raises(TypeError, match=rf"^Bad\.{field}: .*{reason}"):
         define(body)
+
+
+def test_strict_must_be_a_bool():
+    with pytest.raises(TypeError, match=r"^S: strict must be a bool, got 'yes'"):
+        type("S", (Record,), {}, strict="yes")
+
+
+def test_init_keeps_the_arrays_it_is_given():
+    pos = np.zeros((3, 3))
+    r = make_mace(positions=pos)
+    assert r.positions is pos
+    assert pos.flags.writeable
+
+
+@pytest.mark.parametrize(
+    ("override", "error", "reason"),
+    [
+        ({"positions": np.zeros((3, 3), dtype=np.float32)}, TypeError, "dtype"),
+        ({"positions": np.zeros((3, 2))}, ValueError, "shape"),
+        ({"positions": np.zeros((4, 3))}, ValueError, "expected 3 rows"),
+        ({"forces": [[0.0] * 3] * 3}, TypeError, "numpy array"),
+        ({"energy": None}, TypeError, "not optional"),
+        ({"energy": "x"}, TypeError, "expected float"),
+        ({"energy": np.True_}, TypeError, "expected float"),
+        ({"stress": np.zeros(3)}, ValueError, "shape"),
+        ({"cell": np.zeros(9)}, ValueError, "shape"),
+        ({"config_type": 1}, TypeError, "expected str"),
+        ({"n_atoms": "3"}, TypeError, "expected int"),
+        ({"n_atoms": True}, TypeError, "expected int"),
+        ({"n_atoms": -1}, ValueError, "negative"),
+    ],
+)
+def test_init_checks_name_the_field(override, error, reason):
+    (field,) = override
+    with pytest.raises(error, match=rf"^MaceSample\.{field}: .*{reason}"):
+        make_mace(**override)
+
+
+def test_init_accepts_numpy_scalars_and_keeps_them():
+    class Counts(Record):
+        total: Meta[int] = Meta()
+        mean: Meta[float] = Meta()
+
+    total: Any = np.arange(3).sum()
+    r = Counts(n_atoms=total, total=total, mean=total)
+    assert r.total is total
+    assert r.mean is total
+
+
+def test_dataclass_replace_is_checked():
+    with pytest.raises(TypeError, match=r"^MaceSample\.energy: "):
+        dataclasses.replace(make_mace(), energy="x")
+
+
+def test_trusted_skips_the_checks():
+    assert MaceSample._trusted(n_atoms=3, energy="not a float").energy == "not a float"
+
+
+def test_trusted_sets_every_value_given():
+    r = make_mace()
+    values = {name: getattr(r, name) for name in ["n_atoms", *MACE_FIELDS]}
+    trusted = MaceSample._trusted(**values)
+    assert type(trusted) is MaceSample
+    assert all(getattr(trusted, name) is value for name, value in values.items())
+
+
+def test_spec_is_the_project_mode_schema_and_round_trips():
+    spec = MaceSample.spec()
+    assert spec == SchemaSpec(
+        mode="project",
+        columns=(
+            ColumnRule("pos", Kind.REAL, width=3),
+            ColumnRule("REF_forces", Kind.REAL, width=3),
+        ),
+        metadata=(
+            MetadataRule("REF_energy", Kind.REAL),
+            MetadataRule(
+                "REF_stress", Kind.REAL, shape=(6,), required=False, absent="omit"
+            ),
+            MetadataRule("Lattice", Kind.REAL, shape=(9,)),
+            MetadataRule("config_type", Kind.STR),
+        ),
+    )
+    assert SchemaSpec.from_yaml(spec.to_yaml()) == spec
+
+
+def test_spec_carries_fills():
+    class Filled(Record):
+        labels: Column[list[str]] = Column(fill="X")
+        charge: Meta[int | None] = Meta(fill=0)
+        cell: Cell[Array] = Cell(fill=0.0)
+        virial: Matrix3[Array | None] = Matrix3()
+
+    spec = Filled.spec()
+    assert spec == SchemaSpec(
+        mode="project",
+        columns=(ColumnRule("labels", Kind.STR, required=False, fill="X"),),
+        metadata=(
+            MetadataRule("charge", Kind.INT, required=False, fill=0, absent="omit"),
+            MetadataRule("Lattice", Kind.REAL, shape=(9,), required=False, fill=0.0),
+            MetadataRule(
+                "virial", Kind.REAL, shape=(9,), required=False, absent="omit"
+            ),
+        ),
+    )
+    assert SchemaSpec.from_yaml(spec.to_yaml()) == spec
+
+
+def test_declaration_forms_give_identical_specs():
+    class Default(Record):
+        forces: Column[Array] = Column("REF_forces", width=3)
+        energy: Meta[float | None] = Meta("E", fill=0.0)
+
+    class InAnnotated(Record):
+        forces: Annotated[Column[Array], Column("REF_forces", width=3)]
+        energy: Annotated[Meta[float | None], Meta("E", fill=0.0)]
+
+    class ViaAlias(Record):
+        forces: Forces
+        energy: Energy
+
+    class AliasAgain(Record):
+        forces: Forces
+        energy: Energy
+
+    specs = [cls.spec() for cls in (Default, InAnnotated, ViaAlias, AliasAgain)]
+    assert specs[0].metadata == (
+        MetadataRule("E", Kind.REAL, required=False, fill=0.0, absent="omit"),
+    )
+    assert all(spec == specs[0] for spec in specs)
+
+
+def mace_frame(**metadata: Any) -> Frame:
+    """The MACE fixture's first frame, with metadata entries replaced or removed."""
+    frame = oxyz.read(MACE, 0)
+    merged = {**frame.metadata, **metadata}
+    return Frame(
+        n_atoms=frame.n_atoms,
+        columns=frame.columns,
+        metadata={key: value for key, value in merged.items() if value is not None},
+    )
+
+
+def test_from_frame_matches_the_frame():
+    frame = oxyz.read(MACE, 0)
+    r = MaceSample.from_frame(frame)
+    assert type(r) is MaceSample
+    assert (r.energy, r.n_atoms, r.config_type) == (-76.123, 3, "Default")
+    np.testing.assert_array_equal(r.cell, frame.cell)
+    assert isinstance(r.cell, np.ndarray)
+    assert r.cell.dtype == np.float64
+    np.testing.assert_array_equal(r.forces, frame.columns["REF_forces"])
+    np.testing.assert_array_equal(r.stress, frame.metadata["REF_stress"])
+    assert np.shares_memory(r.positions, frame.columns["pos"])
+    assert not r.positions.flags.writeable
+    assert not r.cell.flags.writeable
+    assert r.stress is not None
+    assert not r.stress.flags.writeable
+    frame.positions[0, 0] = 9.0
+    assert r.positions[0, 0] == 9.0
+
+
+def test_from_frame_lax_promotes_integers_read_only():
+    class Charged(Record):
+        energy: Meta[float] = Meta("REF_energy")
+        charges: Column[Array] = Column()
+
+    frame = Frame(
+        n_atoms=2,
+        columns={"charges": np.array([1, -1])},
+        metadata={"REF_energy": 0},
+    )
+    r = Charged.from_frame(frame)
+    assert type(r.energy) is float
+    assert r.energy == 0.0
+    assert r.charges.dtype == np.float64
+    assert not r.charges.flags.writeable
+
+
+def test_from_frame_reads_two_dimensional_metadata_flattened():
+    square = np.arange(9.0).reshape(3, 3)
+    r = MaceSample.from_frame(mace_frame(Lattice=square))
+    np.testing.assert_array_equal(r.cell, square)
+
+
+class StrictMace(MaceSample, strict=True):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("record", "frame", "key", "reason"),
+    [
+        (MaceSample, mace_frame(REF_energy=None), "REF_energy", "missing"),
+        (MaceSample, mace_frame(REF_energy=True), "REF_energy", "expected R, found L"),
+        (MaceSample, mace_frame(config_type=1), "config_type", "expected S, found I"),
+        (MaceSample, mace_frame(REF_stress=np.zeros(3)), "REF_stress", r"R\[3\]"),
+        (MaceSample, mace_frame(Lattice=np.zeros((2, 2))), "Lattice", r"R\[4\]"),
+        (StrictMace, mace_frame(), "Lattice", r"found I\[9\].*strict"),
+        (StrictMace, mace_frame(REF_energy=0), "REF_energy", "found I.*strict"),
+    ],
+)
+def test_from_frame_errors_carry_the_key_and_no_frame_index(record, frame, key, reason):
+    with pytest.raises(
+        SchemaError, match=rf"^{record.__name__}: .*{key}.*{reason}"
+    ) as e:
+        record.from_frame(frame)
+    assert (e.value.name, e.value.frame_index) == (key, None)
+
+
+def test_from_frame_column_errors_carry_the_key():
+    frame = oxyz.read(MACE, 0)
+    columns = {**frame.columns, "REF_forces": np.zeros(3)}
+    narrow = Frame(n_atoms=3, columns=columns, metadata=frame.metadata)
+    with pytest.raises(SchemaError, match=r"REF_forces.*expected R:3, found R:1") as e:
+        MaceSample.from_frame(narrow)
+    assert (e.value.name, e.value.frame_index) == ("REF_forces", None)
+    del columns["REF_forces"]
+    with pytest.raises(SchemaError, match=r"REF_forces.*missing") as e:
+        MaceSample.from_frame(narrow)
+    assert e.value.name == "REF_forces"
+
+
+def test_from_frame_optional_and_fill():
+    class Filled(Record):
+        labels: Column[list[str]] = Column(fill="X")
+        charge: Meta[int | None] = Meta(fill=0)
+        cell: Cell[Array] = Cell(fill=0.0)
+
+    class MaybeCell(Record):
+        cell: Cell[Array | None] = Cell(fill=0.0)
+
+    assert MaceSample.from_frame(mace_frame(REF_stress=None)).stress is None
+    empty = Frame(n_atoms=2, columns={}, metadata={})
+    assert MaybeCell.from_frame(empty).cell is None
+    r = Filled.from_frame(empty)
+    assert r.labels == ["X", "X"]
+    assert r.charge is None
+    assert isinstance(r.cell, np.ndarray)
+    np.testing.assert_array_equal(r.cell, np.zeros((3, 3)))
+    assert not r.cell.flags.writeable
+
+
+def test_repr_summarises_without_data():
+    r = MaceSample.from_frame(oxyz.read(MACE, 0))
+    assert repr(r) == (
+        "MaceSample(n_atoms=3, positions=float64[3, 3], forces=float64[3, 3], "
+        "energy=-76.123, stress=float64[6], cell=float64[3, 3], "
+        "config_type='Default')"
+    )
+    assert "stress=None" in repr(make_mace())
+
+
+def test_repr_elides_after_the_entry_limit():
+    body = "\n".join(f"f{i}: Meta[int] = Meta()" for i in range(10))
+    cls = define(body)
+    r = cls(n_atoms=0, **{f"f{i}": i for i in range(10)})
+    assert repr(r) == (
+        "Bad(n_atoms=0, f0=0, f1=1, f2=2, f3=3, f4=4, f5=5, f6=6, f7=7, +2 more)"
+    )
+
+
+def test_equality_treats_nan_as_equal_and_records_are_unhashable():
+    nan_stress = np.array([np.nan, 1.0, 2.0, 3.0, 4.0, 5.0])
+    a = make_mace(stress=nan_stress, energy=float("nan"))
+    b = make_mace(stress=nan_stress.copy(), energy=float("nan"))
+    assert a == b
+    assert a != make_mace(stress=nan_stress, energy=1.0)
+    assert a != make_mace(energy=float("nan"))
+    first, again = (MaceSample.from_frame(oxyz.read(MACE, 0)) for _ in range(2))
+    assert first == again
+    with pytest.raises(TypeError, match="unhashable"):
+        hash(a)
+
+
+def test_equality_compares_type_and_atom_count():
+    class Other(MaceSample):
+        pass
+
+    r = make_mace()
+    other = Other(**{name: getattr(r, name) for name in ["n_atoms", *MACE_FIELDS]})
+    assert r != other
+    assert r.__eq__(1) is NotImplemented
+
+    class One(Record):
+        e: Meta[float] = Meta()
+
+    assert One(n_atoms=1, e=1.0) == One(n_atoms=1, e=1.0)
+    assert One(n_atoms=1, e=1.0) != One(n_atoms=2, e=1.0)
+
+
+def html_rows(markup: str) -> list[list[str]]:
+    rows = re.findall(r"<tr>(.*?)</tr>", markup)
+    return [re.findall(r"<td>(.*?)</td>", row) for row in rows if "<td>" in row]
+
+
+def test_repr_html_lists_every_field():
+    markup = make_mace()._repr_html_()
+    assert "<strong>MaceSample</strong> · 3 atoms" in markup
+    rows = {row[0]: row[1:] for row in html_rows(markup)}
+    assert list(rows) == MACE_FIELDS
+    assert rows["energy"] == ["float", "()", "-76.123"]
+    assert rows["stress"] == ["—", "—", "None"]
+    assert rows["positions"][:2] == ["float64", "(3, 3)"]
+    assert rows["config_type"] == ["str", "()", "&#x27;Default&#x27;"]
