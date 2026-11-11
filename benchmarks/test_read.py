@@ -90,6 +90,30 @@ def oxyz_read_all_schema_with(conformance: oxyz.Conformance):
     return read
 
 
+PROJECT_SPEC = oxyz.SchemaSpec(
+    columns=(
+        oxyz.ColumnRule("pos", oxyz.Kind.REAL, width=3),
+        oxyz.ColumnRule("forces", oxyz.Kind.REAL, width=3),
+    ),
+    metadata=(
+        oxyz.MetadataRule("energy", oxyz.Kind.REAL),
+        oxyz.MetadataRule("Lattice", oxyz.Kind.REAL, shape=(9,)),
+        oxyz.MetadataRule("stress", oxyz.Kind.REAL, shape=(9,), required=False),
+    ),
+    mode="project",
+)
+
+
+@row("numpy frames", "project")
+def oxyz_read_all_project(path: Path) -> list:
+    return oxyz.read(path, schema=PROJECT_SPEC)
+
+
+@row("numpy batch", "project")
+def oxyz_read_batch_project(path: Path) -> object:
+    return oxyz.read_batch(path, schema=PROJECT_SPEC)
+
+
 @row("numpy frames", "serial")
 def oxyz_iter_read_all(path: Path) -> list:
     # Collected, so every read_all row does the same total work.
@@ -249,6 +273,7 @@ SCHEMA_READ = [
     pytest.param(oxyz_read_all_with(None), id="baseline"),
     pytest.param(oxyz_read_all_schema_with("required"), id="schema-required"),
     pytest.param(oxyz_read_all_schema_with("strict"), id="schema-strict"),
+    pytest.param(oxyz_read_all_project, id="project"),
 ]
 
 
@@ -260,6 +285,12 @@ def test_schema_read_overhead(benchmark, read, mace_mixed):
         read.spec = oxyz.infer_schema(mace_mixed).to_spec()
     frames = run(benchmark, read, mace_mixed)
     assert len(frames) == 1_000
+
+
+@pytest.mark.benchmark(group="project_batch/mace_mixed")
+def test_project_batch_mace_mixed(benchmark, mace_mixed):
+    batch = run(benchmark, oxyz_read_batch_project, mace_mixed)
+    assert batch.n_frames == 1_000
 
 
 @pytest.mark.benchmark(group="read_first/large_frames")
