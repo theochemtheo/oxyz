@@ -1802,7 +1802,7 @@ dev = [
     { name = "seaborn", specifier = ">=0.13.2" },
     { name = "torch", specifier = ">=2", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torch-sim-atomistic" },
-    { name = "ty", specifier = ">=0.0.84" },
+    { name = "ty", specifier = ">=0.0.100" },
     { name = "types-pyyaml" },
 ]
 s3-test = [

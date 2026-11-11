@@ -8,7 +8,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Internal
 
-- ty floor raised to 0.0.84.
+- ty floor raised to 0.0.100.
 
 ## [1.3.0] - 2026-11-06
 
