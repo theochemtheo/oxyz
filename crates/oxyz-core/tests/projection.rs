@@ -1,7 +1,7 @@
 use compact_str::CompactString;
 use oxyz_core::model::{Column, ColumnData, ColumnKind, Frame, Value};
 use oxyz_core::project::{
-    Axis, DeviationKind, Fill, PlanColumn, PlanMetadata, Projected, ProjectionPlan,
+    Axis, DeviationKind, Fill, PlanColumn, PlanMetadata, Projected, ProjectionPlan, project_frame,
 };
 use oxyz_core::{
     BatchError, ExtxyzError, iter_batches_projected_from, read_all_batch_projected_from,
@@ -103,7 +103,7 @@ fn keeps_declared_drops_undeclared_in_plan_order() {
         frame,
         deviations,
         dropped,
-    } = oxyz_core::project::project_frame(&f, &plan);
+    } = project_frame(&f, &plan);
     assert!(!dropped);
     assert!(deviations.is_empty());
     assert_eq!(frame.columns.len(), 1);
@@ -124,7 +124,7 @@ fn fills_absent_optional_real_silently() {
         frame,
         deviations,
         dropped,
-    } = oxyz_core::project::project_frame(&f, &plan);
+    } = project_frame(&f, &plan);
     assert!(!dropped);
     assert!(deviations.is_empty()); // optional fill is silent
     assert_eq!(frame.columns[1].name, "charge");
@@ -151,7 +151,7 @@ fn absent_required_without_fill_drops_frame_with_missing() {
         deviations,
         dropped,
         ..
-    } = oxyz_core::project::project_frame(&f, &plan);
+    } = project_frame(&f, &plan);
     assert!(dropped);
     assert_eq!(deviations.len(), 1);
     assert_eq!(deviations[0].kind, DeviationKind::Missing);
@@ -170,7 +170,7 @@ fn wrong_kind_reports_mismatch_and_fills_when_possible() {
         frame,
         deviations,
         dropped,
-    } = oxyz_core::project::project_frame(&f, &plan);
+    } = project_frame(&f, &plan);
     assert!(!dropped);
     assert_eq!(deviations.len(), 1);
     assert_eq!(deviations[0].kind, DeviationKind::Mismatch);
@@ -199,7 +199,7 @@ fn projects_metadata_keep_drop_fill_in_order() {
         frame,
         deviations,
         dropped,
-    } = oxyz_core::project::project_frame(&f, &plan);
+    } = project_frame(&f, &plan);
     assert!(!dropped);
     assert!(deviations.is_empty());
     assert_eq!(frame.metadata.len(), 2); // junk dropped
@@ -218,7 +218,7 @@ fn metadata_array_mismatch_reports_bracket_signature() {
         deviations,
         dropped,
         frame,
-    } = oxyz_core::project::project_frame(&f, &plan);
+    } = project_frame(&f, &plan);
     assert!(!dropped);
     assert_eq!(deviations[0].kind, DeviationKind::Mismatch);
     assert_eq!(deviations[0].expected, "R[9]");
@@ -319,7 +319,7 @@ fn duplicate_metadata_prefers_conforming_occurrence() {
         frame,
         deviations,
         dropped,
-    } = oxyz_core::project::project_frame(&f, &plan);
+    } = project_frame(&f, &plan);
     assert!(!dropped);
     assert!(deviations.is_empty());
     assert_eq!(frame.metadata[0], ("energy".into(), Value::Real(-1.0)));
@@ -355,7 +355,7 @@ fn materialises_non_real_fills() {
         ],
         metadata: Vec::new(),
     };
-    let p = oxyz_core::project::project_frame(&f, &plan);
+    let p = project_frame(&f, &plan);
     assert!(!p.dropped);
     assert_eq!(p.frame.columns[0].data.as_int().unwrap(), &[-1, -1]);
     assert_eq!(p.frame.columns[1].data.as_bool().unwrap(), &[true, true]);
@@ -397,7 +397,7 @@ fn keeps_conforming_metadata_of_every_kind_and_shape() {
             plain_meta("sa", ColumnKind::Str, Some(2), Fill::Str(String::new())),
         ],
     };
-    let p = oxyz_core::project::project_frame(&f, &plan);
+    let p = project_frame(&f, &plan);
     assert!(!p.dropped);
     assert!(p.deviations.is_empty());
     assert_eq!(p.frame.metadata[0].1, Value::Int(3));
@@ -422,7 +422,7 @@ fn materialises_absent_optional_metadata_of_every_kind() {
             plain_meta("sa", ColumnKind::Str, Some(2), Fill::Str("none".into())),
         ],
     };
-    let p = oxyz_core::project::project_frame(&f, &plan);
+    let p = project_frame(&f, &plan);
     assert!(!p.dropped);
     assert!(p.deviations.is_empty()); // absent optional is silent
     assert_eq!(p.frame.metadata[0].1, Value::Int(-1));
@@ -450,7 +450,7 @@ fn required_metadata_absent_without_fill_drops_frame() {
             fill: None,
         }],
     };
-    let p = oxyz_core::project::project_frame(&f, &plan);
+    let p = project_frame(&f, &plan);
     assert!(p.dropped);
     assert_eq!(p.deviations.len(), 1);
     assert_eq!(p.deviations[0].axis, Axis::Metadata);
@@ -495,7 +495,7 @@ fn kind_mismatched_fill_falls_back_instead_of_panicking() {
             plain_meta("msa", ColumnKind::Str, Some(1), Fill::Int(1)),
         ],
     };
-    let p = oxyz_core::project::project_frame(&f, &plan);
+    let p = project_frame(&f, &plan);
     assert!(!p.dropped);
     assert!(
         p.frame.columns[0]
@@ -529,36 +529,44 @@ fn optional_without_fill_is_omitted_when_absent() {
         metadata: vec![real_meta("energy", None, false, None)],
     };
     let f = frame(1, vec![col("pos", ColumnData::Real(vec![0.0; 3]), 3)]);
-    let p = oxyz_core::project::project_frame(&f, &plan);
+    let p = project_frame(&f, &plan);
     assert!(!p.dropped && p.deviations.is_empty());
     assert_eq!(p.frame.columns.len(), 1);
     assert!(p.frame.metadata.is_empty());
 }
 
 #[test]
-fn optional_without_fill_drops_on_wrong_kind() {
+fn optional_column_without_fill_drops_on_wrong_kind() {
     let plan = ProjectionPlan {
         columns: vec![real_plan("charge", 1, false, None)],
+        metadata: Vec::new(),
+    };
+    let f = frame(1, vec![col("charge", ColumnData::Int(vec![1]), 1)]);
+    let p = project_frame(&f, &plan);
+    assert!(p.dropped);
+    assert_eq!(p.deviations.len(), 1);
+    let d = &p.deviations[0];
+    assert_eq!(d.axis, Axis::Column);
+    assert_eq!(d.name, "charge");
+    assert_eq!(d.kind, DeviationKind::Mismatch);
+    assert_eq!(d.found.as_deref(), Some("I:1"));
+}
+
+#[test]
+fn optional_metadata_without_fill_drops_on_wrong_kind() {
+    let plan = ProjectionPlan {
+        columns: Vec::new(),
         metadata: vec![real_meta("energy", None, false, None)],
     };
-    let f = Frame {
-        n_atoms: 1,
-        columns: vec![col("charge", ColumnData::Int(vec![1]), 1)],
-        metadata: vec![("energy".into(), Value::Str("high".into()))],
-    };
-    let p = oxyz_core::project::project_frame(&f, &plan);
+    let f = frame_meta(1, vec![("energy".into(), Value::Str("high".into()))]);
+    let p = project_frame(&f, &plan);
     assert!(p.dropped);
-    assert_eq!(p.deviations.len(), 2);
-    let charge = &p.deviations[0];
-    assert_eq!(charge.axis, Axis::Column);
-    assert_eq!(charge.name, "charge");
-    assert_eq!(charge.kind, DeviationKind::Mismatch);
-    assert_eq!(charge.found.as_deref(), Some("I:1"));
-    let energy = &p.deviations[1];
-    assert_eq!(energy.axis, Axis::Metadata);
-    assert_eq!(energy.name, "energy");
-    assert_eq!(energy.kind, DeviationKind::Mismatch);
-    assert_eq!(energy.found.as_deref(), Some("S"));
+    assert_eq!(p.deviations.len(), 1);
+    let d = &p.deviations[0];
+    assert_eq!(d.axis, Axis::Metadata);
+    assert_eq!(d.name, "energy");
+    assert_eq!(d.kind, DeviationKind::Mismatch);
+    assert_eq!(d.found.as_deref(), Some("S"));
 }
 
 // --- parallel and streamed projected reads match the serial read ---------
