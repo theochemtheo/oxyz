@@ -20,7 +20,7 @@ from oxyz._frames import (
     read,
 )
 from oxyz._lookup import AmbiguousNameError
-from oxyz._record import Cell, Column, FieldSpec, Matrix3, Meta
+from oxyz._record import Cell, Column, FieldSpec, Matrix3, Meta, Record
 from oxyz._remote import StorageOptions
 from oxyz._rust import OxyzError, ParseError
 from oxyz._scan import FrameIndex, scan
@@ -69,6 +69,7 @@ __all__ = [
     "Mode",
     "OxyzError",
     "ParseError",
+    "Record",
     "Schema",
     "SchemaError",
     "SchemaSpec",
