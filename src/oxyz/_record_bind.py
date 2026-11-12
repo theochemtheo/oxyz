@@ -141,7 +141,8 @@ def bind(
     class derived for it.
 
     Raises `TypeError` for any other `target`, naming the form to use, and
-    `SchemaError` where `schema` disagrees with one of the record's fields.
+    `SchemaError` where `schema` disagrees with one of the record's fields,
+    or its frame rule requires `Lattice` and no field reads that key.
     """
     if _names_batch(target):
         generic = get_origin(target) is RecordBatch
@@ -204,6 +205,7 @@ def _bind(target: type, schema: SchemaSpec | None) -> Binding:
     spec = record.spec()
     if schema is not None:
         _check_agrees(record, fields, schema, strict=strict)
+        _check_lattice_read(record, fields, schema)
         if schema.frame is not None:
             spec = dataclasses.replace(spec, frame=schema.frame)
     return Binding(
@@ -275,6 +277,23 @@ def _check_agrees(
             f"{found}, the record reads {expected}{reason}",
             name=key,
         )
+
+
+def _check_lattice_read(
+    record: type[Record], fields: _Fields, schema: SchemaSpec
+) -> None:
+    """Raise `SchemaError` if `schema` requires `Lattice` and no field reads it."""
+    if schema.frame is None or not schema.frame.lattice_required:
+        return
+    if any(
+        field.axis == "metadata" and spec.key == "Lattice" for _, field, spec in fields
+    ):
+        return
+    raise SchemaError(
+        f"{record.__name__}: schema= requires 'Lattice' in every frame, but no "
+        "field reads it; declare a Cell field",
+        name="Lattice",
+    )
 
 
 def _plan(

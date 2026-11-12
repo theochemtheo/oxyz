@@ -289,10 +289,11 @@ def read[R: Record](  # noqa: PLR0913  the index/schema/projection/source option
         record alone. A record read parses the whole file, as a schema
         read does. Cannot be combined with `mode`. With `record`, `schema`
         describes the dataset rather than reshaping it: its frame rule
-        applies, and its rule for any key the record reads must agree with
-        the field's kind and width or shape (an integer rule agrees with a
-        float field unless the record is `strict`); rules for other keys
-        are not applied. Under `conformance="warn"`, a frame missing a
+        applies (one that requires `Lattice` needs a field that reads it,
+        such as a `Cell`), and its rule for any key the record reads must
+        agree with the field's kind and width or shape (an integer rule
+        agrees with a float field unless the record is `strict`); rules for
+        other keys are not applied. Under `conformance="warn"`, a frame missing a
         required field, or carrying a field of the wrong kind, is dropped
         with a warning. `index` still counts the file's frames: a slice or
         sequence gives the records of the selected frames that were kept,
@@ -337,7 +338,8 @@ def read[R: Record](  # noqa: PLR0913  the index/schema/projection/source option
     oxyz.SchemaError
         With `record`, under `conformance="strict"` or `"required"`: a frame
         lacks a required field or has one of the wrong kind, with the frame
-        index and key. Before reading: `schema` disagrees with the record.
+        index and key. Before reading: `schema` disagrees with the record,
+        or its frame rule requires `Lattice` and no field reads it.
     IndexError
         An integer `index` is out of range; with `record`, it names a frame
         dropped under `conformance="warn"`.

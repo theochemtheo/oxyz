@@ -351,7 +351,8 @@ list or a mask gives a copy.
 be written out as YAML and used wherever a schema is. Passing `schema=` along
 with `record=` applies the schema's frame rule and checks that its rule for each
 key the record reads agrees with the field; the record's own fields do the
-projecting.
+projecting. A frame rule that requires `Lattice` needs a field that reads it,
+such as a `Cell`, and raises `SchemaError` before the file is opened otherwise.
 
 Construction is checked or trusted, depending on how the record is made.
 `Sample(...)` checks every field: Python type or dtype, width or shape, and row

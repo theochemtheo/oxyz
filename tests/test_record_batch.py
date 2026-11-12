@@ -1159,13 +1159,10 @@ def messages(caught: list[warnings.WarningMessage]) -> list[str]:
     return [str(w.message) for w in caught]
 
 
-@pytest.mark.parametrize(("record", "missing"), [(MadSample, 49), (Energetic, 201)])
-def test_a_lattice_frame_rule_agrees_with_the_frame_read(
-    record: type[Record], missing: int
-):
-    target: Any = RecordBatch[record]  # ty: ignore[invalid-type-form]
+def test_a_lattice_frame_rule_agrees_with_the_frame_read():
+    target: Any = MAD_BATCH
     with pytest.raises(SchemaError) as framed:
-        oxyz.read(MAD, record=record, schema=LATTICE_REQUIRED)
+        oxyz.read(MAD, record=MadSample, schema=LATTICE_REQUIRED)
     with pytest.raises(SchemaError) as batched:
         oxyz.read_batch(MAD, record=target, schema=LATTICE_REQUIRED)
     assert (batched.value.frame_index, batched.value.name) == (0, "Lattice")
@@ -1173,9 +1170,9 @@ def test_a_lattice_frame_rule_agrees_with_the_frame_read(
     with warnings.catch_warnings(record=True) as frame_warnings:
         warnings.simplefilter("always")
         recs = oxyz.read(
-            MAD, record=record, schema=LATTICE_REQUIRED, conformance="warn"
+            MAD, record=MadSample, schema=LATTICE_REQUIRED, conformance="warn"
         )
-    assert len(frame_warnings) == missing
+    assert len(frame_warnings) == 49
     with warnings.catch_warnings(record=True) as batch_warnings:
         warnings.simplefilter("always")
         b = oxyz.read_batch(
@@ -1198,6 +1195,41 @@ def test_a_lattice_frame_rule_agrees_with_the_frame_read(
             )
         assert messages(window_warnings) == messages(frame_warnings)
         assert [r for w in windows for r in w] == recs
+
+
+def test_a_lattice_frame_rule_needs_a_field_that_reads_lattice(tmp_path: Path):
+    bad = unparseable(tmp_path)
+    for read in (
+        lambda: oxyz.read(bad, record=Energetic, schema=LATTICE_REQUIRED),
+        lambda: oxyz.iread(bad, record=Energetic, schema=LATTICE_REQUIRED),
+        lambda: oxyz.read_batch(
+            bad, record=RecordBatch[Energetic], schema=LATTICE_REQUIRED
+        ),
+        lambda: oxyz.iread_batch(
+            bad,
+            record=RecordBatch[Energetic],
+            schema=LATTICE_REQUIRED,
+            frames_per_batch=1,
+        ),
+    ):
+        with pytest.raises(SchemaError, match="declare a Cell field") as e:
+            read()
+        assert (e.value.name, e.value.frame_index) == ("Lattice", None)
+
+
+def test_a_lattice_frame_rule_on_a_field_keyed_lattice_checks_each_frame():
+    class LatticeMeta(Record):
+        lattice: Meta[Array | None] = Meta("Lattice", shape=(9,))
+
+    target: Any = RecordBatch[LatticeMeta]
+    with pytest.raises(SchemaError) as framed:
+        oxyz.read(MAD, record=LatticeMeta, schema=LATTICE_REQUIRED)
+    with pytest.raises(SchemaError) as batched:
+        oxyz.read_batch(MAD, record=target, schema=LATTICE_REQUIRED)
+    for e in (framed, batched):
+        assert (e.value.frame_index, e.value.name) == (0, "Lattice")
+    whole = oxyz.read_batch(MAD, record=target)
+    assert 0 < whole.present("lattice").sum() < len(whole)
 
 
 def test_an_atom_count_frame_rule_on_a_batch_read_raises_with_context():
