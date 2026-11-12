@@ -287,8 +287,11 @@ batch["energy"]                                       # the same array, typed An
 Each field is declared with a specifier, which says where the value lives:
 `Column` for a per-atom column, `Meta` for a comment-line entry, `Cell` for the
 3x3 cell read from `Lattice`, and `Matrix3` for another 3x3 entry such as
-`stress` or `virial`. The annotation is the specifier subscripted with the
-value type, `Meta[float]`. The specifier is either the default value
+`stress` or `virial`. `Matrix3` reads a value written as a nested 3x3 as its
+nine values in the order written, then lays them out in Fortran order as for
+the flat form, so it comes out transposed; read such a key with
+`Meta(shape=(9,))` and reshape it. The annotation is the specifier subscripted
+with the value type, `Meta[float]`. The specifier is either the default value
 (`energy: Meta[float] = Meta("REF_energy")`) or the second argument of
 `Annotated`, which lets one alias be shared by several records. The value types
 are `float`, `int`, `bool`, `str`, `NDArray[np.float64]`, `NDArray[np.int64]`,

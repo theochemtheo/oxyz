@@ -201,7 +201,10 @@ class Matrix3[T](FieldSpec[T]):
 
     The annotation is `Matrix3[NDArray[np.float64]]`, optionally `| None`.
     The nine values are read in Fortran order, as ASE reads `stress` and
-    `virial`; `Cell` reads `Lattice` in C order.
+    `virial`; `Cell` reads `Lattice` in C order. A value written as a nested
+    3x3 is read as its nine values in the order written, then laid out as
+    the flat form is, so it comes out transposed; for such a key, declare
+    `Meta(shape=(9,))` and reshape the value.
 
     Parameters
     ----------

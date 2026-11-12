@@ -865,6 +865,16 @@ def test_matrix3_reads_in_fortran_order(tmp_path: Path):
     np.testing.assert_array_equal(r.stress, np.arange(1.0, 10.0).reshape(3, 3).T)
 
 
+def test_matrix3_reads_a_nested_3x3_transposed(tmp_path: Path):
+    path = frames_file(tmp_path / "nested.xyz", "stress=[[1,2,3],[4,5,6],[7,8,9]]")
+    transposed = [[1.0, 4.0, 7.0], [2.0, 5.0, 8.0], [3.0, 6.0, 9.0]]
+    np.testing.assert_array_equal(
+        oxyz.read(path, 0, record=Stressed).stress, transposed
+    )
+    batch = oxyz.read_batch(path, record=oxyz.RecordBatch[Stressed])
+    np.testing.assert_array_equal(batch[Stressed.stress][0], transposed)
+
+
 def test_warn_drops_a_frame_missing_a_required_real_field(tmp_path: Path):
     path = frames_file(tmp_path / "gap.xyz", "step=0 energy=-1.5", "step=1")
     with pytest.warns(oxyz.SchemaWarning, match="energy"):
