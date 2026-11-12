@@ -139,6 +139,7 @@ def batches(
 FLOAT = "ndarray[_AnyShape, dtype[float64]]"
 INT = "ndarray[_AnyShape, dtype[signedinteger[_64Bit]]]"
 BOOL = "ndarray[_AnyShape, dtype[numpy.bool[builtins.bool]]]"
+GENERIC = "RecordBatch[MaceSample]"
 
 BATCH_REVEALS = f"""\
     reveal_type(b[0])                          # T: MaceSample
@@ -185,12 +186,24 @@ BATCH_REVEALS = f"""\
     reveal_type(t[Table.m3])                   # T: {FLOAT}
     reveal_type(t[Table.m3_o])                 # T: {FLOAT}
     reveal_type(t[Table.f32])                  # T: Any
+    reveal_type(oxyz.read_batch(p, record={GENERIC}))  # T: {GENERIC}
+    reveal_type(oxyz.read_batch(p, "0:2", record=MaceBatch))   # T: MaceBatch
+    reveal_type(oxyz.iread_batch(p, record=MaceBatch))         # T: Iterator[MaceBatch]
+    reveal_type(oxyz.read_batch(p))                            # T: Batch
+    reveal_type(oxyz.iread_batch(p))                           # T: Iterator[Batch]
+    reveal_type(MaceBatch.from_batch(oxyz.read_batch(p)))      # T: MaceBatch
+    reveal_type(MaceBatch.spec())                              # T: SchemaSpec
 """
 
 BATCH_ERRORS = """\
     b.energy                                                     # error
     m.energy = m.energy                                          # error
     MaceBatch(offsets=ints, frame_indices=ints)                  # error
+    oxyz.read_batch(p, record=MaceSample)                        # error
+    oxyz.iread_batch(p, record=MaceSample, frames_per_batch=2)   # error
+    oxyz.read(p, record=MaceBatch)                               # error
+    oxyz.read_batch(p, record=MaceBatch, mode="project")         # error
+    oxyz.iread_batch(p, record=MaceBatch, mode="project", frames_per_batch=2)  # error
 
 
 class Bad(RecordBatch[int]): pass                                # error

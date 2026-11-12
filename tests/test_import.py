@@ -91,6 +91,13 @@ spec = oxyz.SchemaSpec(
 oxyz.read({str(path)!r}, schema=spec)
 list(oxyz.iread({str(path)!r}, schema=spec))
 oxyz.read({str(path)!r}, schema=spec, mode="validate")
+oxyz.read_batch({str(path)!r}, schema=spec)
+oxyz.read_batch({str(path)!r}, schema=spec, mode="validate")
+for threads in (1, None):
+    for mode in ("project", "validate"):
+        list(oxyz.iread_batch(
+            {str(path)!r}, schema=spec, mode=mode, frames_per_batch=1, threads=threads
+        ))
 print([m for m in ("oxyz._record_bind", "oxyz._record_fields") if m in sys.modules])
 """
     result = subprocess.run(

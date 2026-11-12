@@ -32,8 +32,10 @@ from oxyz._record import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping, Sequence
 
+    from oxyz._batch import Batch
     from oxyz._record import Column, Meta
     from oxyz._record_fields import FieldType
+    from oxyz._schema_spec import SchemaSpec
 
 _BASE_FIELDS = ("offsets", "frame_indices", "_present")
 
@@ -232,6 +234,10 @@ class RecordBatch[R: Record](metaclass=RecordBatchMeta):
     `present(key)` gives the mask. Slices and gathers carry the masks with
     them, and so does `dataclasses.replace` unless it is given `present=`.
 
+    `oxyz.read_batch(path, record=MaceBatch)` and `oxyz.iread_batch` read a
+    file into batches, `from_batch` builds one from an `oxyz.Batch`, and
+    `spec` gives the `SchemaSpec` that describes the record's fields.
+
     Batches are frozen and slotted. They compare equal when they are of the
     same class and hold equal layout arrays, fields and masks, NaN equal to
     NaN; they are unhashable.
@@ -275,11 +281,7 @@ class RecordBatch[R: Record](metaclass=RecordBatchMeta):
     def __post_init__(self) -> None:
         cls = type(self)
         name = cls.__name__
-        layout = cast("_Layout | None", getattr(cls, "__batch_layout__", None))
-        if layout is None:
-            raise TypeError(
-                f"{name} holds no record; declare a subclass of RecordBatch[R]"
-            )
+        layout = cls._record_layout()
         n_frames = _check_layout(name, self.offsets, self.frame_indices)
         total_atoms = int(self.offsets[-1])
         for field, ft in layout.fields.items():
@@ -307,6 +309,80 @@ class RecordBatch[R: Record](metaclass=RecordBatchMeta):
             object.__setattr__(batch, name, value)
         object.__setattr__(batch, "_present", dict(present))
         return batch
+
+    @classmethod
+    def _record_layout(cls) -> _Layout:
+        layout = cast("_Layout | None", getattr(cls, "__batch_layout__", None))
+        if layout is None:
+            raise TypeError(
+                f"{cls.__name__} holds no record; declare a subclass of RecordBatch[R]"
+            )
+        return layout
+
+    @classmethod
+    def spec(cls) -> SchemaSpec:
+        """Return the project-mode `SchemaSpec` of the batch's record, as `R.spec()`."""
+        return cls._record_layout().record.spec()
+
+    @classmethod
+    def from_batch(cls, batch: Batch) -> Self:
+        """Build a record batch from a `Batch`, checking it against the record's fields.
+
+        Each field's key is looked up in the batch's columns or metadata. An
+        integer value is accepted for a float field, and converted, unless
+        the record is `strict`. A field declared with `fill=` and absent
+        from the batch takes the fill in every frame.
+
+        A plain `Batch` records no presence, so an `X | None` field is
+        present in every frame when the batch has its key, and absent from
+        every frame when it does not: its value is then the fill (NaN for a
+        float field declared without one) and `present` is all-false.
+
+        Arrays in the result are read-only. Those taken unchanged from the
+        batch, `offsets` and `frame_indices` included, are views of its
+        arrays, so a later write to the batch shows through; call `.copy()`
+        on a field for an independent array. String lists are copied.
+
+        Raises
+        ------
+        oxyz.SchemaError
+            A required key is absent, an optional key of a kind other than
+            float is absent and has no `fill=`, or a value has the wrong
+            kind, dtype, row count, width or shape. `name` is the key and
+            `frame_index` is `None`.
+        TypeError, ValueError
+            The batch's `offsets` or `frame_indices` do not describe a batch.
+        """
+        from oxyz._record_fields import batch_value
+        from oxyz._schema_match import SchemaError
+
+        name = cls.__name__
+        record = cls._record_layout().record
+        strict = record.__record_strict__
+        n_frames = _check_layout(name, batch.offsets, batch.frame_indices)
+        total_atoms = batch.total_atoms
+        values: dict[str, object] = {}
+        present: dict[str, npt.NDArray[np.bool_]] = {}
+        for field, ft, key in record.__record_fields__:
+            on_atoms = ft.axis == "column"
+            try:
+                values[field], found = batch_value(
+                    ft,
+                    key,
+                    batch.columns if on_atoms else batch.metadata,
+                    rows=total_atoms if on_atoms else n_frames,
+                    strict=strict,
+                )
+            except SchemaError as error:
+                raise SchemaError(f"{name}: {error}", name=error.name) from None
+            if ft.optional:
+                present[field] = np.full(n_frames, found, dtype=np.bool_)
+        return cls._trusted(
+            present=present,
+            offsets=_read_only(batch.offsets),
+            frame_indices=_read_only(batch.frame_indices),
+            **values,
+        )
 
     @property
     def n_frames(self) -> int:
@@ -572,6 +648,12 @@ def _check_layout(name: str, offsets: object, frame_indices: object) -> int:
             f"got {frame_indices.shape}"
         )
     return n_frames
+
+
+def _read_only(array: np.ndarray) -> np.ndarray:
+    view = array.view()
+    view.flags.writeable = False
+    return view
 
 
 def _check_masks(

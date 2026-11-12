@@ -337,7 +337,8 @@ def read[R: Record](  # noqa: PLR0913  the index/schema/projection/source option
         lacks a required field or has one of the wrong kind, with the frame
         index and key. Before reading: `schema` disagrees with the record.
     TypeError
-        `record` is not a `Record` subclass.
+        `record` is not a `Record` subclass; a `RecordBatch` class is for
+        `read_batch`.
     ValueError
         `mode` is given with `record`.
 
@@ -482,7 +483,8 @@ def iread[R: Record](  # noqa: PLR0913  the index/schema/projection/source optio
         With `record`, as for `read`. A disagreeing `schema` raises from
         this call, before any frame is read.
     TypeError
-        `record` is not a `Record` subclass.
+        `record` is not a `Record` subclass; a `RecordBatch` class is for
+        `read_batch`.
     ValueError
         `mode` is given with `record`.
 
@@ -546,7 +548,11 @@ def _check_threads(threads: int | None) -> None:
 
 
 def _bind_record(
-    record: type[Record], schema: SchemaSpec | str | Path | None, mode: Mode | None
+    record: object,
+    schema: SchemaSpec | str | Path | None,
+    mode: Mode | None,
+    *,
+    batch: bool = False,
 ) -> Binding:
     from oxyz._record_bind import bind
 
@@ -554,7 +560,7 @@ def _bind_record(
         raise ValueError(
             "mode= cannot be combined with record=: a record read always projects"
         )
-    return bind(record, schema)
+    return bind(record, schema, batch=batch)
 
 
 def _projection(

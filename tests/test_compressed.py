@@ -143,7 +143,7 @@ class TestBatching:
     ) -> None:
         gz = DATA_DIR / "compressed/two_frame.xyz.gz"
         with pytest.raises(ValueError, match="randomly accessed"):
-            list(oxyz.iread_batch(gz, **kwargs))  # ty: ignore[invalid-argument-type]
+            list(oxyz.iread_batch(gz, **kwargs))  # ty: ignore[no-matching-overload]
 
 
 # importorskip("oxyz.ase") would fail rather than skip: oxyz.ase imports and

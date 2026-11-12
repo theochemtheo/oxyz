@@ -11,6 +11,7 @@ from oxyz._frames import (
     Compression,
     Frame,
     MetadataValue,
+    _bind_record,
     _check_threads,
     _projection,
     _require_schema_for_mode,
@@ -21,7 +22,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping, Sequence
     from pathlib import Path
 
-    from oxyz._rust import ProjectedBatch, ProjectionPlan
+    from oxyz._record_batch import RecordBatch
+    from oxyz._record_bind import Binding
+    from oxyz._rust import DeviationData, ProjectedBatch, ProjectionPlan
     from oxyz._schema_match import Conformance
     from oxyz._schema_spec import FrameRule, Mode, SchemaSpec
 
@@ -364,10 +367,42 @@ def _resolve_batch_indices(
     return [int(i) for i in index]
 
 
-def read_batch(  # noqa: PLR0913  the read/schema/projection options are the contract
+@overload
+def read_batch[B: RecordBatch[Any]](
+    path: str | Path,
+    index: int | str | slice | Sequence[int] = ...,
+    *,
+    record: type[B],
+    threads: int | None = ...,
+    schema: SchemaSpec | str | Path | None = ...,
+    conformance: Conformance = ...,
+    compression: Compression = ...,
+    member: str | None = ...,
+    storage_options: _remote.StorageOptions | None = ...,
+) -> B: ...
+
+
+@overload
+def read_batch(
+    path: str | Path,
+    index: int | str | slice | Sequence[int] = ...,
+    *,
+    record: None = ...,
+    threads: int | None = ...,
+    schema: SchemaSpec | str | Path | None = ...,
+    conformance: Conformance = ...,
+    mode: Mode | None = ...,
+    compression: Compression = ...,
+    member: str | None = ...,
+    storage_options: _remote.StorageOptions | None = ...,
+) -> Batch: ...
+
+
+def read_batch[B: RecordBatch[Any]](  # noqa: PLR0913  the read/schema/projection options are the contract
     path: str | Path,
     index: int | str | slice | Sequence[int] = ":",
     *,
+    record: type[B] | None = None,
     threads: int | None = None,
     schema: SchemaSpec | str | Path | None = None,
     conformance: Conformance = "required",
@@ -375,7 +410,7 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
-) -> Batch:
+) -> Batch | B:
     """Gather frames into one batch.
 
     The file is read once, and for an explicit selection only as far as the
@@ -395,6 +430,18 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
     index
         `read`'s selection grammar, or a sequence of non-negative frame
         indices gathered in order (repeats allowed). Default: every frame.
+    record
+        A batch class to read into instead of a `Batch`: `RecordBatch[R]`
+        for a `Record` subclass `R`, or a declared subclass of it. Frames
+        are projected onto the record's fields as `read` with `record=R`
+        projects them, and the batch holds the frames that read keeps.
+        An `X | None` field is filled where a frame lacks it (NaN for a
+        float field, else its `fill=`, which a batch read of an integer,
+        bool or string `X | None` field requires) and `present` says which
+        frames carried it. The batch's arrays are writable and belong to it
+        alone. An empty selection, or one whose frames all drop, gives a
+        batch of no frames. Cannot be combined with `mode`; `schema` acts
+        as it does for `read`.
     threads
         `None` parses on every core; `1` is serial. The batch is identical.
     schema
@@ -414,8 +461,9 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
 
     Returns
     -------
-    Batch
-        The gathered frames, concatenated.
+    Batch, or B with `record=B`
+        The gathered frames, concatenated; with `record`, an instance of
+        its batch class.
 
     Raises
     ------
@@ -423,6 +471,15 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
         On malformed input, carrying the frame index and location.
     IndexError
         On an out-of-range or negative explicit index.
+    oxyz.SchemaError
+        With `record`, as for `read`. Before reading: `schema` disagrees
+        with the record, or an integer, bool or string `X | None` field has
+        no `fill=`.
+    TypeError
+        `record` is not a batch class; a `Record` subclass `R` is named
+        here as `RecordBatch[R]`.
+    ValueError
+        `mode` is given with `record`.
 
     Examples
     --------
@@ -434,10 +491,15 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
     (3,)
     """
     _check_threads(threads)
+    binding = None
+    if record is not None:
+        binding = _bind_record(record, schema, mode, batch=True)
     _require_schema_for_mode(schema, mode)
     projection = None
     spec = None
-    if schema is not None:
+    if binding is not None:
+        projection, spec = binding.batch_plan, binding.spec
+    elif schema is not None:
         projection, spec, _ = _projection(schema, mode)
 
     selection = _resolve_batch_indices(
@@ -452,22 +514,19 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
                 )
 
     if projection is not None:
-        if _remote.is_remote(path):
-            src = _remote.open_source(
-                path,
-                compression=compression,
-                member=member,
-                storage_options=storage_options,
-            )
-            projected = _rust.read_batch_projected_reader(
-                src.obj, src.codec, selection, threads, src.member, plan=projection
-            )
-        else:
-            projected = _rust.read_batch_projected(
-                str(path), selection, threads, compression, member, plan=projection
-            )
-        result = _resolve_projected_batch(projected, conformance, spec)
-        return result if result is not None else _empty_batch()
+        projected = _read_batch_projected(
+            path,
+            selection,
+            threads=threads,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+            projection=projection,
+            conformance=conformance,
+            spec=spec,
+            binding=binding,
+        )
+        return cast("Batch | B", projected)
 
     if spec is not None:
         return _read_batch_validate(
@@ -503,9 +562,87 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
     )
 
 
-def iread_batch(  # noqa: C901, PLR0913, PLR0912  the keyword options are the batching contract
+def _read_batch_projected(  # noqa: PLR0913  the read options plus the projection
+    path: str | Path,
+    selection: list[int] | None,
+    *,
+    threads: int | None,
+    compression: Compression,
+    member: str | None,
+    storage_options: _remote.StorageOptions | None,
+    projection: ProjectionPlan,
+    conformance: Conformance,
+    spec: SchemaSpec | None,
+    binding: Binding | None,
+) -> Batch | RecordBatch[Any]:
+    """Project the selected frames into one batch, empty if none survive."""
+    if binding is not None and selection is not None and not selection:
+        return binding.empty_batch()
+    if _remote.is_remote(path):
+        src = _remote.open_source(
+            path,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
+        projected = _rust.read_batch_projected_reader(
+            src.obj, src.codec, selection, threads, src.member, plan=projection
+        )
+    else:
+        projected = _rust.read_batch_projected(
+            str(path), selection, threads, compression, member, plan=projection
+        )
+    result = _resolve_projected_batch(projected, conformance, spec, binding)
+    if result is not None:
+        return result
+    return _empty_batch() if binding is None else binding.empty_batch()
+
+
+@overload
+def iread_batch[B: RecordBatch[Any]](
     path: str | Path,
     *,
+    record: type[B],
+    frames_per_batch: int | None = ...,
+    atoms_per_batch: int | None = ...,
+    memory_scales_with: MemoryScaling | None = ...,
+    max_scaler: float | None = ...,
+    shuffle: bool = ...,
+    seed: int | None = ...,
+    threads: int | None = ...,
+    schema: SchemaSpec | str | Path | None = ...,
+    conformance: Conformance = ...,
+    compression: Compression = ...,
+    member: str | None = ...,
+    storage_options: _remote.StorageOptions | None = ...,
+) -> Iterator[B]: ...
+
+
+@overload
+def iread_batch(
+    path: str | Path,
+    *,
+    record: None = ...,
+    frames_per_batch: int | None = ...,
+    atoms_per_batch: int | None = ...,
+    memory_scales_with: MemoryScaling | None = ...,
+    max_scaler: float | None = ...,
+    shuffle: bool = ...,
+    seed: int | None = ...,
+    threads: int | None = ...,
+    schema: SchemaSpec | str | Path | None = ...,
+    conformance: Conformance = ...,
+    mode: Mode | None = ...,
+    compression: Compression = ...,
+    member: str | None = ...,
+    storage_options: _remote.StorageOptions | None = ...,
+) -> Iterator[Batch]: ...
+
+
+def iread_batch[B: RecordBatch[Any]](  # noqa: C901, PLR0913, PLR0912  the keyword options are the batching contract
+    path: str | Path,
+    *,
+    record: type[B] | None = None,
     frames_per_batch: int | None = None,
     atoms_per_batch: int | None = None,
     memory_scales_with: MemoryScaling | None = None,
@@ -519,7 +656,7 @@ def iread_batch(  # noqa: C901, PLR0913, PLR0912  the keyword options are the ba
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
-) -> Iterator[Batch]:
+) -> Iterator[Batch] | Iterator[B]:
     """Read a file as a sequence of batches.
 
     Exactly one strategy must be given:
@@ -537,13 +674,16 @@ def iread_batch(  # noqa: C901, PLR0913, PLR0912  the keyword options are the ba
     A compressed or remote source supports only `frames_per_batch` without
     `shuffle`; the other strategies need random access.
 
-    With `mode="project"`, a batch whose frames all drop under
-    `conformance="warn"` is skipped.
+    With `mode="project"`, or with `record`, a batch whose frames all drop
+    under `conformance="warn"` is skipped.
 
     Parameters
     ----------
     path
         File path, an S3-compatible URL, or `"-"` for stdin.
+    record
+        A batch class to yield instances of instead of `Batch`es:
+        `RecordBatch[R]` or a declared subclass of it; see `read_batch`.
     frames_per_batch
         Fixed frame count per batch.
     atoms_per_batch
@@ -575,14 +715,20 @@ def iread_batch(  # noqa: C901, PLR0913, PLR0912  the keyword options are the ba
 
     Returns
     -------
-    Iterator[Batch]
+    Iterator[Batch], or Iterator[B] with `record=B`
         Batches in the strategy's order, each with its own `frame_indices`.
 
     Raises
     ------
     ValueError
         On an invalid combination of options, or a strategy the source cannot
-        support.
+        support; `mode` given with `record`.
+    oxyz.SchemaError
+        With `record`, as for `read_batch`. A disagreeing `schema`, or an
+        `X | None` field that needs a `fill=`, raises from this call, before
+        any frame is read.
+    TypeError
+        `record` is not a batch class; see `read_batch`.
 
     Examples
     --------
@@ -620,10 +766,15 @@ def iread_batch(  # noqa: C901, PLR0913, PLR0912  the keyword options are the ba
     if seed is not None and not shuffle:
         raise ValueError("seed requires shuffle=True")
     _check_threads(threads)
+    binding = None
+    if record is not None:
+        binding = _bind_record(record, schema, mode, batch=True)
     _require_schema_for_mode(schema, mode)
     projection = None
     spec = None
-    if schema is not None:
+    if binding is not None:
+        projection, spec = binding.batch_plan, binding.spec
+    elif schema is not None:
         projection, spec, _ = _projection(schema, mode)
 
     remote = _remote.is_remote(path)
@@ -647,17 +798,19 @@ def iread_batch(  # noqa: C901, PLR0913, PLR0912  the keyword options are the ba
         and not shuffle
         and (streaming_only or threads == 1)
     ):
-        return _sequential_batches(
+        sequential = _sequential_batches(
             path,
             frames_per_batch,
             compression,
             member,
             storage_options,
-            projection,
-            conformance,
-            spec,
+            projection=projection,
+            conformance=conformance,
+            spec=spec,
+            binding=binding,
         )
-    return _planned_batches(
+        return cast("Iterator[Batch] | Iterator[B]", sequential)
+    planned = _planned_batches(
         path,
         frames_per_batch,
         atoms_per_batch,
@@ -669,19 +822,23 @@ def iread_batch(  # noqa: C901, PLR0913, PLR0912  the keyword options are the ba
         projection=projection,
         conformance=conformance,
         spec=spec,
+        binding=binding,
     )
+    return cast("Iterator[Batch] | Iterator[B]", planned)
 
 
-def _sequential_batches(
+def _sequential_batches(  # noqa: PLR0913  the source options plus projection
     path: str | Path,
     frames_per_batch: int,
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
+    *,
     projection: ProjectionPlan | None = None,
     conformance: Conformance = "required",
     spec: SchemaSpec | None = None,
-) -> Iterator[Batch]:
+    binding: Binding | None = None,
+) -> Iterator[Batch | RecordBatch[Any]]:
     """File-order batches streamed without a scan."""
     remote = _remote.is_remote(path)
     src = (
@@ -705,7 +862,7 @@ def _sequential_batches(
                 str(path), frames_per_batch, projection, compression, member
             )
         for projected in iterator:
-            batch = _resolve_projected_batch(projected, conformance, spec)
+            batch = _resolve_projected_batch(projected, conformance, spec, binding)
             if batch is not None:  # a fully-dropped window is skipped
                 yield batch
         return
@@ -760,7 +917,8 @@ def _planned_batches(  # noqa: PLR0913  the planning knobs plus projection
     projection: ProjectionPlan | None = None,
     conformance: Conformance = "required",
     spec: SchemaSpec | None = None,
-) -> Iterator[Batch]:
+    binding: Binding | None = None,
+) -> Iterator[Batch | RecordBatch[Any]]:
     """Index-backed batches over a frame order planned before any parsing."""
     validate_compiled = None
     if spec is not None and projection is None:
@@ -791,7 +949,7 @@ def _planned_batches(  # noqa: PLR0913  the planning knobs plus projection
     for plan in plans:
         if projection is not None:
             projected = reader.get_batch_projected(plan, projection, threads)
-            batch = _resolve_projected_batch(projected, conformance, spec)
+            batch = _resolve_projected_batch(projected, conformance, spec, binding)
             if batch is not None:  # a fully-dropped batch is skipped
                 yield batch
         elif validate_compiled is not None:
@@ -889,14 +1047,16 @@ def _resolve_projected_batch(
     projected: ProjectedBatch,
     conformance: Conformance,
     spec: SchemaSpec | None = None,
-) -> Batch | None:
+    binding: Binding | None = None,
+) -> Batch | RecordBatch[Any] | None:
     """Apply projection policy to a `read_batch_projected`-shaped result.
 
-    Returns the surviving `Batch`, or `None` when every frame dropped.
+    Returns the surviving `Batch`, cast by `binding` when given, or `None`
+    when every frame dropped.
     """
     from oxyz._project import enforce_projection
 
-    data, survivors, reports, _presence = projected
+    data, survivors, reports, presence = projected
     survived = set(survivors)
     for req_index, deviations in reports:
         dropped = req_index not in survived
@@ -904,15 +1064,59 @@ def _resolve_projected_batch(
     if not survivors:
         return None
     batch = _batch_from_data(data, survivors)
+    if binding is not None:
+        # Under "required" and "strict" every deviation has already raised.
+        keep = (
+            _kept(reports, survived, binding.omitted) if conformance == "warn" else None
+        )
+        if keep is not None:
+            if not keep.any():
+                return None
+            picks = np.flatnonzero(keep)
+            batch, presence = batch[picks], presence[picks]
     if spec is not None and spec.frame is not None:
-        _enforce_frame_rule_on_batch(batch, spec.frame, conformance)
-    return batch
+        lattice = None if binding is None else binding.carried("Lattice", presence)
+        _enforce_frame_rule_on_batch(batch, spec.frame, conformance, lattice)
+    if binding is None:
+        return batch
+    return binding.cast_batch(batch, presence, owned=True)
+
+
+def _kept(
+    reports: list[tuple[int, list[DeviationData]]],
+    survived: set[int],
+    omitted: frozenset[tuple[str, str]],
+) -> np.ndarray | None:
+    """Which survivors a record read keeps, or `None` for all of them.
+
+    The batch plan fills an `X | None` field found with the wrong kind, so
+    the core keeps that frame; the frame plan omits the field, so a frame
+    read drops it.
+    """
+    keep = [
+        not any(
+            deviation["deviation"] == "mismatch"
+            and (deviation["axis"], deviation["name"]) in omitted
+            for deviation in deviations
+        )
+        for index, deviations in reports
+        if index in survived
+    ]
+    return None if all(keep) else np.array(keep)
 
 
 def _enforce_frame_rule_on_batch(
-    batch: Batch, frame_rule: FrameRule, conformance: Conformance
+    batch: Batch,
+    frame_rule: FrameRule,
+    conformance: Conformance,
+    lattice: np.ndarray | None = None,
 ) -> None:
-    """Check each frame's atom count and `Lattice` against the frame rule."""
+    """Check each frame's atom count and `Lattice` against the frame rule.
+
+    `lattice` marks the frames that carry `Lattice`, where the batch's own
+    metadata cannot tell; by default every frame carries it if the batch has
+    the key.
+    """
     import warnings
 
     from oxyz._schema_match import SchemaError, SchemaWarning, Violation, message
@@ -920,7 +1124,8 @@ def _enforce_frame_rule_on_batch(
     lo, hi = frame_rule.n_atoms_min, frame_rule.n_atoms_max
     n_atoms = batch.n_atoms
     indices = batch.frame_indices
-    lattice_missing = frame_rule.lattice_required and "Lattice" not in batch.metadata
+    if lattice is None:
+        lattice = np.full(batch.n_frames, "Lattice" in batch.metadata)
     for pos in range(batch.n_frames):
         idx = int(indices[pos])
         violations: list[Violation] = []
@@ -930,7 +1135,7 @@ def _enforce_frame_rule_on_batch(
             violations.append(
                 Violation("frame", "n_atoms", "mismatch", bounds, str(count))
             )
-        if lattice_missing:
+        if frame_rule.lattice_required and not lattice[pos]:
             violations.append(
                 Violation("frame", "Lattice", "missing", "required", None)
             )

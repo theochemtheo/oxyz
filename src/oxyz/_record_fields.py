@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import importlib
+import math
 import types
 from dataclasses import dataclass
 from typing import (
@@ -22,7 +23,7 @@ import numpy.typing as npt
 
 from oxyz import _summary
 from oxyz._project import _fill_matches_kind
-from oxyz._schema import Kind, column_sig, metadata_sig
+from oxyz._schema import KIND_TO_LETTER, Kind, column_sig, metadata_sig
 from oxyz._schema_match import SchemaError, column_signature, metadata_signature
 
 if TYPE_CHECKING:
@@ -42,6 +43,12 @@ _DTYPES: dict[Kind, np.dtype] = {
     Kind.REAL: np.dtype(np.float64),
     Kind.INT: np.dtype(np.int64),
     Kind.BOOL: np.dtype(np.bool_),
+}
+_NUMPY_KINDS: dict[str, Kind] = {
+    "f": Kind.REAL,
+    "i": Kind.INT,
+    "u": Kind.INT,
+    "b": Kind.BOOL,
 }
 _ARRAY_ANNOTATIONS: dict[Kind, Any] = {
     Kind.REAL: npt.NDArray[np.float64],
@@ -146,10 +153,7 @@ class FieldType:
 
     def filled(self, fill: Fill, *, rows: int) -> object:
         """Return `fill` as a value of this form; `rows` sizes a leading row axis."""
-        if self.axis == "column":
-            dims = (rows,) if self.width == 1 else (rows, self.width)
-        else:
-            dims = (rows, *self.shape) if self.batch_form else self.shape
+        dims = self._stored_shape(rows)
         if self.kind == Kind.STR:
             return _repeated(fill, dims)
         if not dims:
@@ -173,6 +177,12 @@ class FieldType:
         if isinstance(value, (np.ndarray, list)):
             return _summary.summarise(value)
         return repr(value)
+
+    def _stored_shape(self, rows: int) -> tuple[int, ...]:
+        """Return the shape a reader stores this form's value in, before any cast."""
+        if self.axis == "column":
+            return (rows,) if self.width == 1 else (rows, self.width)
+        return (rows, *self.shape) if self.batch_form else self.shape
 
     def _value_shape(self) -> tuple[bool, tuple[int, ...]]:
         """Whether the value has a leading row axis, and its shape after it."""
@@ -265,6 +275,79 @@ def field_value(
     except (TypeError, ValueError) as error:
         raise SchemaError(f"{field.axis} {key!r}: {error}", name=key) from None
     return value
+
+
+def batch_value(
+    field: FieldType,
+    spec: FieldSpec[Any],
+    stored: Mapping[str, object],
+    *,
+    rows: int,
+    strict: bool,
+) -> tuple[object, bool]:
+    """Look a field's key up in a plain batch's `stored` values and cast it.
+
+    Returns the batch-form value, read-only, and whether the key was there.
+    An absent key gives the field's fill over `rows` rows, NaN for an
+    optional REAL field declared without one. A stored value must have the
+    field's kind, an integer satisfying a REAL field unless `strict`, its
+    dtype, and `rows` rows of its width or shape. Raises `SchemaError`
+    naming the key.
+    """
+    key = spec.key
+    assert key is not None  # noqa: S101 — type-narrowing only
+    batched = field.batched()
+    where = f"{field.axis} {key!r}"
+    if key not in stored:
+        fill = spec.fill
+        if fill is None and field.optional and field.kind == Kind.REAL:
+            fill = math.nan
+        if fill is None:
+            reason = (
+                f"absent, and an optional {KIND_TO_LETTER[field.kind]} field has "
+                "no natural null to fill it with; give it a fill="
+                if field.optional
+                else "missing (required)"
+            )
+            raise SchemaError(f"{where}: {reason}", name=key)
+        value = batched.filled(fill, rows=rows)
+        if isinstance(value, np.ndarray):
+            value.flags.writeable = False
+        return value, False
+    raw = stored[key]
+    found = _stored_kind(raw)
+    promotes = found == Kind.INT and field.kind == Kind.REAL
+    if found != field.kind and not (promotes and not strict):
+        if field.axis == "column":
+            expected = column_sig(field.kind, field.width)
+        else:
+            expected = metadata_sig(field.kind, field.shape)
+        described = (
+            _summary.summarise(raw)
+            if isinstance(raw, (np.ndarray, list))
+            else type(raw).__name__
+        )
+        reason = "; the record is strict" if promotes else ""
+        raise SchemaError(
+            f"{where}: expected {expected}, found {described}{reason}", name=key
+        )
+    try:
+        shape = batched._stored_shape(rows)  # noqa: SLF001 — same module
+        if isinstance(raw, np.ndarray) and raw.shape != shape:
+            raise ValueError(f"expected shape {_shape(shape)}, got {_shape(raw.shape)}")  # noqa: TRY301 — reported with the check's errors
+        value = batched.cast(raw, owned=False)
+        batched.check(value, rows=rows)
+    except (TypeError, ValueError) as error:
+        raise SchemaError(f"{where}: {error}", name=key) from None
+    return value, True
+
+
+def _stored_kind(raw: object) -> Kind | None:
+    if isinstance(raw, np.ndarray):
+        return _NUMPY_KINDS.get(raw.dtype.kind)
+    if isinstance(raw, list):
+        return Kind.STR
+    return None
 
 
 def _check_signature(field: FieldType, key: str, raw: object, *, strict: bool) -> None:
