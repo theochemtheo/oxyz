@@ -193,6 +193,8 @@ BATCH_REVEALS = f"""\
     reveal_type(oxyz.iread_batch(p))                           # T: Iterator[Batch]
     reveal_type(MaceBatch.from_batch(oxyz.read_batch(p)))      # T: MaceBatch
     reveal_type(MaceBatch.spec())                              # T: SchemaSpec
+    reveal_type(RecordBatch[MaceSample].from_batch(oxyz.read_batch(p)))  # T: {GENERIC}
+    reveal_type(RecordBatch[MaceSample].spec())                # T: SchemaSpec
 """
 
 BATCH_ERRORS = """\

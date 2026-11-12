@@ -6,6 +6,8 @@ import gzip
 import inspect
 import pickle
 import re
+import types
+import typing
 import warnings
 from pathlib import Path
 from typing import Annotated, Any
@@ -969,10 +971,61 @@ def test_from_batch_rejects_a_value_that_does_not_fit(side: str, key: str, chang
 def test_spec_and_from_batch_belong_to_a_batch_of_a_record():
     assert MaceBatch.spec() == MaceSample.spec()
     assert batch_class(MAD_BATCH).spec() == MadSample.spec()
-    with pytest.raises(TypeError, match=r"RecordBatch\[R\]"):
+    with pytest.raises(TypeError, match=r"use RecordBatch\[R\] for a Record subclass"):
         RecordBatch.spec()
-    with pytest.raises(TypeError, match=r"RecordBatch\[R\]"):
+    with pytest.raises(TypeError, match=r"use RecordBatch\[R\] for a Record subclass"):
         RecordBatch.from_batch(oxyz.read_batch(MACE))
+
+
+Unresolved = typing.TypeVar("Unresolved")
+
+
+def test_the_generic_form_has_its_batch_classs_from_batch_and_spec():
+    plain = oxyz.read_batch(MACE, schema=MaceSample.spec())
+    built = RecordBatch[MaceSample].from_batch(plain)
+    assert type(built) is batch_class(RecordBatch[MaceSample])
+    assert built == oxyz.read_batch(MACE, record=RecordBatch[MaceSample])
+    assert RecordBatch[MaceSample].spec() == MaceSample.spec()
+    assert RecordBatch[MadSample].spec() == MadSample.spec()
+    generic: Any = RecordBatch
+    unresolved = generic[Unresolved]
+    with pytest.raises(TypeError, match="takes a Record subclass R"):
+        unresolved.from_batch(plain)
+    with pytest.raises(TypeError, match="takes a Record subclass R"):
+        unresolved.spec()
+
+
+def test_the_generic_form_is_still_a_typing_alias():
+    alias: Any = RecordBatch[MaceSample]
+    assert typing.get_origin(alias) is RecordBatch
+    assert typing.get_args(alias) == (MaceSample,)
+    assert alias == RecordBatch[MaceSample]
+    assert hash(alias) == hash(RecordBatch[MaceSample])
+    assert alias != RecordBatch[MadSample]
+    assert pickle.loads(pickle.dumps(alias)) == alias
+    assert pickle.loads(pickle.dumps(alias)).spec() == MaceSample.spec()
+    assert copy.deepcopy(alias) == alias
+    assert types.get_original_bases(MaceBatch) == (alias,)
+    assert MaceBatch.__mro__[1] is RecordBatch
+    assert repr(alias).endswith("RecordBatch[test_record_batch.MaceSample]")
+
+
+def test_present_is_read_only():
+    for b in (
+        make_batch(MaceBatch, present={"stress": np.array([True, False])}),
+        oxyz.read_batch(MAD, [150, 3], record=MAD_BATCH),
+    ):
+        mask = b.present("stress")
+        assert mask.tolist() == [True, False]
+        with pytest.raises(ValueError, match="read-only"):
+            mask[0] = False
+        assert b.present("stress").tolist() == [True, False]
+        assert b[0].stress is not None
+        assert not b.present("energy").flags.writeable
+        assert b[[1, 0]].present("stress").tolist() == [False, True]
+        assert b[1:].present("stress").tolist() == [False]
+        assert dataclasses.replace(b).present("stress").tolist() == [True, False]
+        assert pickle.loads(pickle.dumps(b)) == b
 
 
 def test_read_batch_fields_are_writable_and_unshared():
@@ -1124,3 +1177,35 @@ def test_a_remote_source_reads_what_the_local_file_gives(s3_store: Any, whole: A
     )
     assert [b.frame_indices[0] for b in streamed] == [0, 50, 100, 150, 200]
     assert all(b == whole[b.frame_indices] for b in streamed)
+
+
+BAD_SOURCES = [
+    ("missing-path", {"path": DATA / "no_such_file.xyz"}),
+    ("member-on-a-plain-file", {"path": MACE, "member": "inner.xyz"}),
+    ("gzip-forced-on-a-plain-file", {"path": MACE, "compression": "gzip"}),
+    ("unknown-compression", {"path": MACE, "compression": "bogus"}),
+]
+
+
+@pytest.mark.parametrize(
+    "source", [pytest.param(case, id=case_id) for case_id, case in BAD_SOURCES]
+)
+def test_an_empty_selection_raises_what_reading_the_source_raises(
+    source: dict[str, Any],
+):
+    options = dict(source)
+    path = options.pop("path")
+    with pytest.raises(Exception) as one:
+        oxyz.read_batch(path, [0], record=MaceBatch, **options)
+    with pytest.raises(type(one.value)) as empty:
+        oxyz.read_batch(path, [], record=MaceBatch, **options)
+    assert str(empty.value) == str(one.value)
+    assert isinstance(empty.value, (OSError, ValueError))
+
+
+def test_an_empty_selection_of_a_missing_remote_object_raises(s3_store: Any):
+    url, options = s3_store.url("absent.extxyz"), s3_store.options
+    with pytest.raises(Exception) as one:
+        oxyz.read_batch(url, [0], record=MaceBatch, storage_options=options)
+    with pytest.raises(type(one.value)):
+        oxyz.read_batch(url, [], record=MaceBatch, storage_options=options)

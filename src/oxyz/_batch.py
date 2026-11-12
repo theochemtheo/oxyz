@@ -577,6 +577,7 @@ def _read_batch_projected(  # noqa: PLR0913  the read options plus the projectio
 ) -> Batch | RecordBatch[Any]:
     """Project the selected frames into one batch, empty if none survive."""
     if binding is not None and selection is not None and not selection:
+        _open_first_frame(path, compression, member, storage_options)
         return binding.empty_batch()
     if _remote.is_remote(path):
         src = _remote.open_source(
@@ -596,6 +597,26 @@ def _read_batch_projected(  # noqa: PLR0913  the read options plus the projectio
     if result is not None:
         return result
     return _empty_batch() if binding is None else binding.empty_batch()
+
+
+def _open_first_frame(
+    path: str | Path,
+    compression: Compression,
+    member: str | None,
+    storage_options: _remote.StorageOptions | None,
+) -> None:
+    """Open `path` and parse its first frame, raising what reading it would."""
+    if _remote.is_remote(path):
+        src = _remote.open_source(
+            path,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
+        frames = _rust.FrameIter.from_reader(src.obj, src.codec, src.member)
+    else:
+        frames = _rust.FrameIter(str(path), compression, member)
+    next(iter(frames), None)
 
 
 @overload

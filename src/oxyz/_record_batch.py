@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import types
+import typing
 from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
@@ -278,6 +279,14 @@ class RecordBatch[R: Record](metaclass=RecordBatchMeta):
     # Always a dict once built; `None` only as the absent-argument default.
     _present: dict[str, npt.NDArray[np.bool_]] = None  # ty: ignore[invalid-assignment]
 
+    if not TYPE_CHECKING:
+
+        def __class_getitem__(cls, params: object) -> object:
+            alias = super().__class_getitem__(params)
+            if cls is not RecordBatch:
+                return alias
+            return _RecordBatchAlias(alias.__origin__, alias.__args__)
+
     def __post_init__(self) -> None:
         cls = type(self)
         name = cls.__name__
@@ -315,18 +324,25 @@ class RecordBatch[R: Record](metaclass=RecordBatchMeta):
         layout = cast("_Layout | None", getattr(cls, "__batch_layout__", None))
         if layout is None:
             raise TypeError(
-                f"{cls.__name__} holds no record; declare a subclass of RecordBatch[R]"
+                f"{cls.__name__} holds no record; use RecordBatch[R] for a Record "
+                "subclass R, or declare a subclass of it"
             )
         return layout
 
     @classmethod
     def spec(cls) -> SchemaSpec:
-        """Return the project-mode `SchemaSpec` of the batch's record, as `R.spec()`."""
+        """Return the project-mode `SchemaSpec` of the batch's record, as `R.spec()`.
+
+        Call it on `RecordBatch[R]` or a declared batch class.
+        """
         return cls._record_layout().record.spec()
 
     @classmethod
     def from_batch(cls, batch: Batch) -> Self:
         """Build a record batch from a `Batch`, checking it against the record's fields.
+
+        Call it on `RecordBatch[R]`, which gives an instance of the class
+        derived for `R`, or on a declared batch class.
 
         Each field's key is looked up in the batch's columns or metadata. An
         integer value is accepted for a float field, and converted, unless
@@ -509,11 +525,15 @@ class RecordBatch[R: Record](metaclass=RecordBatchMeta):
         """Return which frames carried a field, a bool array of length `n_frames`.
 
         `key` is a field key or name. A field that is not `X | None` is
-        present in every frame. A key or name that is not one of the
+        present in every frame. The array is read-only: the batch's rows
+        follow the mask, so to change it, pass `present=` to
+        `dataclasses.replace`. A key or name that is not one of the
         record's fields is `KeyError`.
         """
         mask = self._present.get(self._field(key))
-        return np.ones(self.n_frames, dtype=np.bool_) if mask is None else mask
+        if mask is None:
+            mask = np.ones(self.n_frames, dtype=np.bool_)
+        return _read_only(mask)
 
     def _field(self, key: FieldSpec[Any] | str) -> str:
         layout = type(self).__batch_layout__
@@ -648,6 +668,20 @@ def _check_layout(name: str, offsets: object, frame_indices: object) -> int:
             f"got {frame_indices.shape}"
         )
     return n_frames
+
+
+class _RecordBatchAlias(typing._GenericAlias, _root=True):  # noqa: SLF001  # ty: ignore[missing-attribute] — the alias type `Generic` builds
+    """`RecordBatch[R]`, whose `from_batch` and `spec` are those of its batch class.
+
+    A plain alias forwards them to the bare `RecordBatch`, which holds no
+    record.
+    """
+
+    def from_batch(self, batch: Batch) -> RecordBatch[Any]:
+        return batch_class(self).from_batch(batch)
+
+    def spec(self) -> SchemaSpec:
+        return batch_class(self).spec()
 
 
 def _read_only(array: np.ndarray) -> np.ndarray:
