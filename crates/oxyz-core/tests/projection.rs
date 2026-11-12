@@ -633,6 +633,28 @@ fn projected_batch_with_mixed_presence_of_an_omitted_field_names_the_frame() {
     ));
 }
 
+#[test]
+fn projected_batch_with_mixed_presence_of_an_omitted_metadata_key_names_the_frame() {
+    let text = "1\nProperties=species:S:1:pos:R:3 energy=-1.5\nH 0 0 0\n\
+                1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n\
+                1\nProperties=species:S:1:pos:R:3 energy=-2.5\nH 0 0 0\n";
+    let plan = ProjectionPlan {
+        columns: vec![real_col_plan("pos", 3, true)],
+        metadata: vec![real_meta("energy", None, false, None)],
+        ..Default::default()
+    };
+    let Err(err) = read_all_batch_projected_from(text.as_bytes(), &plan) else {
+        panic!("mixed presence must fail");
+    };
+    assert!(
+        matches!(
+            &err,
+            ExtxyzError::Batch(BatchError::MissingMetadata { frame: 1, key }) if key == "energy"
+        ),
+        "{err:?}"
+    );
+}
+
 fn assert_same_projection(a: &oxyz_core::ProjectedBatch, b: &oxyz_core::ProjectedBatch) {
     assert_eq!(a.survivors, b.survivors);
     assert_eq!(a.batch, b.batch);

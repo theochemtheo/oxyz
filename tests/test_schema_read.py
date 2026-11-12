@@ -397,6 +397,20 @@ def test_omit_rule_with_mixed_presence_cannot_batch():
         )
 
 
+def test_omit_rule_on_metadata_with_mixed_presence_cannot_batch(tmp_path):
+    import oxyz
+
+    path = _stepped_file(tmp_path, "energy=-1.5", "step=1", "energy=-2.5")
+    spec = SchemaSpec(
+        metadata=(MetadataRule("energy", Kind.REAL, required=False, absent="omit"),),
+        mode="project",
+    )
+    with pytest.raises(
+        oxyz.ParseError, match=r"frame 1 is missing metadata \"energy\""
+    ):
+        oxyz.read_batch(path, schema=spec)
+
+
 LATTICE = SchemaSpec(
     metadata=(MetadataRule("Lattice", Kind.REAL, shape=(9,)),), mode="project"
 )
