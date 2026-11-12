@@ -20,6 +20,7 @@ KNOWN_TYPE_ALIASES = frozenset(
         "MetadataValue",
         "Conformance",
         "Mode",
+        "Absent",
         "MemoryScaling",
         "Writable",
     }

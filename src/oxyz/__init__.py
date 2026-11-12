@@ -40,10 +40,18 @@ from oxyz._schema_match import (
     SchemaWarning,
     Violation,
 )
-from oxyz._schema_spec import ColumnRule, FrameRule, MetadataRule, Mode, SchemaSpec
+from oxyz._schema_spec import (
+    Absent,
+    ColumnRule,
+    FrameRule,
+    MetadataRule,
+    Mode,
+    SchemaSpec,
+)
 from oxyz._write import Writable, Writer, write
 
 __all__ = [
+    "Absent",
     "AmbiguousNameError",
     "Batch",
     "Cell",

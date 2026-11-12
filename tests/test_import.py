@@ -23,6 +23,13 @@ def test_mode_and_writable_are_exported() -> None:
     assert "Writable" in oxyz.__all__
 
 
+def test_absent_is_exported_as_the_rules_type() -> None:
+    from oxyz._schema_spec import Absent
+
+    assert oxyz.Absent is Absent
+    assert "Absent" in oxyz.__all__
+
+
 # Readers share one keyword tail for the threads, schema and IO options.
 CANONICAL_TAIL = [
     "threads",

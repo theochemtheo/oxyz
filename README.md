@@ -720,11 +720,10 @@ share the reader index grammar; their signatures are in the sections above.
 the `SchemaSpec` rule types (`ColumnRule`, `MetadataRule`, `FrameRule`) are
 frozen dataclasses. `Record`, `RecordBatch`, the specifiers `Column`, `Meta`,
 `Cell` and `Matrix3`, and their base `FieldSpec` declare typed records. Every
-error oxyz raises subclasses `oxyz.OxyzError` (a
-`ValueError`): `ParseError`, `SchemaError`, `FieldError`, and the converters'
-errors. The keyword/value types `Compression`, `Conformance`, `Mode`,
-`MemoryScaling`, and `Writable` are exported aliases. Everything ships with
-type stubs.
+error oxyz raises subclasses `oxyz.OxyzError` (a `ValueError`): `ParseError`,
+`SchemaError`, `FieldError`, and the converters' errors. The keyword/value
+types `Compression`, `Conformance`, `Mode`, `Absent`, `MemoryScaling`, and
+`Writable` are exported aliases. Everything ships with type stubs.
 
 Everything outside that promise may change in any release: any
 underscore-prefixed name, the `oxyz._rust` extension module, and any

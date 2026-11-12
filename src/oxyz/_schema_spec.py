@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 # Whether a schema validates (reports) or projects (reshapes each frame).
 Mode = Literal["validate", "project"]
+# Whether a projection fills an absent optional entry or leaves it out of the frame.
 Absent = Literal["fill", "omit"]
 
 
