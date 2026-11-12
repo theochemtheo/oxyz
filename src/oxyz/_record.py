@@ -546,6 +546,12 @@ class Record(metaclass=RecordMeta):
         optional with that fill, and an `X | None` field is optional with
         `absent="omit"`. The record's `strict` setting is not part of the
         spec.
+
+        A plain read with this spec is not a record read. Under
+        `conformance="warn"` it fills a required float field that a frame
+        lacks with NaN and keeps the frame, where a record read drops it;
+        and a batch read with it raises when frames differ in an `X | None`
+        field.
         """
         from oxyz._schema_spec import ColumnRule, MetadataRule, SchemaSpec
 

@@ -226,8 +226,9 @@ schema.yaml file.extxyz` writes a starting schema from a file you trust.
 
 A schema validates by default. Add `mode: project` (or pass `mode="project"` at
 the call site) and it instead *reshapes* each frame to exactly the fields it
-declares: undeclared columns and metadata dropped, absent optionals filled.
-That makes a mixed-schema file, where an optional property is present only in
+declares: undeclared columns and metadata dropped, absent optionals filled,
+and an integer value for a REAL rule promoted to float. That makes a
+mixed-schema file, where an optional property is present only in
 some frames, readable as one batch:
 
 ```python
@@ -239,11 +240,14 @@ Projection works across the frame readers, the batch readers, and the
 `oxyz.ase`/`oxyz.metatomic`/`oxyz.torch_sim` targets, all through the same
 `schema=`/`mode=`/`conformance=` arguments. An absent REAL column fills `NaN`;
 INT, BOOL, and STR have no natural null, so an optional one needs an explicit
-`fill` value. Pattern rules (`descriptor_*`) cannot describe a fixed shape, so
-`SchemaSpec.freeze(sample)` expands them against a representative file into
-literal rules: required where a column appears in every frame, optional where
-it appears in only some. `oxyz freeze` and `oxyz scan --emit-schema --project`
-write a frozen, project-ready schema. Validate mode is unchanged.
+`fill` value. An optional rule with `absent: omit` leaves an absent entry out
+of the frame instead of filling it, so frames that differ in that entry read
+one by one but do not batch. Pattern rules (`descriptor_*`) cannot describe a
+fixed shape, so `SchemaSpec.freeze(sample)` expands them against a
+representative file into literal rules: required where a column appears in
+every frame, optional where it appears in only some. `oxyz freeze` and
+`oxyz scan --emit-schema --project` write a frozen, project-ready schema.
+Validate mode is unchanged.
 
 ## Typed records
 
@@ -295,7 +299,8 @@ with the value type, `Meta[float]`. The specifier is either the default value
 (`energy: Meta[float] = Meta("REF_energy")`) or the second argument of
 `Annotated`, which lets one alias be shared by several records. The value types
 are `float`, `int`, `bool`, `str`, `NDArray[np.float64]`, `NDArray[np.int64]`,
-`NDArray[np.bool_]` and `list[str]`, each with `| None` for an optional field.
+`NDArray[np.bool_]`, `list[str]`, and `list[list[str]]` for a string column
+wider than 1, each with `| None` for an optional field.
 `Column(width=3)` and `Meta(shape=(6,))` give the width and shape of an array.
 Anything else raises `TypeError` when the class is defined, naming the field.
 A key that a schema would read as a pattern (`*`, `?`, `[`, or a `re:` prefix)
@@ -329,8 +334,9 @@ required field, or carrying a field of the wrong kind, is dropped with a
 warning. An index still counts the file's frames, so a selection can give
 fewer records than it names, and `read` and `read_batch` keep the same frames.
 
-`RecordBatch[Sample]` has no field attributes. To get them, declare a subclass
-that lists each field with its batched type and no default:
+To a type checker, `RecordBatch[Sample]` has no field attributes, though it
+has them at runtime. To get them statically, declare a subclass that lists each
+field with its batched type and no default:
 
 ```python
 class SampleBatch(RecordBatch[Sample]):
@@ -351,7 +357,11 @@ and per-atom fields are concatenated, as in `Batch`. A batch indexes as
 list or a mask gives a copy.
 
 `Sample.spec()` is the `SchemaSpec` that describes the fields, so a record can
-be written out as YAML and used wherever a schema is. Passing `schema=` along
+be written out as YAML and passed as `schema=`. A plain read with it is not the
+record read: its rule for an `X | None` field is `absent: omit`, so
+`read_batch("mixed.extxyz", schema=Sample.spec())` raises on frames that differ
+in `forces`, and under `conformance="warn"` a frame missing `energy` is kept
+with NaN where the record read drops it. Passing `schema=` along
 with `record=` applies the schema's frame rule and checks that its rule for each
 key the record reads agrees with the field; the record's own fields do the
 projecting. A frame rule that requires `Lattice` needs a field that reads it,
@@ -750,9 +760,11 @@ Contracts worth knowing before relying on them:
 - **Mixed-schema files read per-frame, but do not batch:** `read` and
   `iread` handle files whose frames disagree (the MACE
   isolated-atom-plus-bulk pattern) without complaint; each `Frame` stands
-  alone. `Batch` assembly currently requires every gathered frame to share
-  a schema; `infer_schema` tells you in advance whether a file qualifies.
-  A missing-key policy (NaN-fill plus presence mask) is planned.
+  alone. `Batch` assembly requires every gathered frame to share a schema;
+  `infer_schema` tells you in advance whether a file qualifies. To batch such
+  a file, project it to a fixed shape (`mode="project"`), or read it into a
+  `RecordBatch`, which fills an absent optional field and records in
+  `present` which frames carried it.
 - **Duplicate metadata keys collapse:** `Frame.metadata` is a dict; if a
   comment line repeats a key, the last occurrence wins.
 - **`Batch.batch` is computed per access** (`np.repeat` over the atom

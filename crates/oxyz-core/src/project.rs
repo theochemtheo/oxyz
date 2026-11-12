@@ -323,8 +323,8 @@ fn promote_value(value: &Value) -> Value {
 }
 
 /// Project `frame` onto `plan`: undeclared fields dropped, absent optionals
-/// filled, and missing or wrong-kind fields reported. Fill widths come from the
-/// plan and are trusted.
+/// filled (or omitted, where the plan gives no fill), and missing or wrong-kind
+/// fields reported. Fill widths come from the plan and are trusted.
 pub fn project_frame(frame: &Frame, plan: &ProjectionPlan) -> Projected {
     let mut deviations = Vec::new();
     let mut dropped = false;
