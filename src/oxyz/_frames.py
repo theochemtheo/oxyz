@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, overload
 
@@ -293,7 +294,8 @@ def read[R: Record](  # noqa: PLR0913  the index/schema/projection/source option
         with a float field unless the record is `strict`); rules for other
         keys are not applied. Under `conformance="warn"`, a frame missing a
         required field, or carrying a field of the wrong kind, is dropped
-        with a warning, so the result may be shorter than the selection.
+        with a warning, so the result may be shorter than the selection,
+        and an integer or sequence `index` counts the frames that were kept.
     threads
         `None` parses on every core; `1` is serial. Results and errors are
         identical.
@@ -322,7 +324,7 @@ def read[R: Record](  # noqa: PLR0913  the index/schema/projection/source option
 
     Returns
     -------
-    Frame or list[Frame]
+    Frame or list[Frame], or R or list[R] with `record=R`
         A single `Frame` for an integer `index`, otherwise a list. With
         `record`, instances of it in place of frames.
 
@@ -468,7 +470,7 @@ def iread[R: Record](  # noqa: PLR0913  the index/schema/projection/source optio
 
     Returns
     -------
-    Iterator[Frame]
+    Iterator[Frame], or Iterator[R] with `record=R`
         Frames, or records with `record`, in file order (or in `index`
         order, for a sequence).
 
@@ -564,10 +566,10 @@ def _projection(
     element so the reader can cast each kept frame.
     """
     from oxyz._project import compile_projection, effective_mode
-    from oxyz._record_bind import Binding
     from oxyz._schema_spec import SchemaSpec
 
-    if isinstance(schema, Binding):
+    # Tested by elimination, so a read without a record never imports `_record_bind`.
+    if not isinstance(schema, (SchemaSpec, str, os.PathLike)):
         return schema.frame_plan, schema.spec, schema
     spec = schema if isinstance(schema, SchemaSpec) else SchemaSpec.from_file(schema)
     return compile_projection(spec, effective_mode(spec, mode)), spec, None
@@ -609,7 +611,13 @@ def _keep_projected(
         if keep and data is not None:
             frame = _frame_from_data(data)
             if frame_compiled is not None:
-                _schema_match.enforce_frame(frame, frame_compiled, conformance, index)
+                _schema_match.enforce_frame(
+                    frame,
+                    frame_compiled,
+                    conformance,
+                    index,
+                    frame_rule_only=cast is not None,
+                )
             out.append(frame if cast is None else cast(frame, index))
     return out
 
@@ -790,7 +798,11 @@ def _iter_all(
                 frame = _frame_from_data(data)
                 if frame_compiled is not None:
                     _schema_match.enforce_frame(
-                        frame, frame_compiled, conformance, index
+                        frame,
+                        frame_compiled,
+                        conformance,
+                        index,
+                        frame_rule_only=cast is not None,
                     )
                 yield frame if cast is None else cast(frame, index)
         return

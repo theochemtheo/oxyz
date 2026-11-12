@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import inspect
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -75,3 +78,22 @@ def test_schema_public_api_exported():
     ):
         assert hasattr(oxyz, name), name
     assert name in oxyz.__all__ if (name := "SchemaSpec") else True
+
+
+def test_a_read_without_record_loads_no_record_machinery() -> None:
+    path = Path(__file__).parent / "data" / "mace_ref_energy_forces_stress.xyz"
+    code = f"""
+import sys
+import oxyz
+spec = oxyz.SchemaSpec(
+    metadata=(oxyz.MetadataRule("REF_energy", oxyz.Kind.REAL),), mode="project"
+)
+oxyz.read({str(path)!r}, schema=spec)
+list(oxyz.iread({str(path)!r}, schema=spec))
+oxyz.read({str(path)!r}, schema=spec, mode="validate")
+print([m for m in ("oxyz._record_bind", "oxyz._record_fields") if m in sys.modules])
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert result.stdout.strip() == "[]"

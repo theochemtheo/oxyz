@@ -6,7 +6,7 @@ import dataclasses
 import functools
 import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, final
 
 from oxyz._record import Record
 from oxyz._schema import KIND_TO_LETTER, Kind, column_sig, metadata_sig
@@ -26,7 +26,8 @@ if TYPE_CHECKING:
 type _Fields = tuple[tuple[str, FieldType, FieldSpec[Any]], ...]
 
 
-@dataclass(frozen=True)
+@final
+@dataclass(frozen=True, eq=False)
 class Binding:
     """A record class bound to a read: its plans, its spec and its frame cast."""
 
@@ -68,6 +69,11 @@ def bind(target: object, schema: SchemaSpec | str | Path | None = None) -> Bindi
     """
     if not (isinstance(target, type) and issubclass(target, Record)):
         raise TypeError(f"record= takes a Record subclass, got {target!r}")
+    if target is Record:
+        raise TypeError(
+            "record= takes a Record subclass, got Record itself, which declares "
+            "no fields"
+        )
     if schema is not None and not isinstance(schema, SchemaSpec):
         schema = SchemaSpec.from_file(schema)
     return _bind(target, schema)

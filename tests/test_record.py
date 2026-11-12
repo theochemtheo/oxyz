@@ -833,6 +833,9 @@ class Stressed(Record):
     stress: Matrix3[Array] = Matrix3()
 
 
+@pytest.mark.filterwarnings(
+    "ignore:Setting the shape on a NumPy array:DeprecationWarning"
+)
 def test_matrix3_matches_ase():
     pytest.importorskip("ase")
     import oxyz.ase
@@ -999,6 +1002,13 @@ def test_record_must_be_a_record_class(target: Any):
         oxyz.iread(MACE, record=target)
 
 
+def test_the_record_base_is_not_a_record_class():
+    with pytest.raises(TypeError, match="Record itself, which declares no fields"):
+        bind(Record)
+    with pytest.raises(TypeError, match="Record itself"):
+        oxyz.read(MACE, record=Record)
+
+
 def test_record_instance_is_not_a_record_class():
     with pytest.raises(TypeError, match=r"got MaceSample\(n_atoms=3"):
         oxyz.read(MACE, record=make_mace())  # ty: ignore[no-matching-overload]
@@ -1010,7 +1020,8 @@ class Squares(Record):
     moments: Meta[Array] = Meta(shape=(9,))
 
 
-def test_two_d_metadata_reads_like_the_flat_one(tmp_path: Path):
+def flat_and_square(tmp_path: Path) -> tuple[Path, Path]:
+    """One frame of 9-value metadata, written flat and as 3x3 nested lists."""
     flat = frames_file(
         tmp_path / "flat.xyz",
         'Lattice="5 1 0 0 5 2 0 0 5" virial="1.5 2 3 4 5 6 7 8 9" '
@@ -1021,6 +1032,11 @@ def test_two_d_metadata_reads_like_the_flat_one(tmp_path: Path):
         "Lattice=[[5,1,0],[0,5,2],[0,0,5]] virial=[[1.5,2,3],[4,5,6],[7,8,9]] "
         "moments=[[1,2,3],[4,5,6],[7,8,9]]",
     )
+    return flat, square
+
+
+def test_two_d_metadata_reads_like_the_flat_one(tmp_path: Path):
+    flat, square = flat_and_square(tmp_path)
     expected = oxyz.read(flat, 0, record=Squares)
     np.testing.assert_array_equal(
         expected.cell, [[5.0, 1.0, 0.0], [0.0, 5.0, 2.0], [0.0, 0.0, 5.0]]
@@ -1036,8 +1052,59 @@ def test_two_d_metadata_reads_like_the_flat_one(tmp_path: Path):
     assert oxyz.read(square, record=Squares, schema=inferred) == [expected]
 
 
+def test_two_d_metadata_with_a_frame_rule_reads_like_the_flat_one(tmp_path: Path):
+    flat, square = flat_and_square(tmp_path)
+    rule = SchemaSpec(frame=FrameRule(n_atoms_max=5))
+    expected = oxyz.read(flat, record=Squares, schema=rule)
+    assert len(expected) == 1
+    assert oxyz.read(square, record=Squares, schema=rule) == expected
+    assert list(oxyz.iread(square, record=Squares, schema=rule)) == expected
+
+
+ONE_ATOM = SchemaSpec(frame=FrameRule(n_atoms_max=1))
+
+
+@pytest.mark.parametrize("conformance", ["required", "strict"])
+def test_frame_rule_on_a_record_read_raises_with_context(conformance: Any):
+    with pytest.raises(SchemaError, match="n_atoms") as e:
+        oxyz.read(MAD, record=MadSample, schema=ONE_ATOM, conformance=conformance)
+    assert (e.value.frame_index, e.value.name) == (1, "n_atoms")
+    with pytest.raises(SchemaError) as e:
+        list(
+            oxyz.iread(MAD, record=MadSample, schema=ONE_ATOM, conformance=conformance)
+        )
+    assert (e.value.frame_index, e.value.name) == (1, "n_atoms")
+
+
+def test_frame_rule_on_a_record_read_warns_and_keeps_the_frame():
+    # As in a plain project-mode read, a frame-rule violation does not drop the frame.
+    with pytest.warns(oxyz.SchemaWarning, match="frame 'n_atoms'") as caught:
+        recs = oxyz.read(MAD, record=MadSample, schema=ONE_ATOM, conformance="warn")
+    assert str(caught[0].message).startswith("frame 1: ")
+    assert recs == oxyz.read(MAD, record=MadSample)
+    plain_spec = dataclasses.replace(MadSample.spec(), frame=ONE_ATOM.frame)
+    with pytest.warns(oxyz.SchemaWarning, match="frame 'n_atoms'") as plain_caught:
+        plain = oxyz.read(MAD, schema=plain_spec, conformance="warn")
+    assert len(plain) == len(recs) == 201
+    assert [str(w.message) for w in plain_caught] == [str(w.message) for w in caught]
+
+
+def test_a_satisfied_frame_rule_under_strict_reports_nothing(
+    recwarn: pytest.WarningsRecorder,
+):
+    roomy = SchemaSpec(frame=FrameRule(n_atoms_max=1000))
+    recs = oxyz.read(MAD, record=MadSample, schema=roomy, conformance="strict")
+    assert recs == oxyz.read(MAD, record=MadSample)
+    assert (
+        list(oxyz.iread(MAD, record=MadSample, schema=roomy, conformance="strict"))
+        == recs
+    )
+    assert not recwarn.list
+
+
 def test_bind_is_cached(tmp_path: Path):
     assert bind(MadSample) is bind(MadSample)
+    assert hash(bind(MadSample)) == hash(bind(MadSample))
     spec = SchemaSpec(metadata=(MetadataRule("energy", Kind.REAL),))
     assert bind(MadSample, spec) is bind(MadSample, dataclasses.replace(spec))
     saved = tmp_path / "spec.yaml"
