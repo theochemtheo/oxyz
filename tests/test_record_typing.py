@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 DECLARATION = """\
+import dataclasses
 from typing import Annotated, reveal_type
 
 import numpy as np
@@ -201,6 +202,13 @@ BATCH_ERRORS = """\
     b.energy                                                     # error
     m.energy = m.energy                                          # error
     MaceBatch(offsets=ints, frame_indices=ints)                  # error
+    # `present=` is a runtime keyword that type checkers do not see.
+    MaceBatch(
+        offsets=ints, frame_indices=ints, positions=a, forces=a, energy=a,
+        stress=a, cell=a, config_type=[],
+        present={"stress": ints},                                # error
+    )
+    dataclasses.replace(m, present={"stress": ints})
     oxyz.read_batch(p, record=MaceSample)                        # error
     oxyz.iread_batch(p, record=MaceSample, frames_per_batch=2)   # error
     oxyz.read(p, record=MaceBatch)                               # error

@@ -256,7 +256,10 @@ class RecordBatch[R: Record](metaclass=RecordBatchMeta):
     present : mapping of str to numpy.ndarray, optional
         Keyword only, keyed by field name: for an `X | None` field, a bool
         mask of length `n_frames` marking the frames that carry it. A field
-        left out is present in every frame.
+        left out is present in every frame. Type checkers do not see this
+        keyword on the constructor, since `present` is also a method, and
+        report it as an unknown argument; `dataclasses.replace(batch,
+        present=...)` is the form they accept.
 
     Raises
     ------
