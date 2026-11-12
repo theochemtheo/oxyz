@@ -7,7 +7,7 @@ bounded, formatted independently of numpy's print options, and escaped.
 from __future__ import annotations
 
 import html
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from oxyz._batch import Batch
     from oxyz._frames import Frame
     from oxyz._record import Record
+    from oxyz._record_batch import RecordBatch
     from oxyz._scan import FrameIndex
     from oxyz._schema import ColumnSchema, MetadataSchema, Schema
     from oxyz._schema_spec import ColumnRule, MetadataRule, SchemaSpec
@@ -172,6 +173,16 @@ def record(obj: Record) -> str:
         type(obj).__name__,
         [f"{obj.n_atoms} atoms"],
         _fields("fields", "value", values, value_text),
+    )
+
+
+def record_batch(obj: RecordBatch[Any]) -> str:
+    fields = type(obj).__record__.__record_fields__
+    values = {name: getattr(obj, name) for name, _, _ in fields}
+    return _page(
+        type(obj).__name__,
+        [f"{obj.n_frames} frames", _atoms(obj.n_atoms, obj.total_atoms)],
+        _fields("fields", "preview", values, rows_text),
     )
 
 

@@ -20,7 +20,7 @@ import numpy as np
 import numpy.typing as npt
 
 import oxyz
-from oxyz import Cell, Column, Meta, Record
+from oxyz import Cell, Column, Matrix3, Meta, Record, RecordBatch
 
 type Array = npt.NDArray[np.float64]
 type Forces = Annotated[Column[Array], Column("REF_forces", width=3)]
@@ -76,6 +76,126 @@ oxyz.read(p, record=r)                                           # error
 MaceSample(n_atoms=3, positions=a, forces=a, stress=None, cell=a, config_type="x")
 """
 
+BATCHES = """\
+class MaceBatch(RecordBatch[MaceSample]):
+    positions: Array
+    forces: Array
+    energy: Array
+    stress: Array
+    cell: Array
+    config_type: list[str]
+
+
+type Ints = npt.NDArray[np.int64]
+type Bools = npt.NDArray[np.bool_]
+ints: Ints = np.zeros(1, dtype=np.int64)
+
+
+class Table(Record):
+    rc: Column[Array] = Column(width=3)
+    rc_o: Column[Array | None] = Column()
+    ic: Column[Ints] = Column()
+    ic_o: Column[Ints | None] = Column()
+    lc: Column[Bools] = Column()
+    lc_o: Column[Bools | None] = Column()
+    sc: Column[list[str]] = Column()
+    sc_o: Column[list[str] | None] = Column()
+    sc2: Column[list[list[str]]] = Column(width=2)
+    sc2_o: Column[list[list[str]] | None] = Column(width=2)
+    rm: Meta[float] = Meta()
+    rm_o: Meta[float | None] = Meta()
+    im: Meta[int] = Meta()
+    im_o: Meta[int | None] = Meta()
+    lm: Meta[bool] = Meta()
+    lm_o: Meta[bool | None] = Meta()
+    sm: Meta[str] = Meta()
+    sm_o: Meta[str | None] = Meta()
+    ra: Meta[Array] = Meta(shape=(3,))
+    ra_o: Meta[Array | None] = Meta(shape=(3,))
+    ia: Meta[Ints] = Meta(shape=(3,))
+    ia_o: Meta[Ints | None] = Meta(shape=(3,))
+    la: Meta[Bools] = Meta(shape=(3,))
+    la_o: Meta[Bools | None] = Meta(shape=(3,))
+    sa: Meta[list[str]] = Meta(shape=(2,))
+    sa_o: Meta[list[str] | None] = Meta(shape=(2,))
+    cell: Cell[Array] = Cell()
+    m3: Matrix3[Array] = Matrix3()
+    m3_o: Matrix3[Array | None] = Matrix3("virial")
+    f32: Column[npt.NDArray[np.float32]] = Column()
+
+
+class NoCell(Record):
+    cell: Cell[Array | None] = Cell()
+
+
+def batches(
+    b: RecordBatch[MaceSample],
+    m: MaceBatch,
+    t: RecordBatch[Table],
+    n: RecordBatch[NoCell],
+) -> None:
+"""
+
+FLOAT = "ndarray[_AnyShape, dtype[float64]]"
+INT = "ndarray[_AnyShape, dtype[signedinteger[_64Bit]]]"
+BOOL = "ndarray[_AnyShape, dtype[numpy.bool[builtins.bool]]]"
+
+BATCH_REVEALS = f"""\
+    reveal_type(b[0])                          # T: MaceSample
+    reveal_type(b[np.int64(0)])                # T: MaceSample
+    reveal_type(b[0:1])                        # T: RecordBatch[MaceSample]
+    reveal_type(b[[1, 0]])                     # T: RecordBatch[MaceSample]
+    for r in b:
+        reveal_type(r)                         # T: MaceSample
+    reveal_type(b["x"])                        # T: Any
+    reveal_type(b.present(MaceSample.stress))  # T: {BOOL}
+    reveal_type(b[MaceSample.energy])          # T: {FLOAT}
+    reveal_type(m[0])                          # T: MaceSample
+    reveal_type(m[0:1])                        # T: MaceBatch
+    reveal_type(m.energy)                      # T: {FLOAT}
+    reveal_type(m.config_type)                 # T: list[str]
+    reveal_type(t[Table.rc])                   # T: {FLOAT}
+    reveal_type(t[Table.rc_o])                 # T: {FLOAT}
+    reveal_type(t[Table.ic])                   # T: {INT}
+    reveal_type(t[Table.ic_o])                 # T: {INT}
+    reveal_type(t[Table.lc])                   # T: {BOOL}
+    reveal_type(t[Table.lc_o])                 # T: {BOOL}
+    reveal_type(t[Table.sc])                   # T: list[str]
+    reveal_type(t[Table.sc_o])                 # T: list[str]
+    reveal_type(t[Table.sc2])                  # T: list[list[str]]
+    reveal_type(t[Table.sc2_o])                # T: list[list[str]]
+    reveal_type(t[Table.rm])                   # T: {FLOAT}
+    reveal_type(t[Table.rm_o])                 # T: {FLOAT}
+    reveal_type(t[Table.im])                   # T: {INT}
+    reveal_type(t[Table.im_o])                 # T: {INT}
+    reveal_type(t[Table.lm])                   # T: {BOOL}
+    reveal_type(t[Table.lm_o])                 # T: {BOOL}
+    reveal_type(t[Table.sm])                   # T: list[str]
+    reveal_type(t[Table.sm_o])                 # T: list[str]
+    reveal_type(t[Table.ra])                   # T: {FLOAT}
+    reveal_type(t[Table.ra_o])                 # T: {FLOAT}
+    reveal_type(t[Table.ia])                   # T: {INT}
+    reveal_type(t[Table.ia_o])                 # T: {INT}
+    reveal_type(t[Table.la])                   # T: {BOOL}
+    reveal_type(t[Table.la_o])                 # T: {BOOL}
+    reveal_type(t[Table.sa])                   # T: list[list[str]]
+    reveal_type(t[Table.sa_o])                 # T: list[list[str]]
+    reveal_type(t[Table.cell])                 # T: {FLOAT}
+    reveal_type(n[NoCell.cell])                # T: {FLOAT}
+    reveal_type(t[Table.m3])                   # T: {FLOAT}
+    reveal_type(t[Table.m3_o])                 # T: {FLOAT}
+    reveal_type(t[Table.f32])                  # T: Any
+"""
+
+BATCH_ERRORS = """\
+    b.energy                                                     # error
+    m.energy = m.energy                                          # error
+    MaceBatch(offsets=ints, frame_indices=ints)                  # error
+
+
+class Bad(RecordBatch[int]): pass                                # error
+"""
+
 DIAGNOSTIC = re.compile(r"^(?P<path>.+?):(?P<line>\d+):\d+: (?P<message>.+)$")
 
 
@@ -127,3 +247,11 @@ def test_fields_have_value_types_and_keys_have_specifier_types(tmp_path: Path):
 
 def test_misuse_of_a_record_is_a_static_error(tmp_path: Path):
     check_fixture(tmp_path, ERRORS)
+
+
+def test_batch_lookups_have_batch_form_types(tmp_path: Path):
+    check_fixture(tmp_path, BATCHES + BATCH_REVEALS)
+
+
+def test_misuse_of_a_batch_is_a_static_error(tmp_path: Path):
+    check_fixture(tmp_path, BATCHES + BATCH_ERRORS)

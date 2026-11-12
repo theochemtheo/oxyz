@@ -232,6 +232,24 @@ def _namespace_annotations(namespace: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+def slotted_dataclass[M: type](
+    mcls: type[M],
+    name: str,
+    bases: tuple[type, ...],
+    namespace: dict[str, Any],
+    slots: tuple[str, ...],
+    **kwargs: object,
+) -> M:
+    """Create a frozen, keyword-only dataclass of `mcls` whose fields are slots.
+
+    `namespace` must hold no class attribute named in `slots`.
+    """
+    namespace = {**namespace, "__slots__": slots}
+    cls = type.__new__(mcls, name, bases, namespace, **kwargs)
+    dataclasses.dataclass(frozen=True, kw_only=True, eq=False, repr=False)(cls)
+    return cls
+
+
 def _check_names(
     name: str, annotations: dict[str, Any], namespace: dict[str, Any]
 ) -> None:
@@ -253,7 +271,7 @@ def _bind_fields(
     from oxyz._record_fields import field_type, unwrap
     from oxyz._schema_match import _is_pattern
 
-    hints = _resolve(cls, annotations)
+    hints = resolve_hints(cls, annotations)
     fields: dict[str, tuple[FieldType, FieldSpec[Any]]] = {}
     for base in reversed(cls.__mro__[1:]):
         if isinstance(base, RecordMeta):
@@ -284,7 +302,8 @@ def _bind_fields(
     return tuple((field, ft, key) for field, (ft, key) in fields.items())
 
 
-def _resolve(cls: RecordMeta, annotations: dict[str, Any]) -> dict[str, Any]:
+def resolve_hints(cls: type, annotations: dict[str, Any]) -> dict[str, Any]:
+    """Resolve `cls`'s annotations; a `TypeError` names the first that cannot."""
     try:
         return typing.get_type_hints(cls, include_extras=True)
     except (NameError, TypeError) as error:
@@ -294,7 +313,7 @@ def _resolve(cls: RecordMeta, annotations: dict[str, Any]) -> dict[str, Any]:
         raise TypeError(f"{cls.__name__}: {error}") from error
 
 
-def _resolves(cls: RecordMeta, annotation: object) -> bool:
+def _resolves(cls: type, annotation: object) -> bool:
     """Whether one annotation resolves where the class's annotations do."""
     probe = type(
         cls.__name__,
@@ -357,11 +376,11 @@ class RecordMeta(type):
         defaults = {
             field: namespace.pop(field) for field in annotations if field in namespace
         }
-        namespace["__slots__"] = tuple(annotations)
         # Shadows an inherited map, so `dataclass()` finds each slot, not a base's key.
         namespace["__record_keys__"] = {}
-        cls = super().__new__(mcls, name, bases, namespace, **kwargs)
-        dataclasses.dataclass(frozen=True, kw_only=True, eq=False, repr=False)(cls)
+        cls = slotted_dataclass(
+            mcls, name, bases, namespace, tuple(annotations), **kwargs
+        )
         fields = () if root else _bind_fields(cls, annotations, defaults)
         cls.__record_fields__ = fields
         if strict is None:
