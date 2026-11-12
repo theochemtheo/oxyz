@@ -6,16 +6,20 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Typed records: declare a `Record` and read frames with `record=` on `read`
+  and `iread`, or batches as `RecordBatch[R]` on `read_batch` and
+  `iread_batch`. Fields are statically typed, optional fields batch as filled
+  arrays with `batch.present(...)`.
+- Schema rules take `absent: omit`: under project mode an absent optional
+  field is left out of the frame instead of filled.
+
 ### Changed
 
 - Projection promotes an integer value to float for a REAL rule, so an
   integer-valued `Lattice` no longer fails a project-mode schema. Validate mode
   is unchanged.
-
-### Added
-
-- Schema rules take `absent: omit`: under project mode an absent optional
-  field is left out of the frame instead of filled.
 
 ### Internal
 

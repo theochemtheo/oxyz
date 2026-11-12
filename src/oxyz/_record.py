@@ -179,7 +179,7 @@ class Cell[T](FieldSpec[T]):
 
     The annotation is `Cell[NDArray[np.float64]]`, optionally `| None`. The
     nine values are read in C order, as ASE reads `Lattice`; `Matrix3` reads
-    the other 3x3 entries in Fortran order.
+    other 9-value entries in Fortran order.
 
     Parameters
     ----------
@@ -425,7 +425,8 @@ class Record(metaclass=RecordMeta):
     which checks each value against its field: Python type or dtype,
     width or shape, `None` only where the annotation allows it, and
     `n_atoms` rows for a per-atom field. Values are kept as given, neither
-    copied nor converted nor made read-only. Instances are frozen and
+    copied nor converted nor made read-only. A numpy scalar is accepted for
+    a scalar field, and an `int` for a float field. Instances are frozen and
     slotted: they have no `__dict__`, and assigning to a field raises
     `dataclasses.FrozenInstanceError`.
 
@@ -469,6 +470,24 @@ class Record(metaclass=RecordMeta):
     ValueError
         From `__init__`, naming the field: a wrong width, shape or row
         count, or a negative `n_atoms`.
+
+    Examples
+    --------
+    >>> import oxyz
+    >>> from oxyz import Column, Meta, Record
+    >>> class Sample(Record):
+    ...     species: Column[list[str]] = Column()
+    ...     energy: Meta[float] = Meta()
+    ...     stress: Meta[float | None] = Meta()
+    >>> samples = oxyz.read(DATA / "mixed.extxyz", record=Sample)
+    >>> samples[0].species
+    ['O', 'H', 'H']
+    >>> [s.energy for s in samples]
+    [-14.5, -14.48, -14.52]
+    >>> samples[0].stress is None
+    True
+    >>> Sample.energy.key
+    'energy'
     """
 
     n_atoms: int

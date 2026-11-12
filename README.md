@@ -245,6 +245,128 @@ literal rules: required where a column appears in every frame, optional where
 it appears in only some. `oxyz freeze` and `oxyz scan --emit-schema --project`
 write a frozen, project-ready schema. Validate mode is unchanged.
 
+## Typed records
+
+A `Record` is a class that names the fields you want from a frame, with their
+types. `read(..., record=Sample)` returns `Sample` objects instead of
+`Frame`s, and a type checker knows the type of every attribute. A
+`RecordBatch[Sample]` is the batched form, read by `read_batch`.
+
+```python
+from typing import Annotated
+
+import numpy as np
+import numpy.typing as npt
+import oxyz
+from oxyz import Cell, Column, Meta, Record, RecordBatch
+
+type Array = npt.NDArray[np.float64]
+type Forces = Annotated[Column[Array | None], Column(width=3)]
+
+
+class Sample(Record):
+    positions: Column[Array] = Column("pos", width=3)
+    forces: Forces                       # optional: None where a frame has none
+    energy: Meta[float] = Meta()         # the key defaults to the field name
+    cell: Cell[Array] = Cell()           # 3x3, from Lattice
+    species: Column[list[str]] = Column()
+
+
+samples = oxyz.read("mixed.extxyz", record=Sample)    # list[Sample]
+samples[0].energy                                     # float
+samples[2].forces                                     # None
+
+batch = oxyz.read_batch("mixed.extxyz", record=RecordBatch[Sample])
+batch[2]                                              # Sample
+batch[Sample.energy]                                  # NDArray[float64], shape (3,)
+batch[Sample.forces]                                  # NDArray[float64], NaN where absent
+batch.present(Sample.forces)                          # array([True, True, False])
+batch["energy"]                                       # the same array, typed Any
+```
+
+Each field is declared with a specifier, which says where the value lives:
+`Column` for a per-atom column, `Meta` for a comment-line entry, `Cell` for the
+3x3 cell read from `Lattice`, and `Matrix3` for another 3x3 entry such as
+`stress` or `virial`. The annotation is the specifier subscripted with the
+value type, `Meta[float]`. The specifier is either the default value
+(`energy: Meta[float] = Meta("REF_energy")`) or the second argument of
+`Annotated`, which lets one alias be shared by several records. The value types
+are `float`, `int`, `bool`, `str`, `NDArray[np.float64]`, `NDArray[np.int64]`,
+`NDArray[np.bool_]` and `list[str]`, each with `| None` for an optional field.
+`Column(width=3)` and `Meta(shape=(6,))` give the width and shape of an array.
+Anything else raises `TypeError` when the class is defined, naming the field.
+A key that a schema would read as a pattern (`*`, `?`, `[`, or a `re:` prefix)
+is rejected the same way.
+
+ty does not apply class-based field specifiers. A field declared in the default
+form is therefore typed as optional in the constructor under ty, though it is
+required at runtime and mypy treats it as required. The `Annotated` form is
+required under both. Attribute types are right under ty, mypy and pyright.
+
+On the class, a field name is its key: `Sample.energy` is a `Meta[float]`
+carrying the field name and the file key. `batch[Sample.energy]` is typed by the
+key, so the result is an array and not `Any`. Pass `strict=True` as a class
+keyword (`class Sample(Record, strict=True)`) to stop a float field accepting an
+integer value from the file. By default `energy=0` and an integer `Lattice`
+read as floats.
+
+A field that is absent from a frame is handled as follows.
+
+| Declaration | Absent from a frame | In a batch, where absent |
+|---|---|---|
+| `X` | `SchemaError` naming the frame and key | the same |
+| `X` with `fill=v` | `v` | `v` |
+| `X \| None` | `None` | NaN for floats; other kinds need `fill=` |
+
+A batch never holds `None`. An optional field is a dense array, filled where a
+frame lacked it, and `batch.present(key)` is the mask of frames that carried
+it. `batch[i]` consults the mask, so it gives `None` for an absent field and
+keeps a NaN that was in the file. Under `conformance="warn"`, a frame missing a
+required field, or carrying a field of the wrong kind, is dropped with a
+warning and the result is shorter than the selection.
+
+`RecordBatch[Sample]` has no field attributes. To get them, declare a subclass
+that lists each field with its batched type and no default:
+
+```python
+class SampleBatch(RecordBatch[Sample]):
+    positions: Array
+    forces: Array
+    energy: Array
+    cell: Array
+    species: list[str]
+
+
+typed = oxyz.read_batch("mixed.extxyz", record=SampleBatch)
+typed.energy                                          # NDArray[float64]
+```
+
+A scalar field becomes a 1-D array, an array field gains a leading frame axis,
+and per-atom fields are concatenated, as in `Batch`. A batch indexes as
+`Batch` does: an integer gives a `Sample`, a slice gives views, and a step, a
+list or a mask gives a copy.
+
+`Sample.spec()` is the `SchemaSpec` that describes the fields, so a record can
+be written out as YAML and used wherever a schema is. Passing `schema=` along
+with `record=` applies the schema's frame rule and checks that its rule for each
+key the record reads agrees with the field; the record's own fields do the
+projecting.
+
+Construction is checked or trusted, depending on how the record is made.
+`Sample(...)` checks every field: Python type or dtype, width or shape, and row
+count against `n_atoms`. It raises `TypeError` or `ValueError` naming the field,
+and keeps the arrays it is given. The readers do not repeat that check, because
+projection has already established it. `Sample.from_frame(frame)` and
+`SampleBatch.from_batch(batch)` check a frame or batch you already hold, and
+raise `SchemaError` on a missing key, a wrong kind, width, shape, dtype or row
+count. The only conversion is the integer to float promotion above.
+
+Writability depends on the entry point. Records and batches from the readers
+own their arrays, which are writable. Those from `from_frame` and `from_batch`
+are read-only views of the source arrays, so a later write to the frame shows
+through; use `.copy()` for an independent array. Records are frozen and slotted,
+and compare by value with NaN equal to NaN.
+
 ## PyTorch targets
 
 Two more converters land extxyz directly into a training-adjacent PyTorch
@@ -576,6 +698,10 @@ oxyz.infer_schema(path)                      -> Schema
 # Every reader above also takes compression="infer" and member=None; the frame
 # and batch readers additionally take schema=None, conformance="required", and
 # mode=None (None/"validate"/"project", overriding the schema's own mode).
+#
+# They also take record=None. A Record subclass R makes read/iread return R in
+# place of Frame; a RecordBatch[R] or declared subclass makes read_batch and
+# iread_batch return it in place of Batch. record= cannot be combined with mode=.
 
 oxyz.write(path, obj, *, append=False, compression="infer", level=None, threads=None) -> None
 oxyz.Writer(path, *, append=False, compression="infer", level=None, batch=None)   # incremental, a context manager
@@ -587,7 +713,9 @@ share the reader index grammar; their signatures are in the sections above.
 `Frame`, `Batch`, `FrameIndex`, `Violation`, `Schema` and its parts
 (`ColumnSchema`, `MetadataSchema`, the variant records, the `Kind` enum), and
 the `SchemaSpec` rule types (`ColumnRule`, `MetadataRule`, `FrameRule`) are
-frozen dataclasses. Every error oxyz raises subclasses `oxyz.OxyzError` (a
+frozen dataclasses. `Record`, `RecordBatch`, the specifiers `Column`, `Meta`,
+`Cell` and `Matrix3`, and their base `FieldSpec` declare typed records. Every
+error oxyz raises subclasses `oxyz.OxyzError` (a
 `ValueError`): `ParseError`, `SchemaError`, `FieldError`, and the converters'
 errors. The keyword/value types `Compression`, `Conformance`, `Mode`,
 `MemoryScaling`, and `Writable` are exported aliases. Everything ships with
