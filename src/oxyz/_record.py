@@ -21,6 +21,8 @@ import numpy as np
 from oxyz import _html, _summary
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from oxyz._frames import Frame
     from oxyz._record_fields import FieldType
     from oxyz._schema_spec import Absent, ColumnRule, MetadataRule, SchemaSpec
@@ -238,15 +240,23 @@ def slotted_dataclass[M: type](
     bases: tuple[type, ...],
     namespace: dict[str, Any],
     slots: tuple[str, ...],
-    **kwargs: object,
+    defaults: Mapping[str, object],
+    keywords: Mapping[str, Any],
 ) -> M:
     """Create a frozen, keyword-only dataclass of `mcls` whose fields are slots.
 
-    `namespace` must hold no class attribute named in `slots`.
+    `namespace` must hold no class attribute named in `slots`; a field's
+    default is given in `defaults` instead. `keywords` are the class keywords.
     """
     namespace = {**namespace, "__slots__": slots}
-    cls = type.__new__(mcls, name, bases, namespace, **kwargs)
+    cls = type.__new__(mcls, name, bases, namespace, **keywords)
+    descriptors = {field: cls.__dict__[field] for field in defaults}
+    # `dataclass()` reads a default from the class attribute, where the slot is.
+    for field, default in defaults.items():
+        setattr(cls, field, default)
     dataclasses.dataclass(frozen=True, kw_only=True, eq=False, repr=False)(cls)
+    for field, descriptor in descriptors.items():
+        setattr(cls, field, descriptor)
     return cls
 
 
@@ -379,7 +389,7 @@ class RecordMeta(type):
         # Shadows an inherited map, so `dataclass()` finds each slot, not a base's key.
         namespace["__record_keys__"] = {}
         cls = slotted_dataclass(
-            mcls, name, bases, namespace, tuple(annotations), **kwargs
+            mcls, name, bases, namespace, tuple(annotations), {}, kwargs
         )
         fields = () if root else _bind_fields(cls, annotations, defaults)
         cls.__record_fields__ = fields

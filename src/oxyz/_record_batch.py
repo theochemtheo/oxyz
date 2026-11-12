@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from oxyz._record import Column, Meta
     from oxyz._record_fields import FieldType
 
-_BASE_FIELDS = ("offsets", "frame_indices")
+_BASE_FIELDS = ("offsets", "frame_indices", "_present")
 
 
 @dataclass(frozen=True, eq=False)
@@ -140,7 +140,10 @@ def _check_forms(cls: type, record: type[Record], annotations: dict[str, Any]) -
 
 
 def _taking_present(init: Callable[..., None]) -> Callable[..., None]:
-    """Wrap a dataclass `__init__` to take the `present=` masks first."""
+    """Wrap a dataclass `__init__` so that `present=` gives the masks.
+
+    It wins over `_present`, which `dataclasses.replace` forwards.
+    """
 
     @functools.wraps(init)
     def wrapped(
@@ -149,7 +152,8 @@ def _taking_present(init: Callable[..., None]) -> Callable[..., None]:
         present: Mapping[str, npt.NDArray[np.bool_]] | None = None,
         **values: object,
     ) -> None:
-        object.__setattr__(self, "_present", dict(present or {}))
+        if present is not None:
+            values["_present"] = present
         init(self, **values)
 
     return wrapped
@@ -172,13 +176,15 @@ class RecordBatchMeta(type):
         namespace = dict(namespace)
         annotations = _namespace_annotations(namespace)
         if not any(isinstance(base, RecordBatchMeta) for base in bases):
-            slots = (*annotations, "_present")
-            cls = slotted_dataclass(mcls, name, bases, namespace, slots, **kwargs)
+            defaults = {"_present": namespace.pop("_present")}
+            cls = slotted_dataclass(
+                mcls, name, bases, namespace, tuple(annotations), defaults, kwargs
+            )
         else:
             record = _record_of(name, bases, namespace)
             _check_names(name, record, bases, annotations, namespace)
             cls = slotted_dataclass(
-                mcls, name, bases, namespace, tuple(annotations), **kwargs
+                mcls, name, bases, namespace, tuple(annotations), {}, kwargs
             )
             _check_forms(cls, record, annotations)
             cls.__record__ = record
@@ -224,7 +230,7 @@ class RecordBatch[R: Record](metaclass=RecordBatchMeta):
       record raises `KeyError`. `batch["energy"]` looks a field up by name.
 
     `present(key)` gives the mask. Slices and gathers carry the masks with
-    them.
+    them, and so does `dataclasses.replace` unless it is given `present=`.
 
     Batches are frozen and slotted. They compare equal when they are of the
     same class and hold equal layout arrays, fields and masks, NaN equal to
@@ -263,10 +269,8 @@ class RecordBatch[R: Record](metaclass=RecordBatchMeta):
 
     __hash__ = None
 
-    if TYPE_CHECKING:
-
-        @property
-        def _present(self) -> dict[str, npt.NDArray[np.bool_]]: ...
+    # Always a dict once built; `None` only as the absent-argument default.
+    _present: dict[str, npt.NDArray[np.bool_]] = None  # ty: ignore[invalid-assignment]
 
     def __post_init__(self) -> None:
         cls = type(self)
@@ -284,9 +288,11 @@ class RecordBatch[R: Record](metaclass=RecordBatchMeta):
                 ft.check(getattr(self, field), rows=rows)
             except (TypeError, ValueError) as error:
                 raise type(error)(f"{name}.{field}: {error}") from None
-        _check_masks(name, layout, self._present, n_frames)
+        masks = dict(self._present or {})
+        _check_masks(name, layout, masks, n_frames)
         for field in layout.optional:
-            self._present.setdefault(field, np.ones(n_frames, dtype=np.bool_))
+            masks.setdefault(field, np.ones(n_frames, dtype=np.bool_))
+        object.__setattr__(self, "_present", masks)
 
     @classmethod
     def _trusted(
@@ -339,62 +345,60 @@ class RecordBatch[R: Record](metaclass=RecordBatchMeta):
         for i in range(self.n_frames):
             yield self._row(i)
 
-    # The overloads' value types are invariant, so these never overlap at a
-    # call; pyright and mypy report them as overlapping regardless.
+    # mypy and pyright report the overloads marked below as overlapping later
+    # ones; invariance in the value type keeps each declared key to one row.
     @overload
     def __getitem__(self, key: Meta[bool | None]) -> npt.NDArray[np.bool_]: ...  # type: ignore[overload-overlap]  # pyright: ignore[reportOverlappingOverload]
     @overload
-    def __getitem__(self, key: Meta[bool]) -> npt.NDArray[np.bool_]: ...  # type: ignore[overload-overlap]  # pyright: ignore[reportOverlappingOverload]
+    def __getitem__(self, key: Meta[bool]) -> npt.NDArray[np.bool_]: ...  # type: ignore[overload-overlap]
     @overload
-    def __getitem__(  # type: ignore[overload-overlap]  # pyright: ignore[reportOverlappingOverload]
+    def __getitem__(  # type: ignore[overload-overlap]
         self, key: FieldSpec[npt.NDArray[np.bool_] | None]
     ) -> npt.NDArray[np.bool_]: ...
     @overload
-    def __getitem__(  # type: ignore[overload-overlap]  # pyright: ignore[reportOverlappingOverload]
+    def __getitem__(
         self, key: FieldSpec[npt.NDArray[np.bool_]]
     ) -> npt.NDArray[np.bool_]: ...
     @overload
-    def __getitem__(self, key: Meta[int | None]) -> npt.NDArray[np.int64]: ...  # type: ignore[overload-overlap]  # pyright: ignore[reportOverlappingOverload]
+    def __getitem__(self, key: Meta[int | None]) -> npt.NDArray[np.int64]: ...  # type: ignore[overload-overlap]
     @overload
-    def __getitem__(self, key: Meta[int]) -> npt.NDArray[np.int64]: ...  # type: ignore[overload-overlap]  # pyright: ignore[reportOverlappingOverload]
+    def __getitem__(self, key: Meta[int]) -> npt.NDArray[np.int64]: ...
     @overload
-    def __getitem__(  # type: ignore[overload-overlap]  # pyright: ignore[reportOverlappingOverload]
+    def __getitem__(  # type: ignore[overload-overlap]
         self, key: FieldSpec[npt.NDArray[np.int64] | None]
     ) -> npt.NDArray[np.int64]: ...
     @overload
-    def __getitem__(  # type: ignore[overload-overlap]  # pyright: ignore[reportOverlappingOverload]
+    def __getitem__(
         self, key: FieldSpec[npt.NDArray[np.int64]]
     ) -> npt.NDArray[np.int64]: ...
     @overload
-    def __getitem__(self, key: Meta[float | None]) -> npt.NDArray[np.float64]: ...  # type: ignore[overload-overlap]  # pyright: ignore[reportOverlappingOverload]
+    def __getitem__(self, key: Meta[float | None]) -> npt.NDArray[np.float64]: ...  # type: ignore[overload-overlap]
     @overload
-    def __getitem__(self, key: Meta[float]) -> npt.NDArray[np.float64]: ...  # type: ignore[overload-overlap]  # pyright: ignore[reportOverlappingOverload]
+    def __getitem__(self, key: Meta[float]) -> npt.NDArray[np.float64]: ...
     @overload
-    def __getitem__(  # type: ignore[overload-overlap]  # pyright: ignore[reportOverlappingOverload]
+    def __getitem__(  # type: ignore[overload-overlap]
         self, key: FieldSpec[npt.NDArray[np.float64] | None]
     ) -> npt.NDArray[np.float64]: ...
     @overload
-    def __getitem__(  # type: ignore[overload-overlap]  # pyright: ignore[reportOverlappingOverload]
+    def __getitem__(
         self, key: FieldSpec[npt.NDArray[np.float64]]
     ) -> npt.NDArray[np.float64]: ...
     @overload
-    def __getitem__(self, key: Meta[str | None]) -> list[str]: ...  # type: ignore[overload-overlap]  # pyright: ignore[reportOverlappingOverload]
+    def __getitem__(self, key: Meta[str | None]) -> list[str]: ...  # type: ignore[overload-overlap]
     @overload
-    def __getitem__(self, key: Meta[str]) -> list[str]: ...  # type: ignore[overload-overlap]  # pyright: ignore[reportOverlappingOverload]
+    def __getitem__(self, key: Meta[str]) -> list[str]: ...
     @overload
     def __getitem__(self, key: Column[list[str] | None]) -> list[str]: ...  # type: ignore[overload-overlap]  # pyright: ignore[reportOverlappingOverload]
     @overload
-    def __getitem__(self, key: Column[list[str]]) -> list[str]: ...  # type: ignore[overload-overlap]  # pyright: ignore[reportOverlappingOverload]
+    def __getitem__(self, key: Column[list[str]]) -> list[str]: ...
     @overload
-    def __getitem__(self, key: Meta[list[str] | None]) -> list[list[str]]: ...  # type: ignore[overload-overlap]  # pyright: ignore[reportOverlappingOverload]
+    def __getitem__(self, key: Meta[list[str] | None]) -> list[list[str]]: ...
     @overload
-    def __getitem__(self, key: Meta[list[str]]) -> list[list[str]]: ...  # type: ignore[overload-overlap]  # pyright: ignore[reportOverlappingOverload]
+    def __getitem__(self, key: Meta[list[str]]) -> list[list[str]]: ...
     @overload
-    def __getitem__(  # type: ignore[overload-overlap]  # pyright: ignore[reportOverlappingOverload]
-        self, key: Column[list[list[str]] | None]
-    ) -> list[list[str]]: ...
+    def __getitem__(self, key: Column[list[list[str]] | None]) -> list[list[str]]: ...
     @overload
-    def __getitem__(self, key: Column[list[list[str]]]) -> list[list[str]]: ...  # type: ignore[overload-overlap]  # pyright: ignore[reportOverlappingOverload]
+    def __getitem__(self, key: Column[list[list[str]]]) -> list[list[str]]: ...
     @overload
     def __getitem__(self, key: FieldSpec[Any]) -> Any: ...  # noqa: ANN401 — a value type outside the batch-form table
     @overload

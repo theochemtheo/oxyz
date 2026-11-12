@@ -11,7 +11,7 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from oxyz import Cell, Column, Matrix3, Meta, Record, RecordBatch
+from oxyz import Cell, Column, Matrix3, Meta, Record, RecordBatch, _record_batch
 from oxyz._record_batch import batch_class
 from oxyz._record_fields import FieldType
 from oxyz._schema import Kind
@@ -158,6 +158,7 @@ def test_declared_batch_accepts_the_batch_form_through_aliases():
     assert [f.name for f in dataclasses.fields(alias)] == [
         "offsets",
         "frame_indices",
+        "_present",
         "positions",
         "forces",
         "energy",
@@ -392,6 +393,8 @@ def test_a_row_is_a_record_of_views_and_unboxed_scalars():
     assert r.config_type == "b"
     np.testing.assert_array_equal(r.cell, 2 * np.eye(3))
     np.testing.assert_array_equal(r.stress, np.arange(6.0, 12.0))
+    assert np.shares_memory(r.stress, b.stress)
+    assert np.shares_memory(r.cell, b.cell)
     assert r == MaceSample(
         n_atoms=3,
         positions=b.positions[3:6],
@@ -448,6 +451,46 @@ def test_present_defaults_to_all_true_and_travels_with_slices_and_gathers():
     assert b[1:2][0].stress is None
 
 
+REPLACERS = [dataclasses.replace] + ([copy.replace] if hasattr(copy, "replace") else [])
+
+
+@pytest.mark.parametrize("replace", REPLACERS, ids=lambda f: f"{f.__module__}.replace")
+def test_replace_carries_the_masks(replace: Any):
+    b = make_batch(MaceBatch, present={"stress": np.array([True, False])})
+    replaced = replace(b, energy=np.array([5.0, 6.0]))
+    assert replaced.energy.tolist() == [5.0, 6.0]
+    assert replaced.present("stress").tolist() == [True, False]
+    assert replaced[1].stress is None
+    assert replaced[0].stress is not None
+
+
+@pytest.mark.parametrize("replace", REPLACERS, ids=lambda f: f"{f.__module__}.replace")
+def test_replace_checks_the_values_it_is_given(replace: Any):
+    b = make_batch(MaceBatch, present={"stress": np.array([True, False])})
+    with pytest.raises(ValueError, match=r"MaceBatch\.energy: expected 2 rows"):
+        replace(b, energy=np.zeros(3))
+    one_frame = {
+        "offsets": np.array([0, 3]),
+        "frame_indices": np.array([4]),
+        "positions": np.zeros((3, 3)),
+        "forces": np.zeros((3, 3)),
+        "energy": np.zeros(1),
+        "stress": np.zeros((1, 6)),
+        "cell": np.zeros((1, 3, 3)),
+        "config_type": ["a"],
+    }
+    with pytest.raises(ValueError, match=r"MaceBatch\.present\['stress'\]: .*\(1,\)"):
+        replace(b, **one_frame)
+
+
+@pytest.mark.parametrize("replace", REPLACERS, ids=lambda f: f"{f.__module__}.replace")
+def test_present_given_to_replace_wins(replace: Any):
+    b = make_batch(MaceBatch, present={"stress": np.array([True, False])})
+    replaced = replace(b, present={"stress": np.array([False, True])})
+    assert replaced.present("stress").tolist() == [False, True]
+    assert replaced[0].stress is None
+
+
 def test_ptr_n_atoms_and_batch_vector():
     b = make_batch(
         MaceBatch,
@@ -485,6 +528,22 @@ def test_batches_pickle_and_copy_in_both_forms(target: object):
         assert again.present("stress").tolist() == [True, False]
     assert copy.copy(b).positions is b.positions
     assert not np.shares_memory(copy.deepcopy(b).positions, b.positions)
+
+
+def test_generic_batch_unpickles_where_its_class_is_not_yet_derived(monkeypatch):
+    b = make_batch(
+        batch_class(RecordBatch[MaceSample]),
+        present={"stress": np.array([True, False])},
+    )
+    data = pickle.dumps(b)
+    monkeypatch.setattr(_record_batch, "_derived", {})
+    again = pickle.loads(data)
+    assert type(again) is batch_class(RecordBatch[MaceSample])
+    assert type(again) is not type(b)
+    assert type(again).__name__ == "MaceSampleBatch"
+    assert again.present("stress").tolist() == [True, False]
+    assert again[1].stress is None
+    np.testing.assert_array_equal(again.positions, b.positions)
 
 
 def test_repr_summarises_without_data():
