@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 import numpy as np
 
@@ -18,7 +18,7 @@ from oxyz._frames import (
 from oxyz._lookup import NameLookup
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
     from pathlib import Path
 
     from oxyz._rust import ProjectedBatch, ProjectionPlan
@@ -141,74 +141,34 @@ class Batch(NameLookup[ColumnValues, ColumnValues]):  # noqa: PLW1641  a dict of
         )
 
     def _position(self, index: int) -> int:
-        n = self.n_frames
-        if not -n <= index < n:
-            raise IndexError(f"frame {index} is out of range for a batch of {n} frames")
-        return index + n if index < 0 else index
+        return position(index, self.n_frames)
 
     def _positions(self, key: object) -> np.ndarray:
-        n = self.n_frames
-        selection = np.asarray(key)
-        if selection.size == 0:
-            return np.empty(0, dtype=np.intp)
-        if selection.dtype == np.bool_:
-            if selection.shape != (n,):
-                raise IndexError(
-                    f"boolean mask of shape {selection.shape} does not match a "
-                    f"batch of {n} frames"
-                )
-            return np.flatnonzero(selection)
-        if selection.ndim != 1 or selection.dtype.kind not in "iu":
-            raise TypeError(
-                "frame positions must be a 1-D sequence of integers, not "
-                f"{selection.dtype}{list(selection.shape)}"
-            )
-        out_of_range = (selection < -n) | (selection >= n)
-        if out_of_range.any():
-            raise IndexError(
-                f"frames {selection[out_of_range].tolist()} are out of range "
-                f"for a batch of {n} frames"
-            )
-        return np.where(selection < 0, selection + n, selection).astype(np.intp)
+        return positions(key, self.n_frames)
 
     def _frame(self, i: int) -> Frame:
-        lo, hi = int(self.offsets[i]), int(self.offsets[i + 1])
-        return Frame(
-            n_atoms=hi - lo,
-            columns={
-                name: _fresh(value[lo:hi]) for name, value in self.columns.items()
-            },
-            metadata={name: _unbox(value[i]) for name, value in self.metadata.items()},
+        n_atoms, columns, metadata = frame_rows(
+            self.columns, self.metadata, self.offsets, i
         )
+        return Frame(n_atoms=n_atoms, columns=columns, metadata=metadata)
 
     def _slice(self, start: int, stop: int) -> Batch:
-        lo, hi = int(self.offsets[start]), int(self.offsets[stop])
         return Batch(
-            columns={
-                name: _fresh(value[lo:hi]) for name, value in self.columns.items()
-            },
-            metadata={
-                name: _fresh(value[start:stop]) for name, value in self.metadata.items()
-            },
-            offsets=self.offsets[start : stop + 1] - lo,
-            frame_indices=self.frame_indices[start:stop],
+            *slice_rows(
+                self.columns,
+                self.metadata,
+                self.offsets,
+                self.frame_indices,
+                start,
+                stop,
+            )
         )
 
     def _gather(self, positions: np.ndarray) -> Batch:
-        starts = self.offsets[positions]
-        counts = self.offsets[positions + 1] - starts
-        offsets = np.zeros(len(positions) + 1, dtype=self.offsets.dtype)
-        np.cumsum(counts, out=offsets[1:])
-        # Atom row `k` of the gather is row `k - offsets[f] + starts[f]` of
-        # the batch, for the frame `f` it falls in.
-        rows = np.arange(offsets[-1]) + np.repeat(starts - offsets[:-1], counts)
         return Batch(
-            columns={name: _take(value, rows) for name, value in self.columns.items()},
-            metadata={
-                name: _take(value, positions) for name, value in self.metadata.items()
-            },
-            offsets=offsets,
-            frame_indices=self.frame_indices[positions],
+            *gather_rows(
+                self.columns, self.metadata, self.offsets, self.frame_indices, positions
+            )
         )
 
     @property
@@ -238,6 +198,101 @@ class Batch(NameLookup[ColumnValues, ColumnValues]):  # noqa: PLW1641  a dict of
         Recomputed on each access; hoist it out of a hot loop.
         """
         return np.repeat(np.arange(self.n_frames), self.n_atoms)
+
+
+type Unbox = Callable[[str, object], object]
+
+
+def position(index: int, n_frames: int) -> int:
+    """Resolve a possibly negative frame index, or raise `IndexError`."""
+    n = n_frames
+    if not -n <= index < n:
+        raise IndexError(f"frame {index} is out of range for a batch of {n} frames")
+    return index + n if index < 0 else index
+
+
+def positions(key: object, n_frames: int) -> np.ndarray:
+    """Resolve a boolean mask or integer sequence to non-negative frame positions."""
+    n = n_frames
+    selection = np.asarray(key)
+    if selection.size == 0:
+        return np.empty(0, dtype=np.intp)
+    if selection.dtype == np.bool_:
+        if selection.shape != (n,):
+            raise IndexError(
+                f"boolean mask of shape {selection.shape} does not match a "
+                f"batch of {n} frames"
+            )
+        return np.flatnonzero(selection)
+    if selection.ndim != 1 or selection.dtype.kind not in "iu":
+        raise TypeError(
+            "frame positions must be a 1-D sequence of integers, not "
+            f"{selection.dtype}{list(selection.shape)}"
+        )
+    out_of_range = (selection < -n) | (selection >= n)
+    if out_of_range.any():
+        raise IndexError(
+            f"frames {selection[out_of_range].tolist()} are out of range "
+            f"for a batch of {n} frames"
+        )
+    return np.where(selection < 0, selection + n, selection).astype(np.intp)
+
+
+def frame_rows(
+    columns: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    offsets: np.ndarray,
+    i: int,
+    unbox: Unbox = lambda _name, value: _unbox(value),
+) -> tuple[int, dict[str, Any], dict[str, Any]]:
+    """Frame `i`'s atom count, column views and unboxed metadata values."""
+    lo, hi = int(offsets[i]), int(offsets[i + 1])
+    return (
+        hi - lo,
+        {name: _fresh(value[lo:hi]) for name, value in columns.items()},
+        {name: unbox(name, value[i]) for name, value in metadata.items()},
+    )
+
+
+def slice_rows(
+    columns: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    offsets: np.ndarray,
+    frame_indices: np.ndarray,
+    start: int,
+    stop: int,
+) -> tuple[dict[str, Any], dict[str, Any], np.ndarray, np.ndarray]:
+    """Frames `start:stop` as views, with offsets rebased to start at zero."""
+    lo, hi = int(offsets[start]), int(offsets[stop])
+    return (
+        {name: _fresh(value[lo:hi]) for name, value in columns.items()},
+        {name: _fresh(value[start:stop]) for name, value in metadata.items()},
+        offsets[start : stop + 1] - lo,
+        frame_indices[start:stop],
+    )
+
+
+def gather_rows(
+    columns: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    offsets: np.ndarray,
+    frame_indices: np.ndarray,
+    picks: np.ndarray,
+) -> tuple[dict[str, Any], dict[str, Any], np.ndarray, np.ndarray]:
+    """Frames at `picks` copied in order, with fresh offsets."""
+    starts = offsets[picks]
+    counts = offsets[picks + 1] - starts
+    gathered = np.zeros(len(picks) + 1, dtype=offsets.dtype)
+    np.cumsum(counts, out=gathered[1:])
+    # Atom row `k` of the gather is row `k - gathered[f] + starts[f]` of the
+    # source, for the frame `f` it falls in.
+    rows = np.arange(gathered[-1]) + np.repeat(starts - gathered[:-1], counts)
+    return (
+        {name: _take(value, rows) for name, value in columns.items()},
+        {name: _take(value, picks) for name, value in metadata.items()},
+        gathered,
+        frame_indices[picks],
+    )
 
 
 def _fresh[V](value: V) -> V:
