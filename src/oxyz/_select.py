@@ -13,12 +13,15 @@ from oxyz._frames import (
     _iter_all,
     _read_all,
     _read_all_sliced,
+    _read_records,
+    _stream_records,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence
     from pathlib import Path
 
+    from oxyz._record import Record
     from oxyz._record_bind import Binding
     from oxyz._schema_match import Conformance
     from oxyz._schema_spec import Mode, SchemaSpec
@@ -59,7 +62,7 @@ def nth_frame(
     path: str | Path,
     index: int,
     *,
-    schema: SchemaSpec | str | Path | Binding | None = None,
+    schema: SchemaSpec | str | Path | None = None,
     conformance: Conformance = "required",
     mode: Mode | None = None,
     compression: Compression = "infer",
@@ -132,7 +135,7 @@ def gathered_frames(  # noqa: PLR0913  the read/schema/projection options are th
     indices: Sequence[int],
     threads: int | None = None,
     *,
-    schema: SchemaSpec | str | Path | Binding | None = None,
+    schema: SchemaSpec | str | Path | None = None,
     conformance: Conformance = "required",
     mode: Mode | None = None,
     compression: Compression = "infer",
@@ -185,7 +188,7 @@ def frames_for_read(  # noqa: PLR0913  the read/schema/projection options are th
     frames: slice,
     threads: int | None = None,
     *,
-    schema: SchemaSpec | str | Path | Binding | None = None,
+    schema: SchemaSpec | str | Path | None = None,
     conformance: Conformance = "required",
     mode: Mode | None = None,
     compression: Compression = "infer",
@@ -233,7 +236,7 @@ def sliced_frames(
     path: str | Path,
     frames: slice,
     *,
-    schema: SchemaSpec | str | Path | Binding | None = None,
+    schema: SchemaSpec | str | Path | None = None,
     conformance: Conformance = "required",
     mode: Mode | None = None,
     compression: Compression = "infer",
@@ -278,3 +281,81 @@ def sliced_frames(
     indexed = IndexedFrames(path)
     selected = range(*frames.indices(len(indexed)))
     return (indexed.get(i) for i in selected)
+
+
+def read_records(
+    path: str | Path,
+    index: int | str | slice | Sequence[int],
+    binding: Binding,
+    *,
+    threads: int | None,
+    conformance: Conformance,
+    compression: Compression,
+    member: str | None,
+    storage_options: _remote.StorageOptions | None,
+) -> Record | list[Record]:
+    """`read` with `record=`: `index` selects file frames, leaving out dropped ones.
+
+    An int naming a dropped frame raises `IndexError`.
+    """
+    records = _read_records(
+        path,
+        binding,
+        threads=threads,
+        conformance=conformance,
+        compression=compression,
+        member=member,
+        storage_options=storage_options,
+    )
+    index = parse_index(index) if isinstance(index, str) else index
+    if isinstance(index, int):
+        n_frames = len(records)
+        if not -n_frames <= index < n_frames:
+            raise IndexError(f"frame {index} out of range: file has {n_frames} frames")
+        record = records[index]
+        if record is None:
+            raise IndexError(
+                f"frame {index} was dropped: it does not fit "
+                f"{binding.record.__name__} under conformance='warn'"
+            )
+        return record
+    if isinstance(index, slice):
+        return [r for r in records[index] if r is not None]
+    picked = (records[_in_range(int(i), len(records))] for i in index)
+    return [r for r in picked if r is not None]
+
+
+def iread_records(
+    path: str | Path,
+    index: int | str | slice | Sequence[int],
+    binding: Binding,
+    *,
+    conformance: Conformance,
+    compression: Compression,
+    member: str | None,
+    storage_options: _remote.StorageOptions | None,
+) -> Iterator[Record]:
+    """`iread` with `record=`: what `read_records` gives; a forward slice streams."""
+    index = parse_index(index) if isinstance(index, str) else index
+    if isinstance(index, slice) and is_forward(index):
+        stream = _stream_records(
+            path,
+            binding,
+            conformance=conformance,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
+        picked = islice(stream, index.start, index.stop, index.step)
+        return (r for r in picked if r is not None)
+    selected = read_records(
+        path,
+        index,
+        binding,
+        threads=None,
+        conformance=conformance,
+        compression=compression,
+        member=member,
+        storage_options=storage_options,
+    )
+    return iter(selected if isinstance(selected, list) else [selected])

@@ -10,6 +10,7 @@ import pytest
 from oxyz import (
     Kind,
     iread,
+    iread_batch,
     read,
     read_batch,
 )
@@ -421,3 +422,63 @@ def test_project_batch_promotes_too():
     assert lattice.dtype == np.float64
     assert lattice.shape == (1, 9)
     assert lattice[0].tolist() == [5, 0, 0, 0, 5, 0, 0, 0, 5]
+
+
+def _stepped_file(tmp_path: Path, *comments: str) -> Path:
+    """One single-hydrogen frame per comment-line tail."""
+    path = tmp_path / "stepped.xyz"
+    path.write_text(
+        "".join(
+            f"1\nProperties=species:S:1:pos:R:3 {comment}\nH 0 0 0\n"
+            for comment in comments
+        )
+    )
+    return path
+
+
+# An absent INT has no NaN to fill with, so a frame without `step` is dropped.
+STEP_PROJECTION = SchemaSpec(
+    metadata=(MetadataRule("step", Kind.INT), MetadataRule("energy", Kind.REAL)),
+    mode="project",
+)
+
+
+def test_a_project_mode_warn_read_indexes_the_frames_it_kept(tmp_path):
+    path = _stepped_file(
+        tmp_path,
+        "energy=0.0",
+        "step=1 energy=1.0",
+        "step=2 energy=2.0",
+        "step=3 energy=3.0",
+    )
+    with pytest.warns(SchemaWarning, match="step"):
+        frame = read(path, 1, schema=STEP_PROJECTION, conformance="warn")
+    assert frame.metadata["step"] == 2
+    with pytest.warns(SchemaWarning, match="step"):
+        picked = read(path, [0, 2], schema=STEP_PROJECTION, conformance="warn")
+    assert [f.metadata["step"] for f in picked] == [1, 3]
+    with pytest.warns(SchemaWarning, match="step"):
+        sliced = read(path, slice(1, 3), schema=STEP_PROJECTION, conformance="warn")
+    assert [f.metadata["step"] for f in sliced] == [2, 3]
+    with pytest.warns(SchemaWarning, match="step"):
+        last = read(path, -1, schema=STEP_PROJECTION, conformance="warn")
+    assert last.metadata["step"] == 3
+    with pytest.warns(SchemaWarning, match="step"):
+        streamed = list(iread(path, "1:", schema=STEP_PROJECTION, conformance="warn"))
+    assert [f.metadata["step"] for f in streamed] == [2, 3]
+
+
+WRONG_SCHEMA_READS = {
+    "read": lambda p, s: read(p, schema=s),
+    "read-int": lambda p, s: read(p, 0, schema=s),
+    "read-list": lambda p, s: read(p, [0], schema=s),
+    "iread": lambda p, s: list(iread(p, schema=s)),
+    "read_batch": lambda p, s: read_batch(p, schema=s),
+    "iread_batch": lambda p, s: iread_batch(p, schema=s, frames_per_batch=1),
+}
+
+
+@pytest.mark.parametrize("reader", WRONG_SCHEMA_READS.values(), ids=WRONG_SCHEMA_READS)
+def test_a_schema_that_is_neither_a_spec_nor_a_path_is_a_type_error(reader):
+    with pytest.raises(TypeError, match="not 'dict'"):
+        reader(DATA / "schema_conformant.extxyz", {"mode": "project"})

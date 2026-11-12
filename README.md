@@ -323,7 +323,8 @@ frame lacked it, and `batch.present(key)` is the mask of frames that carried
 it. `batch[i]` consults the mask, so it gives `None` for an absent field and
 keeps a NaN that was in the file. Under `conformance="warn"`, a frame missing a
 required field, or carrying a field of the wrong kind, is dropped with a
-warning and the result is shorter than the selection.
+warning. An index still counts the file's frames, so a selection can give
+fewer records than it names, and `read` and `read_batch` keep the same frames.
 
 `RecordBatch[Sample]` has no field attributes. To get them, declare a subclass
 that lists each field with its batched type and no default:

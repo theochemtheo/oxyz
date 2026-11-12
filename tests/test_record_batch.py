@@ -796,6 +796,50 @@ def test_warn_keeps_the_same_frames_as_the_frame_read(tmp_path: Path):
     assert (e.value.frame_index, e.value.name) == (1, "stress")
 
 
+class Stepped(Record):
+    step: Meta[int] = Meta()
+    energy: Meta[float] = Meta()
+
+
+def first_dropped(tmp_path: Path) -> Path:
+    """Four frames whose `step` is their file index; frame 0 has no `energy`."""
+    return frames_file(
+        tmp_path / "first_dropped.xyz",
+        "step=0",
+        "step=1 energy=1.0",
+        "step=2 energy=2.0",
+        "step=3 energy=3.0",
+    )
+
+
+def quietly[T](read: typing.Callable[[], T]) -> T:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", oxyz.SchemaWarning)
+        return read()
+
+
+@pytest.mark.parametrize(
+    "index",
+    [1, "1:3", [0, 2], ":", "::-1", "3::-2", "::2", [3, 0, 3, 1], -3, "-2:"],
+    ids=str,
+)
+def test_a_selection_keeps_the_frames_the_batch_read_keeps(tmp_path: Path, index: Any):
+    path = first_dropped(tmp_path)
+    b = quietly(
+        lambda: oxyz.read_batch(
+            path, index, record=RecordBatch[Stepped], conformance="warn"
+        )
+    )
+    read = quietly(lambda: oxyz.read(path, index, record=Stepped, conformance="warn"))
+    recs = [read] if isinstance(index, int) else read
+    assert [r.energy for r in recs] == b[Stepped.energy].tolist()
+    assert [r.step for r in recs] == b.frame_indices.tolist()
+    streamed = quietly(
+        lambda: list(oxyz.iread(path, index, record=Stepped, conformance="warn"))
+    )
+    assert streamed == recs
+
+
 def assert_empty_mace(b: Any, cls: type[Any]) -> None:
     assert type(b) is cls
     assert len(b) == 0

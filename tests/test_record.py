@@ -893,6 +893,51 @@ def test_everything_dropped_is_an_empty_list(tmp_path: Path):
     assert list(oxyz.iread(MAD, "5:5", record=MadSample)) == []
 
 
+def test_an_int_index_counts_file_frames_and_a_dropped_one_raises(tmp_path: Path):
+    path = frames_file(
+        tmp_path / "last_dropped.xyz",
+        "step=0 energy=0.0",
+        "step=1 energy=1.0",
+        "step=2 energy=2.0",
+        "step=3",
+    )
+    for index, step in ((0, 0), (2, 2), (-2, 2), (-4, 0)):
+        with pytest.warns(oxyz.SchemaWarning, match="energy"):
+            assert (
+                oxyz.read(path, index, record=Stepped, conformance="warn").step == step
+            )
+        with pytest.warns(oxyz.SchemaWarning, match="energy"):
+            (streamed,) = oxyz.iread(path, index, record=Stepped, conformance="warn")
+        assert streamed.step == step
+    for index in (3, -1):
+        with (
+            pytest.warns(oxyz.SchemaWarning),
+            pytest.raises(IndexError, match=f"frame {index} was dropped"),
+        ):
+            oxyz.read(path, index, record=Stepped, conformance="warn")
+        with (
+            pytest.warns(oxyz.SchemaWarning),
+            pytest.raises(IndexError, match=f"frame {index} was dropped"),
+        ):
+            oxyz.iread(path, index, record=Stepped, conformance="warn")
+    for index in (4, -5):
+        with pytest.warns(oxyz.SchemaWarning), pytest.raises(IndexError, match="range"):
+            oxyz.read(path, index, record=Stepped, conformance="warn")
+    with pytest.warns(oxyz.SchemaWarning), pytest.raises(IndexError, match="range"):
+        oxyz.read(path, [0, 4], record=Stepped, conformance="warn")
+
+
+def test_a_forward_slice_stops_after_its_last_file_frame(tmp_path: Path):
+    path = frames_file(tmp_path / "tail.xyz", "step=0 energy=0.0", "step=1")
+    with path.open("a") as f:
+        f.write("not an atom count\n")
+    with pytest.warns(oxyz.SchemaWarning, match="energy"):
+        recs = list(oxyz.iread(path, "0:2", record=Stepped, conformance="warn"))
+    assert [r.step for r in recs] == [0]
+    with pytest.raises(oxyz.ParseError):
+        oxyz.read(path, "0:2", record=Stepped, conformance="warn")
+
+
 def test_read_fields_are_writable_and_unshared():
     r = oxyz.read(MACE, 0, record=MaceSample)
     (streamed,) = oxyz.iread(MACE, record=MaceSample)

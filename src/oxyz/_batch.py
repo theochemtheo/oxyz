@@ -434,14 +434,16 @@ def read_batch[B: RecordBatch[Any]](  # noqa: PLR0913  the read/schema/projectio
         A batch class to read into instead of a `Batch`: `RecordBatch[R]`
         for a `Record` subclass `R`, or a declared subclass of it. Frames
         are projected onto the record's fields as `read` with `record=R`
-        projects them, and the batch holds the frames that read keeps.
-        An `X | None` field is filled where a frame lacks it (NaN for a
-        float field, else its `fill=`, which a batch read of an integer,
-        bool or string `X | None` field requires) and `present` says which
-        frames carried it. The batch's arrays are writable and belong to it
-        alone. An empty selection, or one whose frames all drop, gives a
-        batch of no frames. Cannot be combined with `mode`; `schema` acts
-        as it does for `read`.
+        projects them, and only the selected frames are read. Under
+        `conformance="warn"` the batch holds the frames whose records
+        `read` returns for the same `index`. An `X | None` field is filled
+        where a frame lacks it (NaN for a float field, else its `fill=`,
+        which a batch read of an integer, bool or string `X | None` field
+        requires) and `present` says which frames carried it. The batch's
+        arrays are writable and belong to it alone. An empty selection, or
+        one whose frames all drop, gives a batch of no frames with the
+        record's fields, where a read without `record` raises. Cannot be
+        combined with `mode`; `schema` acts as it does for `read`.
     threads
         `None` parses on every core; `1` is serial. The batch is identical.
     schema
@@ -500,7 +502,7 @@ def read_batch[B: RecordBatch[Any]](  # noqa: PLR0913  the read/schema/projectio
     if binding is not None:
         projection, spec = binding.batch_plan, binding.spec
     elif schema is not None:
-        projection, spec, _ = _projection(schema, mode)
+        projection, spec = _projection(schema, mode)
 
     selection = _resolve_batch_indices(
         index, path, compression, member, storage_options
@@ -705,6 +707,8 @@ def iread_batch[B: RecordBatch[Any]](  # noqa: C901, PLR0913, PLR0912  the keywo
     record
         A batch class to yield instances of instead of `Batch`es:
         `RecordBatch[R]` or a declared subclass of it; see `read_batch`.
+        Each batch holds the frames of its share of the file that `read`
+        with `record=R` keeps.
     frames_per_batch
         Fixed frame count per batch.
     atoms_per_batch
@@ -796,7 +800,7 @@ def iread_batch[B: RecordBatch[Any]](  # noqa: C901, PLR0913, PLR0912  the keywo
     if binding is not None:
         projection, spec = binding.batch_plan, binding.spec
     elif schema is not None:
-        projection, spec, _ = _projection(schema, mode)
+        projection, spec = _projection(schema, mode)
 
     remote = _remote.is_remote(path)
     # Non-seekable sources support only streaming frames_per_batch.
