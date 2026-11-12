@@ -353,6 +353,11 @@ def _stored_kind(raw: object) -> Kind | None:
 
 
 def _check_signature(field: FieldType, key: str, raw: object, *, strict: bool) -> None:
+    if isinstance(raw, np.ndarray) and raw.dtype.kind not in _NUMPY_KINDS:
+        raise SchemaError(
+            f"{field.axis} {key!r}: an array of dtype {raw.dtype} is not a value",
+            name=key,
+        )
     if field.axis == "column":
         kind, width = column_signature(raw)
         found, expected = column_sig(kind, width), column_sig(field.kind, field.width)

@@ -323,6 +323,9 @@ DEFINITION_ERRORS = [
         "b",
         "'e' is also read by a",
     ),
+    ("unannotated", "step: Meta[int] = Meta()\nenergy = Meta()", "energy", "no annot"),
+    ("underscore", "_trusted: Meta[float] = Meta()", "_trusted", "underscore"),
+    ("private", "_energy: Meta[float] = Meta()", "_energy", "underscore"),
     *(
         (f"reserved-{name}", f"{name}: Meta[float] = Meta()", name, "reserved")
         for name in RESERVED
@@ -604,6 +607,36 @@ def test_from_frame_errors_carry_the_key_and_no_frame_index(
     with pytest.raises(SchemaError, match=pattern) as e:
         record.from_frame(frame)
     assert (e.value.name, e.value.frame_index) == (key, None)
+
+
+@pytest.mark.parametrize(
+    ("columns", "metadata", "key"),
+    [
+        ({"REF_forces": np.empty((3, 3), dtype=object)}, None, "REF_forces"),
+        (None, {"REF_stress": np.empty(6, dtype=object)}, "REF_stress"),
+    ],
+    ids=["column", "metadata"],
+)
+def test_from_frame_rejects_an_object_array_naming_its_key(columns, metadata, key):
+    frame = mace_frame(columns, metadata)
+    with pytest.raises(SchemaError, match=rf"^MaceSample: \w+ '{key}': .*object"):
+        MaceSample.from_frame(frame)
+
+
+@pytest.mark.parametrize(
+    ("n_atoms", "error", "reason"),
+    [
+        (1.0, TypeError, "expected int, got float"),
+        (True, TypeError, "got bool"),
+        (-1, ValueError, "negative"),
+    ],
+)
+def test_from_frame_checks_the_atom_count(
+    n_atoms: Any, error: type[Exception], reason: str
+):
+    frame = Frame(n_atoms=n_atoms, columns={}, metadata={"step": 0, "energy": 1.0})
+    with pytest.raises(error, match=rf"^Stepped\.n_atoms: .*{reason}"):
+        Stepped.from_frame(frame)
 
 
 def test_from_frame_copies_string_columns():

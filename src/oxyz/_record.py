@@ -263,16 +263,36 @@ def slotted_dataclass[M: type](
     return cls
 
 
+def _check_n_atoms(name: str, n_atoms: object) -> None:
+    if isinstance(n_atoms, (bool, np.bool_)) or not isinstance(
+        n_atoms, (int, np.integer)
+    ):
+        raise TypeError(f"{name}.n_atoms: expected int, got {type(n_atoms).__name__}")
+    if n_atoms < 0:
+        raise ValueError(f"{name}.n_atoms: is negative ({n_atoms})")
+
+
 def _check_names(
     name: str, annotations: dict[str, Any], namespace: dict[str, Any]
 ) -> None:
     for field in annotations:
         if field in _RESERVED:
             raise TypeError(f"{name}.{field}: the name is reserved")
+        if field.startswith("_"):
+            raise TypeError(
+                f"{name}.{field}: a field name cannot start with an underscore"
+            )
         default = namespace.get(field)
         if field in namespace and not isinstance(default, FieldSpec):
             raise TypeError(
                 f"{name}.{field}: default {default!r} is not a field specifier"
+            )
+    for attribute, value in namespace.items():
+        if isinstance(value, FieldSpec) and attribute not in annotations:
+            kind = type(value).__name__
+            raise TypeError(
+                f"{name}.{attribute}: a {kind} with no annotation is not a field; "
+                f"annotate it as {attribute}: {kind}[...]"
             )
 
 
@@ -468,7 +488,8 @@ class Record(metaclass=RecordMeta):
         specifier or two, a width, shape or fill inconsistent with the
         annotation, two fields with one key on one axis, a key that a
         `SchemaSpec` would read as a pattern (`*`, `?`, `[` or a `re:`
-        prefix), or a reserved field name. From `__init__`, naming the
+        prefix), a reserved field name or one starting with an underscore,
+        or a specifier with no annotation. From `__init__`, naming the
         field: a wrong type or dtype.
     ValueError
         From `__init__`, naming the field: a wrong width, shape or row
@@ -500,14 +521,7 @@ class Record(metaclass=RecordMeta):
     def __post_init__(self) -> None:
         cls = type(self)
         n_atoms = self.n_atoms
-        if isinstance(n_atoms, (bool, np.bool_)) or not isinstance(
-            n_atoms, (int, np.integer)
-        ):
-            raise TypeError(
-                f"{cls.__name__}.n_atoms: expected int, got {type(n_atoms).__name__}"
-            )
-        if n_atoms < 0:
-            raise ValueError(f"{cls.__name__}.n_atoms: is negative ({n_atoms})")
+        _check_n_atoms(cls.__name__, n_atoms)
         for name, field, _ in cls.__record_fields__:
             rows = n_atoms if field.axis == "column" else None
             try:
@@ -582,13 +596,16 @@ class Record(metaclass=RecordMeta):
         Raises
         ------
         oxyz.SchemaError
-            A required key is absent, or a value has the wrong kind, width
-            or shape. `name` is the key and `frame_index` is `None`.
+            A required key is absent, or a value has the wrong kind, dtype,
+            width or shape. `name` is the key and `frame_index` is `None`.
+        TypeError, ValueError
+            The frame's `n_atoms` is not a non-negative integer.
         """
         from oxyz._record_fields import field_value
         from oxyz._schema_match import SchemaError
 
         strict = cls.__record_strict__
+        _check_n_atoms(cls.__name__, frame.n_atoms)
         values: dict[str, object] = {"n_atoms": frame.n_atoms}
         for name, field, key in cls.__record_fields__:
             stored = frame.columns if field.axis == "column" else frame.metadata

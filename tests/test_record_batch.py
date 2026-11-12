@@ -268,6 +268,15 @@ def test_the_base_class_is_not_a_batch_of_anything():
             r"MaceBatch\.offsets: .*decreas",
         ),
         (
+            {
+                "offsets": np.array([0, 5, 3], dtype=np.uint64),
+                "positions": np.zeros((3, 3)),
+                "forces": np.zeros((3, 3)),
+            },
+            ValueError,
+            r"MaceBatch\.offsets: .*decreas",
+        ),
+        (
             {"frame_indices": np.array([0.0, 1.0])},
             TypeError,
             r"MaceBatch\.frame_indices: .*integer",
@@ -315,6 +324,7 @@ def test_the_base_class_is_not_a_batch_of_anything():
         "empty-offsets",
         "offsets-not-at-zero",
         "decreasing-offsets",
+        "unsigned-decreasing-offsets",
         "float-frame-indices",
         "frame-indices-length",
         "per-atom-rows",
@@ -1054,6 +1064,43 @@ def test_the_generic_form_is_still_a_typing_alias():
     assert types.get_original_bases(MaceBatch) == (alias,)
     assert MaceBatch.__mro__[1] is RecordBatch
     assert repr(alias).endswith("RecordBatch[test_record_batch.MaceSample]")
+
+
+def test_calling_the_generic_form_builds_its_batch_class():
+    alias: Any = RecordBatch[MaceSample]
+    b = make_batch(alias)
+    assert type(b) is batch_class(alias)
+    assert b == make_batch(batch_class(alias))
+
+
+def test_the_alias_class_falls_back_to_the_plain_alias(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class Refused:
+        def __init_subclass__(cls, **kwargs: object) -> None:
+            raise TypeError("cannot subclass")
+
+    monkeypatch.setattr(typing, "_GenericAlias", Refused, raising=False)
+    assert _record_batch._alias_class() is None
+
+
+def test_without_the_alias_class_the_generic_form_still_reads(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(_record_batch, "_ALIAS", None)
+    alias: Any = RecordBatch[MaceSample]
+    assert type(alias).__name__ == "_GenericAlias"
+    assert (typing.get_origin(alias), typing.get_args(alias)) == (
+        RecordBatch,
+        (MaceSample,),
+    )
+    whole = oxyz.read_batch(MACE, record=alias)
+    assert type(whole) is batch_class(alias)
+    plain = oxyz.read_batch(MACE, schema=MaceSample.spec())
+    for call in (lambda: alias.from_batch(plain), alias.spec):
+        with pytest.raises(TypeError, match=r"class \w+\(RecordBatch\[R\]\)"):
+            call()
+    assert MaceBatch.from_batch(plain) == oxyz.read_batch(MACE, record=MaceBatch)
 
 
 def test_present_is_read_only():

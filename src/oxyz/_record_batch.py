@@ -286,9 +286,9 @@ class RecordBatch[R: Record](metaclass=RecordBatchMeta):
 
         def __class_getitem__(cls, params: object) -> object:
             alias = super().__class_getitem__(params)
-            if cls is not RecordBatch:
+            if cls is not RecordBatch or _ALIAS is None:
                 return alias
-            return _RecordBatchAlias(alias.__origin__, alias.__args__)
+            return _ALIAS(alias.__origin__, alias.__args__)
 
     def __post_init__(self) -> None:
         cls = type(self)
@@ -326,6 +326,12 @@ class RecordBatch[R: Record](metaclass=RecordBatchMeta):
     def _record_layout(cls) -> _Layout:
         layout = cast("_Layout | None", getattr(cls, "__batch_layout__", None))
         if layout is None:
+            if _ALIAS is None:
+                raise TypeError(
+                    f"{cls.__name__} holds no record, and on this Python "
+                    "RecordBatch[R] forwards to it; declare a batch class, "
+                    "class SampleBatch(RecordBatch[R]), and use that"
+                )
             raise TypeError(
                 f"{cls.__name__} holds no record; use RecordBatch[R] for a Record "
                 "subclass R, or declare a subclass of it"
@@ -657,7 +663,7 @@ def _check_layout(name: str, offsets: object, frame_indices: object) -> int:
         )
     if offsets[0] != 0:
         raise ValueError(f"{name}.offsets: must start at 0, got {offsets[0]}")
-    if (np.diff(offsets) < 0).any():
+    if (offsets[1:] < offsets[:-1]).any():
         raise ValueError(f"{name}.offsets: is decreasing")
     n_frames = offsets.size - 1
     if (
@@ -673,18 +679,32 @@ def _check_layout(name: str, offsets: object, frame_indices: object) -> int:
     return n_frames
 
 
-class _RecordBatchAlias(typing._GenericAlias, _root=True):  # noqa: SLF001  # ty: ignore[missing-attribute] — the alias type `Generic` builds
-    """`RecordBatch[R]`, whose `from_batch` and `spec` are those of its batch class.
+def _alias_class() -> type | None:
+    """Return the class of `RecordBatch[R]`, or `None` where `typing` refuses it.
 
-    A plain alias forwards them to the bare `RecordBatch`, which holds no
-    record.
+    `None` leaves the plain alias, which forwards `from_batch` and `spec`
+    to the bare `RecordBatch`.
     """
+    try:
 
-    def from_batch(self, batch: Batch) -> RecordBatch[Any]:
-        return batch_class(self).from_batch(batch)
+        class _RecordBatchAlias(typing._GenericAlias, _root=True):  # noqa: SLF001  # ty: ignore[missing-attribute] — the alias type `Generic` builds
+            """`RecordBatch[R]`, which calls through to its batch class."""
 
-    def spec(self) -> SchemaSpec:
-        return batch_class(self).spec()
+            def __call__(self, *args: Any, **kwargs: Any) -> RecordBatch[Any]:  # noqa: ANN401 — forwarded to the batch class as given
+                return batch_class(self)(*args, **kwargs)
+
+            def from_batch(self, batch: Batch) -> RecordBatch[Any]:
+                return batch_class(self).from_batch(batch)
+
+            def spec(self) -> SchemaSpec:
+                return batch_class(self).spec()
+
+    except Exception:  # noqa: BLE001 — a private base that may change; the plain alias still reads
+        return None
+    return _RecordBatchAlias
+
+
+_ALIAS = _alias_class()
 
 
 def _read_only(array: np.ndarray) -> np.ndarray:
