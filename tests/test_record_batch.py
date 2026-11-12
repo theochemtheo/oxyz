@@ -879,20 +879,22 @@ class Squares(Record):
     cell: Cell[Array] = Cell()
     virial: Matrix3[Array] = Matrix3()
     moments: Meta[Array] = Meta(shape=(9,))
+    names: Meta[list[str]] = Meta(shape=(4,))
 
 
 def test_two_d_metadata_batch_rows_equal_the_frame_read(tmp_path: Path):
     path = frames_file(
         tmp_path / "square.xyz",
         "Lattice=[[5,1,0],[0,5,2],[0,0,5]] virial=[[1.5,2,3],[4,5,6],[7,8,9]] "
-        "moments=[[1,2,3],[4,5,6],[7,8,9]]",
+        'moments=[[1,2,3],[4,5,6],[7,8,9]] names=[["a","b"],["c","d"]]',
         'Lattice="6 1 0 0 6 2 0 0 6" virial="2.5 2 3 4 5 6 7 8 9" '
-        'moments="1 2 3 4 5 6 7 8 9"',
+        'moments="1 2 3 4 5 6 7 8 9" names=["e","f","g","h"]',
     )
     target: Any = RecordBatch[Squares]
     b = oxyz.read_batch(path, record=target)
     recs = oxyz.read(path, record=Squares)
     assert list(b) == recs
+    assert [r.names for r in recs] == [["a", "b", "c", "d"], ["e", "f", "g", "h"]]
     np.testing.assert_array_equal(b.cell[0], [[5, 1, 0], [0, 5, 2], [0, 0, 5]])
     np.testing.assert_array_equal(
         b.virial[0], [[1.5, 4.0, 7.0], [2.0, 5.0, 8.0], [3.0, 6.0, 9.0]]

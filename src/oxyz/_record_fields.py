@@ -105,6 +105,8 @@ class FieldType:
         if isinstance(raw, np.ndarray):
             return self._cast_array(raw, owned=owned)
         if isinstance(raw, list):
+            if self.axis == "metadata" and not self.batch_form and _nested(raw):
+                return _flattened(raw)
             if owned:
                 return raw
             return [list(row) if isinstance(row, list) else row for row in raw]
@@ -372,15 +374,26 @@ def _check_signature(field: FieldType, key: str, raw: object, *, strict: bool) -
 
 
 def _metadata_signature(raw: object, key: str) -> tuple[Kind, tuple[int, ...]]:
-    """`metadata_signature`, counting a 2-D array as its flattened length."""
+    """`metadata_signature`, counting a 2-D array or list as its flattened length."""
     if isinstance(raw, np.ndarray) and raw.ndim != 1:
         if raw.ndim == 0:
             raise SchemaError(f"metadata {key!r}: a 0-d array is not a value", name=key)
         raw = raw.reshape(-1)
+    elif isinstance(raw, list) and _nested(raw):
+        raw = _flattened(raw)
     try:
         return metadata_signature(raw)
     except TypeError as error:
         raise SchemaError(f"metadata {key!r}: {error}", name=key) from None
+
+
+def _nested(raw: list[Any]) -> bool:
+    """Report whether `raw` is a non-empty list of lists: 2-D string metadata."""
+    return bool(raw) and all(isinstance(row, list) for row in raw)
+
+
+def _flattened(rows: list[list[Any]]) -> list[Any]:
+    return [item for row in rows for item in row]
 
 
 def unwrap(annotation: object) -> tuple[object, tuple[object, ...]]:

@@ -528,6 +528,19 @@ def test_from_frame_reads_two_dimensional_metadata_flattened():
     np.testing.assert_array_equal(r.cell, square)
 
 
+class Named(Record):
+    names: Meta[list[str]] = Meta(shape=(4,))
+
+
+def test_two_d_string_metadata_reads_flattened_row_major(tmp_path: Path):
+    path = frames_file(tmp_path / "names.xyz", 'names=[["a","b"],["c","d"]]')
+    r = oxyz.read(path, 0, record=Named)
+    assert r.names == ["a", "b", "c", "d"]
+    assert Named(n_atoms=1, names=r.names) == r
+    assert Named.from_frame(oxyz.read(path, 0)) == r
+    assert list(oxyz.iread(path, record=Named)) == [r]
+
+
 class StrictMace(MaceSample, strict=True):
     pass
 
