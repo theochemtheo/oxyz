@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-11-13
+
 ### Security
 
 - Releases upload per-file SLSA provenance and publish attestations to PyPI.
@@ -532,6 +534,7 @@ for reading atomistic-simulation datasets into numpy or ASE.
 - abi3 wheels for CPython 3.11 and newer on Linux (x86_64, aarch64), macOS
   (arm64, x86_64), and Windows (x64).
 
+[1.3.1]: https://github.com/theochemtheo/oxyz/releases/tag/v1.3.1
 [1.3.0]: https://github.com/theochemtheo/oxyz/releases/tag/v1.3.0
 [1.2.1]: https://github.com/theochemtheo/oxyz/releases/tag/v1.2.1
 [1.2.0]: https://github.com/theochemtheo/oxyz/releases/tag/v1.2.0
