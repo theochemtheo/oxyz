@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- Releases upload per-file SLSA provenance and publish attestations to PyPI.
+  Signing is isolated from read-only builds, and publishing credentials are
+  isolated from project scripts and GitHub Release permissions.
+- The PyPI environment accepts only `v*` tags; release-tag creation, updates,
+  and deletion are restricted to the repository owner.
+
 ## [1.3.0] - 2026-11-06
 
 ### Added
