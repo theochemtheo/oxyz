@@ -154,6 +154,10 @@ convention = "numpy"
 "scripts/**" = ["T20", "INP", "D"]
 "examples/**" = ["T20", "INP", "D"]
 
+[tool.ty.src]
+# PEP 723 scripts have independent dependency environments.
+exclude-scripts = true
+
 [tool.pytest.ini_options]
 # The doctests need every optional target installed; the CI tiers skip them.
 testpaths = ["tests", "src/oxyz"]
