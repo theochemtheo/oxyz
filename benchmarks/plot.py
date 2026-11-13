@@ -26,7 +26,7 @@ import matplotlib.pyplot as plt
 
 # Supplied by this script's inline metadata, not the venv ty checks under.
 import seaborn as sns
-from _style import (
+from _style import (  # ty: ignore[import-not-found]  # sibling module, run as a script
     fmt_value,
     reader_color,
     reader_label,

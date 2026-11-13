@@ -427,14 +427,24 @@ def resolve(schema: SchemaSpec | str | Path) -> CompiledSpec:
 
 
 def enforce_frame(
-    frame: Frame, compiled: CompiledSpec, level: Conformance, frame_index: int
+    frame: Frame,
+    compiled: CompiledSpec,
+    level: Conformance,
+    frame_index: int,
+    *,
+    frame_rule_only: bool = False,
 ) -> None:
     """Validate one frame and apply policy.
 
     Raises `SchemaError` on the first violation under `strict`/`required`;
-    warns once per violation under `warn`.
+    warns once per violation under `warn`. With `frame_rule_only`, only the
+    frame rule is checked, for a frame whose fields projection established.
     """
-    violations = validate_frame(frame, compiled, level)
+    violations = (
+        _validate_frame_rule(frame, compiled)
+        if frame_rule_only
+        else validate_frame(frame, compiled, level)
+    )
     if not violations:
         return
     if level == "warn":

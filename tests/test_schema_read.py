@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import warnings
+from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from oxyz import (
     Kind,
     iread,
+    iread_batch,
     read,
+    read_batch,
 )
 from oxyz._schema_match import SchemaError, SchemaWarning
-from oxyz._schema_spec import ColumnRule, MetadataRule, SchemaSpec
+from oxyz._schema_spec import ColumnRule, FrameRule, MetadataRule, SchemaSpec
 
 DATA = Path(__file__).parent / "data"
 
@@ -278,8 +282,8 @@ def test_wrong_kind_under_warn_fills_nan_and_warns(tmp_path):
     import oxyz
 
     f = tmp_path / "w.xyz"
-    # 'val' is Int in the file but the schema declares it Real -> wrong kind
-    f.write_text("1\nProperties=species:S:1:pos:R:3:val:I:1\nH 0 0 0 7\n")
+    # 'val' is a string in the file but the schema declares it Real -> wrong kind
+    f.write_text("1\nProperties=species:S:1:pos:R:3:val:S:1\nH 0 0 0 seven\n")
     spec = SchemaSpec(
         columns=(
             ColumnRule("species", Kind.STR),
@@ -290,7 +294,7 @@ def test_wrong_kind_under_warn_fills_nan_and_warns(tmp_path):
     )
     with pytest.warns(SchemaWarning, match="val"):
         frames = oxyz.read(f, schema=spec, conformance="warn")
-    # the real int 7 is discarded and replaced with a NaN fill (data loss)
+    # the string is discarded and replaced with a NaN fill (data loss)
     assert np.isnan(np.asarray(frames[0].columns["val"])[0])
 
 
@@ -359,3 +363,205 @@ def test_reverse_slice_with_schema_projects(tmp_path):
     atoms = list(oxyz.ase.iread(f, "::-1", schema=_proj_spec()))
     assert len(atoms) == 2
     assert all(len(a) == 1 for a in atoms)
+
+
+def _charge_omit_spec(width=1, kind=Kind.REAL, name="charge"):
+    return SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+            ColumnRule(name, kind, width=width, required=False, absent="omit"),
+        ),
+        mode="project",
+    )
+
+
+def test_omit_rule_leaves_the_key_out_of_frames_that_lack_it():
+    frames = read(DATA / "mixed_schema_optional_column.xyz", schema=_charge_omit_spec())
+    assert ["charge" in f.columns for f in frames] == [True, False]
+
+
+def test_omit_rule_of_the_wrong_kind_raises_with_frame_and_name():
+    spec = _charge_omit_spec(width=3, name="magmom")
+    with pytest.raises(SchemaError) as excinfo:
+        read(DATA / "schema_drift_type.extxyz", schema=spec)
+    assert (excinfo.value.frame_index, excinfo.value.name) == (1, "magmom")
+
+
+def test_omit_rule_with_mixed_presence_cannot_batch():
+    import oxyz
+
+    with pytest.raises(oxyz.ParseError, match="charge"):
+        oxyz.read_batch(
+            DATA / "mixed_schema_optional_column.xyz", schema=_charge_omit_spec()
+        )
+
+
+def test_omit_rule_on_metadata_with_mixed_presence_cannot_batch(tmp_path):
+    import oxyz
+
+    path = _stepped_file(tmp_path, "energy=-1.5", "step=1", "energy=-2.5")
+    spec = SchemaSpec(
+        metadata=(MetadataRule("energy", Kind.REAL, required=False, absent="omit"),),
+        mode="project",
+    )
+    with pytest.raises(
+        oxyz.ParseError, match=r"frame 1 is missing metadata \"energy\""
+    ):
+        oxyz.read_batch(path, schema=spec)
+
+
+@pytest.mark.parametrize("projected", [False, True])
+@pytest.mark.parametrize("streamed", [False, True])
+@pytest.mark.parametrize("threads", [1, None])
+def test_batch_contract_errors_name_the_file_frame(
+    tmp_path, projected, streamed, threads
+):
+    import oxyz
+
+    path = _stepped_file(
+        tmp_path, "energy=-1.5", "energy=-2.5", "energy=-3.5", "step=3"
+    )
+    schema = (
+        SchemaSpec(
+            metadata=(
+                MetadataRule("energy", Kind.REAL, required=False, absent="omit"),
+            ),
+            mode="project",
+        )
+        if projected
+        else None
+    )
+
+    def read_selected():
+        if streamed:
+            list(iread_batch(path, frames_per_batch=2, schema=schema, threads=threads))
+        else:
+            read_batch(path, [2, 3], schema=schema, threads=threads)
+
+    with pytest.raises(oxyz.ParseError, match=r"frame 3 .*energy") as caught:
+        read_selected()
+    assert caught.value.frame_index == 3
+
+
+LATTICE = SchemaSpec(
+    metadata=(MetadataRule("Lattice", Kind.REAL, shape=(9,)),), mode="project"
+)
+INTEGER_LATTICE_FILE = DATA / "mace_ref_energy_forces_stress.xyz"
+
+
+def test_project_mode_promotes_an_integer_lattice():
+    frame = read(INTEGER_LATTICE_FILE, 0, schema=LATTICE)
+    lattice = np.asarray(frame.metadata["Lattice"])
+    assert lattice.dtype == np.float64
+    assert lattice.tolist() == [5, 0, 0, 0, 5, 0, 0, 0, 5]
+
+
+def test_validate_mode_still_reports_an_integer_lattice():
+    with pytest.raises(SchemaError) as e:
+        read(INTEGER_LATTICE_FILE, schema=replace(LATTICE, mode="validate"))
+    assert (e.value.frame_index, e.value.name) == (0, "Lattice")
+
+
+def test_project_batch_promotes_too():
+    batch = read_batch(INTEGER_LATTICE_FILE, schema=LATTICE)
+    lattice = np.asarray(batch.metadata["Lattice"])
+    assert lattice.dtype == np.float64
+    assert lattice.shape == (1, 9)
+    assert lattice[0].tolist() == [5, 0, 0, 0, 5, 0, 0, 0, 5]
+
+
+def _stepped_file(tmp_path: Path, *comments: str) -> Path:
+    """One single-hydrogen frame per comment-line tail."""
+    path = tmp_path / "stepped.xyz"
+    path.write_text(
+        "".join(
+            f"1\nProperties=species:S:1:pos:R:3 {comment}\nH 0 0 0\n"
+            for comment in comments
+        )
+    )
+    return path
+
+
+# An absent INT has no NaN to fill with, so a frame without `step` is dropped.
+STEP_PROJECTION = SchemaSpec(
+    metadata=(MetadataRule("step", Kind.INT), MetadataRule("energy", Kind.REAL)),
+    mode="project",
+)
+
+
+def test_a_project_mode_warn_read_indexes_the_frames_it_kept(tmp_path):
+    path = _stepped_file(
+        tmp_path,
+        "energy=0.0",
+        "step=1 energy=1.0",
+        "step=2 energy=2.0",
+        "step=3 energy=3.0",
+    )
+    with pytest.warns(SchemaWarning, match="step"):
+        frame = read(path, 1, schema=STEP_PROJECTION, conformance="warn")
+    assert frame.metadata["step"] == 2
+    with pytest.warns(SchemaWarning, match="step"):
+        picked = read(path, [0, 2], schema=STEP_PROJECTION, conformance="warn")
+    assert [f.metadata["step"] for f in picked] == [1, 3]
+    with pytest.warns(SchemaWarning, match="step"):
+        sliced = read(path, slice(1, 3), schema=STEP_PROJECTION, conformance="warn")
+    assert [f.metadata["step"] for f in sliced] == [2, 3]
+    with pytest.warns(SchemaWarning, match="step"):
+        last = read(path, -1, schema=STEP_PROJECTION, conformance="warn")
+    assert last.metadata["step"] == 3
+    with pytest.warns(SchemaWarning, match="step"):
+        streamed = list(iread(path, "1:", schema=STEP_PROJECTION, conformance="warn"))
+    assert [f.metadata["step"] for f in streamed] == [2, 3]
+
+
+WRONG_SCHEMA_READS = {
+    "read": lambda p, s: read(p, schema=s),
+    "read-int": lambda p, s: read(p, 0, schema=s),
+    "read-list": lambda p, s: read(p, [0], schema=s),
+    "iread": lambda p, s: list(iread(p, schema=s)),
+    "read_batch": lambda p, s: read_batch(p, schema=s),
+    "iread_batch": lambda p, s: iread_batch(p, schema=s, frames_per_batch=1),
+}
+
+
+@pytest.mark.parametrize("reader", WRONG_SCHEMA_READS.values(), ids=WRONG_SCHEMA_READS)
+def test_a_schema_that_is_neither_a_spec_nor_a_path_is_a_type_error(reader):
+    with pytest.raises(TypeError, match="not 'dict'"):
+        reader(DATA / "schema_conformant.extxyz", {"mode": "project"})
+
+
+@pytest.mark.parametrize("mode", ["validate", "project"])
+def test_streamed_schema_frame_rules_report_the_original_frame(mode):
+    spec = SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+        ),
+        metadata=(MetadataRule("energy", Kind.REAL),),
+        frame=FrameRule(n_atoms_min=2),
+        mode=mode,
+    )
+    frames = iread(DATA / "varying_atom_counts.xyz", schema=spec)
+    first = next(frames)
+    assert first.n_atoms == 3
+    assert first.metadata["energy"] == -76.3
+    assert np.asarray(first.columns["pos"]).shape == (3, 3)
+    with pytest.raises(SchemaError) as caught:
+        next(frames)
+    assert (caught.value.frame_index, caught.value.name) == (1, "n_atoms")
+
+
+@pytest.mark.parametrize("reader", [read, iread])
+@pytest.mark.parametrize("index", [2, -3])
+def test_schema_integer_selection_checks_the_surviving_frame_count(
+    tmp_path, reader, index
+):
+    path = _stepped_file(
+        tmp_path, "energy=0.0", "step=1 energy=1.0", "step=2 energy=2.0"
+    )
+    with (
+        pytest.warns(SchemaWarning, match="step"),
+        pytest.raises(IndexError, match="2 frames available"),
+    ):
+        reader(path, index, schema=STEP_PROJECTION, conformance="warn")

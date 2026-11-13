@@ -55,6 +55,7 @@ fn charge_plan() -> ProjectionPlan {
             },
         ],
         metadata: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -145,6 +146,7 @@ fn get_batch_projected_fills_and_parallel_matches_serial() {
         charge.data.as_real().unwrap(),
         &[0.5, -0.5, -9.0, 0.1, 0.2, -0.3]
     );
+    assert_eq!(serial.presence, vec![true, false, true]);
 
     for threads in [None, Some(2)] {
         let par = idx
@@ -153,6 +155,7 @@ fn get_batch_projected_fills_and_parallel_matches_serial() {
         assert_eq!(par.survivors, serial.survivors, "threads={threads:?}");
         assert_eq!(par.batch, serial.batch, "threads={threads:?}");
         assert_eq!(par.reports, serial.reports, "threads={threads:?}");
+        assert_eq!(par.presence, serial.presence, "threads={threads:?}");
     }
 }
 

@@ -446,12 +446,14 @@ fn opt_fill(kind: ColumnKind, obj: Bound<'_, PyAny>) -> PyResult<Option<Fill>> {
     }
 }
 
-/// Read a projection plan from `(columns, metadata)`. A column is `(name,
-/// letter, width, required, fill | None)`; a metadata entry is `(name, letter,
-/// shape, required, fill | None)`, with shape `()` for a scalar.
+/// Read a projection plan from `(columns, metadata, promote_int)`. A column is
+/// `(name, letter, width, required, fill | None)`; a metadata entry is `(name,
+/// letter, shape, required, fill | None, column_major)`, with shape `()` for a
+/// scalar.
 fn build_plan(py_plan: &Bound<'_, PyTuple>) -> PyResult<ProjectionPlan> {
     let columns_obj = py_plan.get_item(0)?;
     let metadata_obj = py_plan.get_item(1)?;
+    let promote_int: bool = py_plan.get_item(2)?.extract()?;
 
     let mut columns = Vec::new();
     for entry in columns_obj.try_iter()? {
@@ -488,16 +490,22 @@ fn build_plan(py_plan: &Bound<'_, PyTuple>) -> PyResult<ProjectionPlan> {
         };
         let required: bool = entry.get_item(3)?.extract()?;
         let fill = opt_fill(kind, entry.get_item(4)?)?;
+        let column_major: bool = entry.get_item(5)?.extract()?;
         metadata.push(PlanMetadata {
             name,
             kind,
             shape,
             required,
             fill,
+            column_major,
         });
     }
 
-    Ok(ProjectionPlan { columns, metadata })
+    Ok(ProjectionPlan {
+        columns,
+        metadata,
+        promote_int,
+    })
 }
 
 /// Emit deviations as a list of dicts for the Python policy layer.
@@ -530,20 +538,21 @@ fn deviations_to_py<'py>(
     Ok(list)
 }
 
-/// The `(FrameData | None, deviations)` tuple for a projected frame; `None`
-/// marks a dropped frame.
+/// The `(FrameData | None, deviations, present)` tuple for a projected frame;
+/// `None` marks a dropped frame, and `present` is its presence row.
 fn projected_to_py(py: Python<'_>, projected: Projected) -> PyResult<Bound<'_, PyTuple>> {
     let devs = deviations_to_py(py, &projected.deviations)?;
+    let present = PyList::new(py, projected.present)?;
     let data: Bound<'_, PyAny> = if projected.dropped {
         py.None().into_bound(py)
     } else {
         frame_to_pydict(py, projected.frame)?.into_any()
     };
-    PyTuple::new(py, [data, devs.into_any()])
+    PyTuple::new(py, [data, devs.into_any(), present.into_any()])
 }
 
 /// Projected variant of [`read_frames`]: each element is `(FrameData | None,
-/// deviations)`. `plan` is the crossing tuple.
+/// deviations, present)`. `plan` is the crossing tuple.
 #[pyfunction]
 #[pyo3(signature = (path, threads=None, compression="infer", member=None, *, plan))]
 fn read_frames_projected<'py>(
@@ -579,7 +588,8 @@ fn read_frames_projected_core(
     Ok(frames.iter().map(|f| project_frame(f, plan)).collect())
 }
 
-/// Projected variant of [`read_first_frame`]: `(FrameData | None, deviations)`.
+/// Projected variant of [`read_first_frame`]: `(FrameData | None, deviations,
+/// present)`.
 #[pyfunction]
 #[pyo3(signature = (path, compression="infer", member=None, *, plan))]
 fn read_first_frame_projected<'py>(
@@ -649,7 +659,7 @@ fn read_first_frame_projected_reader<'py>(
 }
 
 /// Projected variant of [`FrameIter`]: `__next__` yields `(FrameData | None,
-/// deviations)`.
+/// deviations, present)`.
 #[pyclass]
 struct FrameIterProjected {
     inner: oxyz_core::FrameIter<DecodedReader>,
@@ -733,8 +743,10 @@ fn read_batch<'py>(
     batch_to_pydict(py, batch)
 }
 
-/// `(BatchData, survivors, reports)`: the surviving frames' batch, their file
-/// indices, and an `(index, deviations)` report per requested frame.
+/// `(BatchData, survivors, reports, presence)`: the surviving frames' batch,
+/// their file indices, an `(index, deviations)` report per requested frame,
+/// and a `(n_survivors, n_optional)` bool array of which optional plan entries
+/// each survivor carried.
 fn projected_batch_to_py<'py>(
     py: Python<'py>,
     projected: oxyz_core::ProjectedBatch,
@@ -743,7 +755,12 @@ fn projected_batch_to_py<'py>(
         batch,
         survivors,
         reports,
+        presence,
+        n_optional,
     } = projected;
+    let presence = Array2::from_shape_vec((survivors.len(), n_optional), presence)
+        .map_err(|error| PyValueError::new_err(error.to_string()))?
+        .into_pyarray(py);
     let batch_data = batch_to_pydict(py, batch)?;
     let survivors_list = PyList::new(py, survivors)?;
     let reports_list = PyList::empty(py);
@@ -757,12 +774,14 @@ fn projected_batch_to_py<'py>(
             batch_data.into_any(),
             survivors_list.into_any(),
             reports_list.into_any(),
+            presence.into_any(),
         ],
     )
 }
 
 /// Projected variant of [`read_batch`]: returns `(BatchData, survivors,
-/// reports)` where the batch holds only frames that survived projection.
+/// reports, presence)` where the batch holds only frames that survived
+/// projection.
 #[pyfunction]
 #[pyo3(signature = (path, indices=None, threads=None, compression="infer", member=None, *, plan))]
 fn read_batch_projected<'py>(
@@ -821,7 +840,7 @@ fn read_batch_projected_reader<'py>(
 }
 
 /// Projected variant of [`BatchIter`]: `__next__` yields `(BatchData,
-/// survivors, reports)`.
+/// survivors, reports, presence)`.
 #[pyclass]
 struct BatchIterProjected {
     inner: oxyz_core::BatchIterProjected<DecodedReader>,

@@ -2,7 +2,9 @@
 //!
 //! Each output frame has exactly the plan's fields, in declaration order. The
 //! module reshapes and reports; policy (raise, warn, drop) is the Python
-//! layer's. A frame is marked `dropped` when a required field has no fill.
+//! layer's. A frame is marked `dropped` when a required field has no fill, or
+//! when any field with no fill is present with the wrong kind or width. An
+//! absent optional field with no fill is omitted from the output.
 
 use crate::model::{Column, ColumnData, ColumnKind, Frame, Value};
 use compact_str::CompactString;
@@ -23,7 +25,8 @@ pub struct PlanColumn {
     pub kind: ColumnKind,
     pub width: usize,
     pub required: bool,
-    /// `None` marks a required field with no fill: drop rather than fabricate.
+    /// `None` drops the frame when the field is required or mismatched, and
+    /// omits the field when it is optional and absent.
     pub fill: Option<Fill>,
 }
 
@@ -35,7 +38,10 @@ pub struct PlanMetadata {
     /// `None` for a scalar, `Some(n)` for an array of length n.
     pub shape: Option<usize>,
     pub required: bool,
+    /// As for [`PlanColumn::fill`].
     pub fill: Option<Fill>,
+    /// Flatten a 2-D value column by column rather than row by row.
+    pub column_major: bool,
 }
 
 /// The fixed shape to project each frame onto, in declaration order.
@@ -43,6 +49,16 @@ pub struct PlanMetadata {
 pub struct ProjectionPlan {
     pub columns: Vec<PlanColumn>,
     pub metadata: Vec<PlanMetadata>,
+    /// Let a REAL entry accept integer data, converted to `f64`.
+    pub promote_int: bool,
+}
+
+impl ProjectionPlan {
+    /// The number of entries, on both axes, with `required == false`.
+    pub fn n_optional(&self) -> usize {
+        self.columns.iter().filter(|pc| !pc.required).count()
+            + self.metadata.iter().filter(|pm| !pm.required).count()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,6 +89,10 @@ pub struct Projected {
     pub frame: Frame,
     pub deviations: Vec<Deviation>,
     pub dropped: bool,
+    /// One flag per optional plan entry, columns then metadata: whether the
+    /// frame has a field of that name, of any kind, rather than a fill or
+    /// nothing.
+    pub present: Vec<bool>,
 }
 
 /// `R:3`-style signature for a column plan field.
@@ -154,15 +174,35 @@ fn project_metadata(
     plan: &ProjectionPlan,
     deviations: &mut Vec<Deviation>,
     dropped: &mut bool,
+    present: &mut Vec<bool>,
 ) -> Vec<(CompactString, Value)> {
     let mut metadata = Vec::with_capacity(plan.metadata.len());
     for pm in &plan.metadata {
         let expected = metadata_sig(pm.kind, pm.shape);
-        match lookup_metadata(frame, pm) {
+        let lookup = lookup_metadata(frame, pm, plan.promote_int);
+        if !pm.required {
+            present.push(!matches!(lookup, Lookup::Absent));
+        }
+        match lookup {
             Lookup::Conforming(value) => {
-                metadata.push((CompactString::from(pm.name.as_str()), value.clone()));
+                let value = if pm.column_major {
+                    transposed(value)
+                } else {
+                    value.clone()
+                };
+                metadata.push((CompactString::from(pm.name.as_str()), value));
+            }
+            Lookup::Promotable(value) => {
+                let value = promote_value(value);
+                let value = if pm.column_major {
+                    transposed(&value)
+                } else {
+                    value
+                };
+                metadata.push((CompactString::from(pm.name.as_str()), value));
             }
             found => {
+                let mismatched = matches!(found, Lookup::Mismatch(_));
                 match found {
                     Lookup::Mismatch(value) => {
                         let (k, s) = value_kind_shape(value);
@@ -188,7 +228,7 @@ fn project_metadata(
                         CompactString::from(pm.name.as_str()),
                         materialise_value(pm.kind, pm.shape, fill),
                     )),
-                    None => *dropped = true,
+                    None => *dropped |= mismatched || pm.required,
                 }
             }
         }
@@ -197,53 +237,144 @@ fn project_metadata(
 }
 
 /// A plan field looked up in a frame that may repeat the name: a conforming
-/// occurrence if any, so a stray duplicate does not report a mismatch.
+/// occurrence if any, so a stray duplicate does not report a mismatch, else
+/// one that promotes to the plan's REAL kind.
 enum Lookup<T> {
     Conforming(T),
+    Promotable(T),
     Mismatch(T),
     Absent,
 }
 
-fn lookup_column<'a>(frame: &'a Frame, pc: &PlanColumn) -> Lookup<&'a Column> {
+fn lookup_column<'a>(frame: &'a Frame, pc: &PlanColumn, promote_int: bool) -> Lookup<&'a Column> {
+    let mut promotable = None;
     let mut mismatch = None;
     for column in &frame.columns {
         if column.name == pc.name {
-            if column.data.kind() == pc.kind && column.width == pc.width {
+            let kind = column.data.kind();
+            if kind == pc.kind && column.width == pc.width {
                 return Lookup::Conforming(column);
             }
-            mismatch.get_or_insert(column);
+            if promote_int
+                && pc.kind == ColumnKind::Real
+                && kind == ColumnKind::Int
+                && column.width == pc.width
+            {
+                promotable.get_or_insert(column);
+            } else {
+                mismatch.get_or_insert(column);
+            }
         }
     }
-    mismatch.map_or(Lookup::Absent, Lookup::Mismatch)
+    promotable.map_or_else(
+        || mismatch.map_or(Lookup::Absent, Lookup::Mismatch),
+        Lookup::Promotable,
+    )
 }
 
-fn lookup_metadata<'a>(frame: &'a Frame, pm: &PlanMetadata) -> Lookup<&'a Value> {
+fn lookup_metadata<'a>(
+    frame: &'a Frame,
+    pm: &PlanMetadata,
+    promote_int: bool,
+) -> Lookup<&'a Value> {
+    let mut promotable = None;
     let mut mismatch = None;
     for (key, value) in &frame.metadata {
         if *key == pm.name {
-            if value_kind_shape(value) == (pm.kind, pm.shape) {
+            let (kind, shape) = value_kind_shape(value);
+            if kind == pm.kind && shape == pm.shape {
                 return Lookup::Conforming(value);
             }
-            mismatch.get_or_insert(value);
+            if promote_int
+                && pm.kind == ColumnKind::Real
+                && kind == ColumnKind::Int
+                && shape == pm.shape
+            {
+                promotable.get_or_insert(value);
+            } else {
+                mismatch.get_or_insert(value);
+            }
         }
     }
-    mismatch.map_or(Lookup::Absent, Lookup::Mismatch)
+    promotable.map_or_else(
+        || mismatch.map_or(Lookup::Absent, Lookup::Mismatch),
+        Lookup::Promotable,
+    )
+}
+
+fn ints_to_reals(data: &[i64]) -> Vec<f64> {
+    #[allow(clippy::cast_precision_loss)]
+    data.iter().map(|&x| x as f64).collect()
+}
+
+/// The `f64` form of an integer column of the width the plan asked for.
+fn promote_column(column: &Column) -> Column {
+    let data = match &column.data {
+        ColumnData::Int(v) => ColumnData::Real(ints_to_reals(v)),
+        other => other.clone(),
+    };
+    Column {
+        name: column.name.clone(),
+        width: column.width,
+        data,
+    }
+}
+
+/// `data`, a `rows` by `cols` array in row-major order, read column by column.
+fn by_column<T: Clone>(rows: usize, cols: usize, data: &[T]) -> Vec<T> {
+    (0..cols)
+        .flat_map(|c| (0..rows).map(move |r| r * cols + c))
+        .map(|i| data[i].clone())
+        .collect()
+}
+
+/// A 2-D value flattened column by column; any other value as it is.
+fn transposed(value: &Value) -> Value {
+    match value {
+        Value::RealArray2D { rows, cols, data } => Value::RealArray(by_column(*rows, *cols, data)),
+        Value::IntArray2D { rows, cols, data } => Value::IntArray(by_column(*rows, *cols, data)),
+        Value::BoolArray2D { rows, cols, data } => Value::BoolArray(by_column(*rows, *cols, data)),
+        Value::StrArray2D { rows, cols, data } => Value::StrArray(by_column(*rows, *cols, data)),
+        other => other.clone(),
+    }
+}
+
+/// The `f64` form of an integer scalar or array, keeping 2-D shape.
+fn promote_value(value: &Value) -> Value {
+    match value {
+        #[allow(clippy::cast_precision_loss)]
+        Value::Int(x) => Value::Real(*x as f64),
+        Value::IntArray(v) => Value::RealArray(ints_to_reals(v)),
+        Value::IntArray2D { rows, cols, data } => Value::RealArray2D {
+            rows: *rows,
+            cols: *cols,
+            data: ints_to_reals(data),
+        },
+        other => other.clone(),
+    }
 }
 
 /// Project `frame` onto `plan`: undeclared fields dropped, absent optionals
-/// filled, and missing or wrong-kind fields reported. Fill widths come from the
-/// plan and are trusted.
+/// filled (or omitted, where the plan gives no fill), and missing or wrong-kind
+/// fields reported. Fill widths come from the plan and are trusted.
 pub fn project_frame(frame: &Frame, plan: &ProjectionPlan) -> Projected {
     let mut deviations = Vec::new();
     let mut dropped = false;
+    let mut present = Vec::with_capacity(plan.n_optional());
     let n_atoms = frame.n_atoms;
 
     let mut columns = Vec::with_capacity(plan.columns.len());
     for pc in &plan.columns {
         let expected = column_sig(pc.kind, pc.width);
-        match lookup_column(frame, pc) {
+        let lookup = lookup_column(frame, pc, plan.promote_int);
+        if !pc.required {
+            present.push(!matches!(lookup, Lookup::Absent));
+        }
+        match lookup {
             Lookup::Conforming(existing) => columns.push(existing.clone()),
+            Lookup::Promotable(existing) => columns.push(promote_column(existing)),
             found => {
+                let mismatched = matches!(found, Lookup::Mismatch(_));
                 // Optional-absent is silent.
                 match found {
                     Lookup::Mismatch(existing) => deviations.push(Deviation {
@@ -268,13 +399,13 @@ pub fn project_frame(frame: &Frame, plan: &ProjectionPlan) -> Projected {
                         width: pc.width,
                         data: materialise_column(pc.kind, pc.width, n_atoms, fill),
                     }),
-                    None => dropped = true,
+                    None => dropped |= mismatched || pc.required,
                 }
             }
         }
     }
 
-    let metadata = project_metadata(frame, plan, &mut deviations, &mut dropped);
+    let metadata = project_metadata(frame, plan, &mut deviations, &mut dropped, &mut present);
 
     Projected {
         frame: Frame {
@@ -284,5 +415,6 @@ pub fn project_frame(frame: &Frame, plan: &ProjectionPlan) -> Projected {
         },
         deviations,
         dropped,
+        present,
     }
 }

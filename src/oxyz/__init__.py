@@ -20,6 +20,8 @@ from oxyz._frames import (
     read,
 )
 from oxyz._lookup import AmbiguousNameError
+from oxyz._record import Cell, Column, FieldSpec, Matrix3, Meta, Record
+from oxyz._record_batch import RecordBatch
 from oxyz._remote import StorageOptions
 from oxyz._rust import OxyzError, ParseError
 from oxyz._scan import FrameIndex, scan
@@ -38,12 +40,22 @@ from oxyz._schema_match import (
     SchemaWarning,
     Violation,
 )
-from oxyz._schema_spec import ColumnRule, FrameRule, MetadataRule, Mode, SchemaSpec
+from oxyz._schema_spec import (
+    Absent,
+    ColumnRule,
+    FrameRule,
+    MetadataRule,
+    Mode,
+    SchemaSpec,
+)
 from oxyz._write import Writable, Writer, write
 
 __all__ = [
+    "Absent",
     "AmbiguousNameError",
     "Batch",
+    "Cell",
+    "Column",
     "ColumnRule",
     "ColumnSchema",
     "ColumnValues",
@@ -51,11 +63,14 @@ __all__ = [
     "Compression",
     "Conformance",
     "FieldError",
+    "FieldSpec",
     "Frame",
     "FrameIndex",
     "FrameRule",
     "Kind",
+    "Matrix3",
     "MemoryScaling",
+    "Meta",
     "MetadataRule",
     "MetadataSchema",
     "MetadataValue",
@@ -63,6 +78,8 @@ __all__ = [
     "Mode",
     "OxyzError",
     "ParseError",
+    "Record",
+    "RecordBatch",
     "Schema",
     "SchemaError",
     "SchemaSpec",

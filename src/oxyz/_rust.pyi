@@ -54,13 +54,18 @@ class DeviationData(TypedDict):
     expected: str
     found: str | None
 
-# (columns, metadata), each a list of field tuples built in oxyz._project:
-# (name, letter, width or shape, required, fill or None).
-type ProjectionPlan = tuple[list[tuple], list[tuple]]
-# A dropped frame has None in place of its FrameData; deviations report why.
-type ProjectedFrame = tuple[FrameData | None, list[DeviationData]]
-# Survivors' data, their file indices, and a report per requested frame.
-type ProjectedBatch = tuple[BatchData, list[int], list[tuple[int, list[DeviationData]]]]
+# (columns, metadata, promote_int); columns and metadata are lists of field
+# tuples built in oxyz._project: (name, letter, width or shape, required, fill or None),
+# a metadata tuple then column_major: whether a 2-D value flattens column by column.
+type ProjectionPlan = tuple[list[tuple], list[tuple], bool]
+# A dropped frame has None in place of its FrameData; deviations report why, and
+# present flags which optional plan entries the frame carried, columns then metadata.
+type ProjectedFrame = tuple[FrameData | None, list[DeviationData], list[bool]]
+# Survivors' data, their file indices, a report per requested frame, and a bool
+# array (n_survivors, n_optional) of which optional plan entries each survivor carried.
+type ProjectedBatch = tuple[
+    BatchData, list[int], list[tuple[int, list[DeviationData]]], np.ndarray
+]
 
 class ColumnVariantData(TypedDict):
     """Raw crossing dict for one observed (kind, width) of a column."""
@@ -166,7 +171,7 @@ class BatchIter:
 
 @final
 class FrameIterProjected:
-    """Projected `FrameIter`: yields `(FrameData | None, deviations)`."""
+    """Projected `FrameIter`: yields `(FrameData | None, deviations, present)`."""
 
     def __new__(
         cls,
@@ -187,7 +192,7 @@ class FrameIterProjected:
 
 @final
 class BatchIterProjected:
-    """Projected `BatchIter`: yields `(BatchData, survivors, reports)`."""
+    """Projected `BatchIter`: yields `(BatchData, survivors, reports, presence)`."""
 
     def __new__(
         cls,
@@ -241,7 +246,7 @@ def read_frames_projected(
     *,
     plan: ProjectionPlan,
 ) -> list[ProjectedFrame]:
-    """Projected `read_frames`: `(FrameData | None, deviations)` per frame."""
+    """Projected `read_frames`: `(FrameData | None, deviations, present)` per frame."""
 
 def read_first_frame_projected(
     path: str,
@@ -280,7 +285,7 @@ def read_batch_projected(
     *,
     plan: ProjectionPlan,
 ) -> ProjectedBatch:
-    """Projected `read_batch`: `(BatchData, survivors, reports)`."""
+    """Projected `read_batch`: `(BatchData, survivors, reports, presence)`."""
 
 def read_batch_projected_reader(
     source: object,

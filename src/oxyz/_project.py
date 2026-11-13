@@ -86,12 +86,23 @@ def _freeze_columns(
                 )
             kind, width = entry.unified
             required = entry.frames_present == n_frames
-            _check_freezable_optional(
-                name, rule.name, kind, required=required, fill=rule.fill, axis="column"
-            )
+            if rule.absent != "omit":
+                _check_freezable_optional(
+                    name,
+                    rule.name,
+                    kind,
+                    required=required,
+                    fill=rule.fill,
+                    axis="column",
+                )
             out.append(
                 ColumnRule(
-                    name=name, kind=kind, width=width, required=required, fill=rule.fill
+                    name=name,
+                    kind=kind,
+                    width=width,
+                    required=required,
+                    fill=rule.fill,
+                    absent=rule.absent,
                 )
             )
     return out
@@ -138,12 +149,23 @@ def _freeze_metadata(
                 )
             kind, shape = entry.unified
             required = entry.frames_present == n_frames
-            _check_freezable_optional(
-                key, rule.key, kind, required=required, fill=rule.fill, axis="metadata"
-            )
+            if rule.absent != "omit":
+                _check_freezable_optional(
+                    key,
+                    rule.key,
+                    kind,
+                    required=required,
+                    fill=rule.fill,
+                    axis="metadata",
+                )
             out.append(
                 MetadataRule(
-                    key=key, kind=kind, shape=shape, required=required, fill=rule.fill
+                    key=key,
+                    kind=kind,
+                    shape=shape,
+                    required=required,
+                    fill=rule.fill,
+                    absent=rule.absent,
                 )
             )
     return out
@@ -175,8 +197,14 @@ def _plan_entry(rule: ColumnRule | MetadataRule, *, is_metadata: bool) -> tuple:
     letter = KIND_TO_LETTER[rule.kind]
     axis = "metadata" if is_metadata else "column"
     name = rule.key if isinstance(rule, MetadataRule) else rule.name
-    fill = _fill_for(rule)
-    if fill is None and not rule.required and rule.kind in _NO_NATURAL_NULL:
+    omit = not rule.required and rule.absent == "omit"
+    fill = None if omit else _fill_for(rule)
+    if (
+        fill is None
+        and not omit
+        and not rule.required
+        and rule.kind in _NO_NATURAL_NULL
+    ):
         raise SchemaError(
             f"{axis} {name!r} is an optional {letter} field with no natural "
             f"null; give it a 'fill' value so projection can materialise it"
@@ -188,7 +216,7 @@ def _plan_entry(rule: ColumnRule | MetadataRule, *, is_metadata: bool) -> tuple:
         )
     if is_metadata:
         assert isinstance(rule, MetadataRule)  # noqa: S101 — type-narrowing only
-        return (name, letter, tuple(rule.shape), rule.required, fill)
+        return (name, letter, tuple(rule.shape), rule.required, fill, False)
     assert isinstance(rule, ColumnRule)  # noqa: S101 — type-narrowing only
     return (name, letter, rule.width, rule.required, fill)
 
@@ -210,7 +238,7 @@ def compile_projection(spec: SchemaSpec, mode: Mode) -> ProjectionPlan | None:
         )
     columns = [_plan_entry(rule, is_metadata=False) for rule in spec.columns]
     metadata = [_plan_entry(rule, is_metadata=True) for rule in spec.metadata]
-    return (columns, metadata)
+    return (columns, metadata, True)
 
 
 def _to_violation(deviation: DeviationData) -> Violation:
@@ -222,6 +250,11 @@ def _to_violation(deviation: DeviationData) -> Violation:
         expected=deviation["expected"],
         found=deviation["found"],
     )
+
+
+def mismatched(deviations: list[DeviationData]) -> bool:
+    """Report whether any deviation is a field of the wrong kind or shape."""
+    return any(deviation["deviation"] == "mismatch" for deviation in deviations)
 
 
 def enforce_projection(

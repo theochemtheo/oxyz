@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from itertools import islice
 from typing import TYPE_CHECKING
 
@@ -10,15 +11,21 @@ from oxyz._frames import (
     Compression,
     Frame,
     IndexedFrames,
+    _cast_projected,
     _iter_all,
     _read_all,
     _read_all_sliced,
+    _read_projected,
+    _stream_projected,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator, Sequence
+    from collections.abc import Container, Iterable, Iterator, Sequence
     from pathlib import Path
 
+    from oxyz._record import Record
+    from oxyz._record_bind import Binding
+    from oxyz._rust import ProjectedFrame
     from oxyz._schema_match import Conformance
     from oxyz._schema_spec import Mode, SchemaSpec
 
@@ -277,3 +284,141 @@ def sliced_frames(
     indexed = IndexedFrames(path)
     selected = range(*frames.indices(len(indexed)))
     return (indexed.get(i) for i in selected)
+
+
+def read_records(
+    path: str | Path,
+    index: int | str | slice | Sequence[int],
+    binding: Binding,
+    *,
+    threads: int | None,
+    conformance: Conformance,
+    compression: Compression,
+    member: str | None,
+    storage_options: _remote.StorageOptions | None,
+) -> Record | list[Record]:
+    """`read` with `record=`: `index` selects file frames, and only those are checked.
+
+    Dropped frames are left out, and an int naming one raises `IndexError`.
+    A non-negative int or a bounded forward slice stops reading after its
+    last frame.
+    """
+    index = parse_index(index) if isinstance(index, str) else index
+    projected, n_frames = _projected_selection(
+        path,
+        index,
+        binding,
+        threads=threads,
+        compression=compression,
+        member=member,
+        storage_options=storage_options,
+    )
+    if isinstance(index, int):
+        if not -n_frames <= index < n_frames:
+            raise IndexError(f"frame {index} out of range: file has {n_frames} frames")
+        (record,) = _cast_projected(
+            [(index % n_frames, projected[index % n_frames])], conformance, binding
+        )
+        if record is None:
+            raise IndexError(
+                f"frame {index} was dropped: it does not fit "
+                f"{binding.record.__name__} under conformance='warn'"
+            )
+        return record
+    if isinstance(index, slice):
+        positions: Sequence[int] = range(*index.indices(n_frames))
+    else:
+        positions = [_in_range(int(i), n_frames) for i in index]
+    picked = _cast_projected(_unshared(positions, projected), conformance, binding)
+    return [r for r in picked if r is not None]
+
+
+def _projected_selection(
+    path: str | Path,
+    index: int | slice | Sequence[int],
+    binding: Binding,
+    *,
+    threads: int | None,
+    compression: Compression,
+    member: str | None,
+    storage_options: _remote.StorageOptions | None,
+) -> tuple[dict[int, ProjectedFrame], int]:
+    """Project the frames `index` may select; return them by position, and a count.
+
+    The count is the file's frame count, except that a non-negative int or a
+    bounded forward slice reads no further than its last frame, and keeps
+    only the frames it selects.
+    """
+    stop = _last_needed(index)
+    if stop is None:
+        everything = _read_projected(
+            path, binding.frame_plan, threads, compression, member, storage_options
+        )
+        return dict(enumerate(everything)), len(everything)
+    if isinstance(index, slice):
+        wanted: Container[int] = range(*index.indices(stop))
+    else:
+        wanted = {index}
+    stream = _stream_projected(
+        path, binding.frame_plan, compression, member, storage_options
+    )
+    kept: dict[int, ProjectedFrame] = {}
+    n_frames = 0
+    for position, item in enumerate(islice(stream, stop)):
+        n_frames = position + 1
+        if position in wanted:
+            kept[position] = item
+    return kept, n_frames
+
+
+def _last_needed(index: int | slice | Sequence[int]) -> int | None:
+    """Return how many leading frames `index` can select from, or `None` for all."""
+    if isinstance(index, int):
+        return index + 1 if index >= 0 else None
+    if isinstance(index, slice) and is_forward(index):
+        return index.stop
+    return None
+
+
+def _unshared(
+    positions: Iterable[int], projected: dict[int, ProjectedFrame]
+) -> Iterator[tuple[int, ProjectedFrame]]:
+    """Each position and its frame, copied where a position repeats."""
+    seen: set[int] = set()
+    for position in positions:
+        item = projected[position]
+        yield position, copy.deepcopy(item) if position in seen else item
+        seen.add(position)
+
+
+def iread_records(
+    path: str | Path,
+    index: int | str | slice | Sequence[int],
+    binding: Binding,
+    *,
+    conformance: Conformance,
+    compression: Compression,
+    member: str | None,
+    storage_options: _remote.StorageOptions | None,
+) -> Iterator[Record]:
+    """`iread` with `record=`: what `read_records` gives; a forward slice streams."""
+    index = parse_index(index) if isinstance(index, str) else index
+    if isinstance(index, slice) and is_forward(index):
+        stream = _stream_projected(
+            path, binding.frame_plan, compression, member, storage_options
+        )
+        picked = islice(enumerate(stream), index.start, index.stop, index.step)
+        return (
+            r for r in _cast_projected(picked, conformance, binding) if r is not None
+        )
+    selected = read_records(
+        path,
+        index,
+        binding,
+        threads=None,
+        conformance=conformance,
+        compression=compression,
+        member=member,
+        storage_options=storage_options,
+    )
+    return iter(selected if isinstance(selected, list) else [selected])

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 import numpy as np
 
@@ -11,16 +11,20 @@ from oxyz._frames import (
     Compression,
     Frame,
     MetadataValue,
+    _bind_record,
     _check_threads,
+    _open_first_frame,
     _projection,
     _require_schema_for_mode,
 )
 from oxyz._lookup import NameLookup
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
     from pathlib import Path
 
+    from oxyz._record_batch import RecordBatch
+    from oxyz._record_bind import Binding
     from oxyz._rust import ProjectedBatch, ProjectionPlan
     from oxyz._schema_match import Conformance
     from oxyz._schema_spec import FrameRule, Mode, SchemaSpec
@@ -32,8 +36,50 @@ packing: `"n_atoms"` is the atom count; `"n_atoms_x_density"` is
 memory."""
 
 
+class FrameLayout:
+    """The CSR frame layout `offsets` describes, shared by both batch kinds."""
+
+    __slots__ = ()
+
+    offsets: np.ndarray
+
+    def __len__(self) -> int:
+        """Return the number of frames, `n_frames`."""
+        return self.n_frames
+
+    @property
+    def n_frames(self) -> int:
+        """Number of frames in the batch."""
+        return len(self.offsets) - 1
+
+    @property
+    def total_atoms(self) -> int:
+        """Total atom count across all frames."""
+        return int(self.offsets[-1])
+
+    @property
+    def n_atoms(self) -> np.ndarray:
+        """Per-frame atom counts, `np.diff(offsets)`."""
+        return np.diff(self.offsets)
+
+    @property
+    def ptr(self) -> np.ndarray:
+        """Alias of `offsets`, under its PyG name."""
+        return self.offsets
+
+    @property
+    def batch(self) -> np.ndarray:
+        """Per-atom frame id within this batch (PyG's `batch` vector).
+
+        Recomputed on each access; hoist it out of a hot loop.
+        """
+        return np.repeat(
+            np.arange(self.n_frames), self.n_atoms.astype(np.intp, copy=False)
+        )
+
+
 @dataclass(frozen=True, slots=True, eq=False)
-class Batch(NameLookup[ColumnValues, ColumnValues]):  # noqa: PLW1641  a dict of arrays is unhashable by construction
+class Batch(NameLookup[ColumnValues, ColumnValues], FrameLayout):  # noqa: PLW1641  a dict of arrays is unhashable by construction
     """Frames concatenated atom-major, CSR-style (PyG's batch layout).
 
     Frame `i` occupies rows `offsets[i]:offsets[i + 1]` of every column.
@@ -102,10 +148,6 @@ class Batch(NameLookup[ColumnValues, ColumnValues]):  # noqa: PLW1641  a dict of
     def _sides(self) -> tuple[dict[str, ColumnValues], dict[str, ColumnValues]]:
         return self.columns, self.metadata
 
-    def __len__(self) -> int:
-        """Return the number of frames, `n_frames`."""
-        return self.n_frames
-
     def __iter__(self) -> Iterator[Frame]:
         """Yield each frame in turn, as `batch[i]` would."""
         for i in range(self.n_frames):
@@ -117,8 +159,7 @@ class Batch(NameLookup[ColumnValues, ColumnValues]):  # noqa: PLW1641  a dict of
     def __getitem__(self, key: int | np.integer) -> Frame: ...
     @overload
     def __getitem__(self, key: slice | Sequence[int] | np.ndarray) -> Batch: ...
-    # ty does not yet accept an overloaded override of NameLookup's signature.
-    def __getitem__(  # ty: ignore[invalid-method-override]
+    def __getitem__(
         self, key: str | int | np.integer | slice | Sequence[int] | np.ndarray
     ) -> ColumnValues | Frame | Batch:
         """Look up a field by name, a frame by position, or frames by selection.
@@ -142,103 +183,131 @@ class Batch(NameLookup[ColumnValues, ColumnValues]):  # noqa: PLW1641  a dict of
         )
 
     def _position(self, index: int) -> int:
-        n = self.n_frames
-        if not -n <= index < n:
-            raise IndexError(f"frame {index} is out of range for a batch of {n} frames")
-        return index + n if index < 0 else index
+        return position(index, self.n_frames)
 
     def _positions(self, key: object) -> np.ndarray:
-        n = self.n_frames
-        selection = np.asarray(key)
-        if selection.size == 0:
-            return np.empty(0, dtype=np.intp)
-        if selection.dtype == np.bool_:
-            if selection.shape != (n,):
-                raise IndexError(
-                    f"boolean mask of shape {selection.shape} does not match a "
-                    f"batch of {n} frames"
-                )
-            return np.flatnonzero(selection)
-        if selection.ndim != 1 or selection.dtype.kind not in "iu":
-            raise TypeError(
-                "frame positions must be a 1-D sequence of integers, not "
-                f"{selection.dtype}{list(selection.shape)}"
-            )
-        out_of_range = (selection < -n) | (selection >= n)
-        if out_of_range.any():
-            raise IndexError(
-                f"frames {selection[out_of_range].tolist()} are out of range "
-                f"for a batch of {n} frames"
-            )
-        return np.where(selection < 0, selection + n, selection).astype(np.intp)
+        return positions(key, self.n_frames)
 
     def _frame(self, i: int) -> Frame:
-        lo, hi = int(self.offsets[i]), int(self.offsets[i + 1])
-        return Frame(
-            n_atoms=hi - lo,
-            columns={
-                name: _fresh(value[lo:hi]) for name, value in self.columns.items()
-            },
-            metadata={name: _unbox(value[i]) for name, value in self.metadata.items()},
+        n_atoms, columns, metadata = frame_rows(
+            self.columns, self.metadata, self.offsets, i
         )
+        return Frame(n_atoms=n_atoms, columns=columns, metadata=metadata)
 
     def _slice(self, start: int, stop: int) -> Batch:
-        lo, hi = int(self.offsets[start]), int(self.offsets[stop])
         return Batch(
-            columns={
-                name: _fresh(value[lo:hi]) for name, value in self.columns.items()
-            },
-            metadata={
-                name: _fresh(value[start:stop]) for name, value in self.metadata.items()
-            },
-            offsets=self.offsets[start : stop + 1] - lo,
-            frame_indices=self.frame_indices[start:stop],
+            *slice_rows(
+                self.columns,
+                self.metadata,
+                self.offsets,
+                self.frame_indices,
+                start,
+                stop,
+            )
         )
 
     def _gather(self, positions: np.ndarray) -> Batch:
-        starts = self.offsets[positions]
-        counts = self.offsets[positions + 1] - starts
-        offsets = np.zeros(len(positions) + 1, dtype=self.offsets.dtype)
-        np.cumsum(counts, out=offsets[1:])
-        # Atom row `k` of the gather is row `k - offsets[f] + starts[f]` of
-        # the batch, for the frame `f` it falls in.
-        rows = np.arange(offsets[-1]) + np.repeat(starts - offsets[:-1], counts)
         return Batch(
-            columns={name: _take(value, rows) for name, value in self.columns.items()},
-            metadata={
-                name: _take(value, positions) for name, value in self.metadata.items()
-            },
-            offsets=offsets,
-            frame_indices=self.frame_indices[positions],
+            *gather_rows(
+                self.columns, self.metadata, self.offsets, self.frame_indices, positions
+            )
         )
 
-    @property
-    def n_frames(self) -> int:
-        """Number of frames in the batch."""
-        return len(self.offsets) - 1
 
-    @property
-    def total_atoms(self) -> int:
-        """Total atom count across all frames."""
-        return int(self.offsets[-1])
+type Unbox = Callable[[str, object], object]
 
-    @property
-    def n_atoms(self) -> np.ndarray:
-        """Per-frame atom counts, `np.diff(offsets)`."""
-        return np.diff(self.offsets)
 
-    @property
-    def ptr(self) -> np.ndarray:
-        """Alias of `offsets`, under its PyG name."""
-        return self.offsets
+def position(index: int, n_frames: int) -> int:
+    """Resolve a possibly negative frame index, or raise `IndexError`."""
+    n = n_frames
+    if not -n <= index < n:
+        raise IndexError(f"frame {index} is out of range for a batch of {n} frames")
+    return index + n if index < 0 else index
 
-    @property
-    def batch(self) -> np.ndarray:
-        """Per-atom frame id within this batch (PyG's `batch` vector).
 
-        Recomputed on each access; hoist it out of a hot loop.
-        """
-        return np.repeat(np.arange(self.n_frames), self.n_atoms)
+def positions(key: object, n_frames: int) -> np.ndarray:
+    """Resolve a boolean mask or integer sequence to non-negative frame positions."""
+    n = n_frames
+    selection = np.asarray(key)
+    if selection.size == 0:
+        return np.empty(0, dtype=np.intp)
+    if selection.dtype == np.bool_:
+        if selection.shape != (n,):
+            raise IndexError(
+                f"boolean mask of shape {selection.shape} does not match a "
+                f"batch of {n} frames"
+            )
+        return np.flatnonzero(selection)
+    if selection.ndim != 1 or selection.dtype.kind not in "iu":
+        raise TypeError(
+            "frame positions must be a 1-D sequence of integers, not "
+            f"{selection.dtype}{list(selection.shape)}"
+        )
+    out_of_range = (selection < -n) | (selection >= n)
+    if out_of_range.any():
+        raise IndexError(
+            f"frames {selection[out_of_range].tolist()} are out of range "
+            f"for a batch of {n} frames"
+        )
+    return np.where(selection < 0, selection + n, selection).astype(np.intp)
+
+
+def frame_rows(
+    columns: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    offsets: np.ndarray,
+    i: int,
+    unbox: Unbox = lambda _name, value: _unbox(value),
+) -> tuple[int, dict[str, Any], dict[str, Any]]:
+    """Frame `i`'s atom count, column views and unboxed metadata values."""
+    lo, hi = int(offsets[i]), int(offsets[i + 1])
+    return (
+        hi - lo,
+        {name: _fresh(value[lo:hi]) for name, value in columns.items()},
+        {name: unbox(name, value[i]) for name, value in metadata.items()},
+    )
+
+
+def slice_rows(
+    columns: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    offsets: np.ndarray,
+    frame_indices: np.ndarray,
+    start: int,
+    stop: int,
+) -> tuple[dict[str, Any], dict[str, Any], np.ndarray, np.ndarray]:
+    """Frames `start:stop` as views, with offsets rebased to start at zero."""
+    lo, hi = int(offsets[start]), int(offsets[stop])
+    return (
+        {name: _fresh(value[lo:hi]) for name, value in columns.items()},
+        {name: _fresh(value[start:stop]) for name, value in metadata.items()},
+        offsets[start : stop + 1] - lo,
+        frame_indices[start:stop],
+    )
+
+
+def gather_rows(
+    columns: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    offsets: np.ndarray,
+    frame_indices: np.ndarray,
+    picks: np.ndarray,
+) -> tuple[dict[str, Any], dict[str, Any], np.ndarray, np.ndarray]:
+    """Frames at `picks` copied in order, with fresh offsets."""
+    starts = offsets[picks].astype(np.intp, copy=False)
+    counts = offsets[picks + 1].astype(np.intp, copy=False) - starts
+    gathered = np.zeros(len(picks) + 1, dtype=offsets.dtype)
+    np.cumsum(counts, out=gathered[1:])
+    # Atom row `k` of the gather is row `k - gathered[f] + starts[f]` of the
+    # source, for the frame `f` it falls in.
+    row_offsets = gathered[:-1].astype(np.intp, copy=False)
+    rows = np.arange(int(gathered[-1])) + np.repeat(starts - row_offsets, counts)
+    return (
+        {name: _take(value, rows) for name, value in columns.items()},
+        {name: _take(value, picks) for name, value in metadata.items()},
+        gathered,
+        frame_indices[picks],
+    )
 
 
 def _fresh[V](value: V) -> V:
@@ -310,10 +379,42 @@ def _resolve_batch_indices(
     return [int(i) for i in index]
 
 
-def read_batch(  # noqa: PLR0913  the read/schema/projection options are the contract
+@overload
+def read_batch[B: RecordBatch[Any]](
+    path: str | Path,
+    index: int | str | slice | Sequence[int] = ...,
+    *,
+    record: type[B],
+    threads: int | None = ...,
+    schema: SchemaSpec | str | Path | None = ...,
+    conformance: Conformance = ...,
+    compression: Compression = ...,
+    member: str | None = ...,
+    storage_options: _remote.StorageOptions | None = ...,
+) -> B: ...
+
+
+@overload
+def read_batch(
+    path: str | Path,
+    index: int | str | slice | Sequence[int] = ...,
+    *,
+    record: None = ...,
+    threads: int | None = ...,
+    schema: SchemaSpec | str | Path | None = ...,
+    conformance: Conformance = ...,
+    mode: Mode | None = ...,
+    compression: Compression = ...,
+    member: str | None = ...,
+    storage_options: _remote.StorageOptions | None = ...,
+) -> Batch: ...
+
+
+def read_batch[B: RecordBatch[Any]](  # noqa: PLR0913  the read/schema/projection options are the contract
     path: str | Path,
     index: int | str | slice | Sequence[int] = ":",
     *,
+    record: type[B] | None = None,
     threads: int | None = None,
     schema: SchemaSpec | str | Path | None = None,
     conformance: Conformance = "required",
@@ -321,7 +422,7 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
-) -> Batch:
+) -> Batch | B:
     """Gather frames into one batch.
 
     The file is read once, and for an explicit selection only as far as the
@@ -341,6 +442,20 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
     index
         `read`'s selection grammar, or a sequence of non-negative frame
         indices gathered in order (repeats allowed). Default: every frame.
+    record
+        A batch class to read into instead of a `Batch`: `RecordBatch[R]`
+        for a `Record` subclass `R`, or a declared subclass of it. Frames
+        are projected onto the record's fields as `read` with `record=R`
+        projects them, and only the selected frames are read. Under
+        `conformance="warn"` the batch holds the frames whose records
+        `read` returns for the same `index`. An `X | None` field is filled
+        where a frame lacks it (NaN for a float field, else its `fill=`,
+        which a batch read of an integer, bool or string `X | None` field
+        requires) and `present` says which frames carried it. The batch's
+        arrays are writable and belong to it alone. An empty selection, or
+        one whose frames all drop, gives a batch of no frames with the
+        record's fields, where a read without `record` raises. Cannot be
+        combined with `mode`; `schema` acts as it does for `read`.
     threads
         `None` parses on every core; `1` is serial. The batch is identical.
     schema
@@ -360,8 +475,9 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
 
     Returns
     -------
-    Batch
-        The gathered frames, concatenated.
+    Batch, or B with `record=B`
+        The gathered frames, concatenated; with `record`, an instance of
+        its batch class.
 
     Raises
     ------
@@ -369,6 +485,15 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
         On malformed input, carrying the frame index and location.
     IndexError
         On an out-of-range or negative explicit index.
+    oxyz.SchemaError
+        With `record`, as for `read`. Before reading: `schema` disagrees
+        with the record, or an integer, bool or string `X | None` field has
+        no `fill=`.
+    TypeError
+        `record` is not a batch class; a `Record` subclass `R` is named
+        here as `RecordBatch[R]`.
+    ValueError
+        `mode` is given with `record`.
 
     Examples
     --------
@@ -380,10 +505,15 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
     (3,)
     """
     _check_threads(threads)
+    binding = None
+    if record is not None:
+        binding = _bind_record(record, schema, mode, batch=True)
     _require_schema_for_mode(schema, mode)
     projection = None
     spec = None
-    if schema is not None:
+    if binding is not None:
+        projection, spec = binding.batch_plan, binding.spec
+    elif schema is not None:
         projection, spec = _projection(schema, mode)
 
     selection = _resolve_batch_indices(
@@ -398,22 +528,19 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
                 )
 
     if projection is not None:
-        if _remote.is_remote(path):
-            src = _remote.open_source(
-                path,
-                compression=compression,
-                member=member,
-                storage_options=storage_options,
-            )
-            triple = _rust.read_batch_projected_reader(
-                src.obj, src.codec, selection, threads, src.member, plan=projection
-            )
-        else:
-            triple = _rust.read_batch_projected(
-                str(path), selection, threads, compression, member, plan=projection
-            )
-        result = _resolve_projected_batch(triple, conformance, spec)
-        return result if result is not None else _empty_batch()
+        projected = _read_batch_projected(
+            path,
+            selection,
+            threads=threads,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+            projection=projection,
+            conformance=conformance,
+            spec=spec,
+            binding=binding,
+        )
+        return cast("Batch | B", projected)
 
     if spec is not None:
         return _read_batch_validate(
@@ -449,9 +576,88 @@ def read_batch(  # noqa: PLR0913  the read/schema/projection options are the con
     )
 
 
-def iread_batch(  # noqa: C901, PLR0913, PLR0912  the keyword options are the batching contract
+def _read_batch_projected(  # noqa: PLR0913  the read options plus the projection
+    path: str | Path,
+    selection: list[int] | None,
+    *,
+    threads: int | None,
+    compression: Compression,
+    member: str | None,
+    storage_options: _remote.StorageOptions | None,
+    projection: ProjectionPlan,
+    conformance: Conformance,
+    spec: SchemaSpec | None,
+    binding: Binding | None,
+) -> Batch | RecordBatch[Any]:
+    """Project the selected frames into one batch, empty if none survive."""
+    if binding is not None and selection is not None and not selection:
+        _open_first_frame(path, compression, member, storage_options)
+        return binding.empty_batch()
+    if _remote.is_remote(path):
+        src = _remote.open_source(
+            path,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
+        projected = _rust.read_batch_projected_reader(
+            src.obj, src.codec, selection, threads, src.member, plan=projection
+        )
+    else:
+        projected = _rust.read_batch_projected(
+            str(path), selection, threads, compression, member, plan=projection
+        )
+    result = _resolve_projected_batch(projected, conformance, spec, binding)
+    if result is not None:
+        return result
+    return _empty_batch() if binding is None else binding.empty_batch()
+
+
+@overload
+def iread_batch[B: RecordBatch[Any]](
     path: str | Path,
     *,
+    record: type[B],
+    frames_per_batch: int | None = ...,
+    atoms_per_batch: int | None = ...,
+    memory_scales_with: MemoryScaling | None = ...,
+    max_scaler: float | None = ...,
+    shuffle: bool = ...,
+    seed: int | None = ...,
+    threads: int | None = ...,
+    schema: SchemaSpec | str | Path | None = ...,
+    conformance: Conformance = ...,
+    compression: Compression = ...,
+    member: str | None = ...,
+    storage_options: _remote.StorageOptions | None = ...,
+) -> Iterator[B]: ...
+
+
+@overload
+def iread_batch(
+    path: str | Path,
+    *,
+    record: None = ...,
+    frames_per_batch: int | None = ...,
+    atoms_per_batch: int | None = ...,
+    memory_scales_with: MemoryScaling | None = ...,
+    max_scaler: float | None = ...,
+    shuffle: bool = ...,
+    seed: int | None = ...,
+    threads: int | None = ...,
+    schema: SchemaSpec | str | Path | None = ...,
+    conformance: Conformance = ...,
+    mode: Mode | None = ...,
+    compression: Compression = ...,
+    member: str | None = ...,
+    storage_options: _remote.StorageOptions | None = ...,
+) -> Iterator[Batch]: ...
+
+
+def iread_batch[B: RecordBatch[Any]](  # noqa: C901, PLR0913, PLR0912  the keyword options are the batching contract
+    path: str | Path,
+    *,
+    record: type[B] | None = None,
     frames_per_batch: int | None = None,
     atoms_per_batch: int | None = None,
     memory_scales_with: MemoryScaling | None = None,
@@ -465,7 +671,7 @@ def iread_batch(  # noqa: C901, PLR0913, PLR0912  the keyword options are the ba
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
-) -> Iterator[Batch]:
+) -> Iterator[Batch] | Iterator[B]:
     """Read a file as a sequence of batches.
 
     Exactly one strategy must be given:
@@ -483,13 +689,18 @@ def iread_batch(  # noqa: C901, PLR0913, PLR0912  the keyword options are the ba
     A compressed or remote source supports only `frames_per_batch` without
     `shuffle`; the other strategies need random access.
 
-    With `mode="project"`, a batch whose frames all drop under
-    `conformance="warn"` is skipped.
+    With `mode="project"`, or with `record`, a batch whose frames all drop
+    under `conformance="warn"` is skipped.
 
     Parameters
     ----------
     path
         File path, an S3-compatible URL, or `"-"` for stdin.
+    record
+        A batch class to yield instances of instead of `Batch`es:
+        `RecordBatch[R]` or a declared subclass of it; see `read_batch`.
+        Each batch holds the frames of its share of the file that `read`
+        with `record=R` keeps.
     frames_per_batch
         Fixed frame count per batch.
     atoms_per_batch
@@ -521,14 +732,20 @@ def iread_batch(  # noqa: C901, PLR0913, PLR0912  the keyword options are the ba
 
     Returns
     -------
-    Iterator[Batch]
+    Iterator[Batch], or Iterator[B] with `record=B`
         Batches in the strategy's order, each with its own `frame_indices`.
 
     Raises
     ------
     ValueError
         On an invalid combination of options, or a strategy the source cannot
-        support.
+        support; `mode` given with `record`.
+    oxyz.SchemaError
+        With `record`, as for `read_batch`. A disagreeing `schema`, or an
+        `X | None` field that needs a `fill=`, raises from this call, before
+        any frame is read.
+    TypeError
+        `record` is not a batch class; see `read_batch`.
 
     Examples
     --------
@@ -566,10 +783,15 @@ def iread_batch(  # noqa: C901, PLR0913, PLR0912  the keyword options are the ba
     if seed is not None and not shuffle:
         raise ValueError("seed requires shuffle=True")
     _check_threads(threads)
+    binding = None
+    if record is not None:
+        binding = _bind_record(record, schema, mode, batch=True)
     _require_schema_for_mode(schema, mode)
     projection = None
     spec = None
-    if schema is not None:
+    if binding is not None:
+        projection, spec = binding.batch_plan, binding.spec
+    elif schema is not None:
         projection, spec = _projection(schema, mode)
 
     remote = _remote.is_remote(path)
@@ -593,17 +815,19 @@ def iread_batch(  # noqa: C901, PLR0913, PLR0912  the keyword options are the ba
         and not shuffle
         and (streaming_only or threads == 1)
     ):
-        return _sequential_batches(
+        sequential = _sequential_batches(
             path,
             frames_per_batch,
             compression,
             member,
             storage_options,
-            projection,
-            conformance,
-            spec,
+            projection=projection,
+            conformance=conformance,
+            spec=spec,
+            binding=binding,
         )
-    return _planned_batches(
+        return cast("Iterator[Batch] | Iterator[B]", sequential)
+    planned = _planned_batches(
         path,
         frames_per_batch,
         atoms_per_batch,
@@ -615,19 +839,23 @@ def iread_batch(  # noqa: C901, PLR0913, PLR0912  the keyword options are the ba
         projection=projection,
         conformance=conformance,
         spec=spec,
+        binding=binding,
     )
+    return cast("Iterator[Batch] | Iterator[B]", planned)
 
 
-def _sequential_batches(
+def _sequential_batches(  # noqa: PLR0913  the source options plus projection
     path: str | Path,
     frames_per_batch: int,
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
+    *,
     projection: ProjectionPlan | None = None,
     conformance: Conformance = "required",
     spec: SchemaSpec | None = None,
-) -> Iterator[Batch]:
+    binding: Binding | None = None,
+) -> Iterator[Batch | RecordBatch[Any]]:
     """File-order batches streamed without a scan."""
     remote = _remote.is_remote(path)
     src = (
@@ -650,8 +878,8 @@ def _sequential_batches(
             iterator = _rust.BatchIterProjected(
                 str(path), frames_per_batch, projection, compression, member
             )
-        for triple in iterator:
-            batch = _resolve_projected_batch(triple, conformance, spec)
+        for projected in iterator:
+            batch = _resolve_projected_batch(projected, conformance, spec, binding)
             if batch is not None:  # a fully-dropped window is skipped
                 yield batch
         return
@@ -706,7 +934,8 @@ def _planned_batches(  # noqa: PLR0913  the planning knobs plus projection
     projection: ProjectionPlan | None = None,
     conformance: Conformance = "required",
     spec: SchemaSpec | None = None,
-) -> Iterator[Batch]:
+    binding: Binding | None = None,
+) -> Iterator[Batch | RecordBatch[Any]]:
     """Index-backed batches over a frame order planned before any parsing."""
     validate_compiled = None
     if spec is not None and projection is None:
@@ -736,8 +965,8 @@ def _planned_batches(  # noqa: PLR0913  the planning knobs plus projection
 
     for plan in plans:
         if projection is not None:
-            triple = reader.get_batch_projected(plan, projection, threads)
-            batch = _resolve_projected_batch(triple, conformance, spec)
+            projected = reader.get_batch_projected(plan, projection, threads)
+            batch = _resolve_projected_batch(projected, conformance, spec, binding)
             if batch is not None:  # a fully-dropped batch is skipped
                 yield batch
         elif validate_compiled is not None:
@@ -832,17 +1061,19 @@ def _empty_batch() -> Batch:
 
 
 def _resolve_projected_batch(
-    triple: ProjectedBatch,
+    projected: ProjectedBatch,
     conformance: Conformance,
     spec: SchemaSpec | None = None,
-) -> Batch | None:
-    """Apply projection policy to a `(batch_data, survivors, reports)` triple.
+    binding: Binding | None = None,
+) -> Batch | RecordBatch[Any] | None:
+    """Apply projection policy to a `read_batch_projected`-shaped result.
 
-    Returns the surviving `Batch`, or `None` when every frame dropped.
+    Returns the surviving `Batch`, cast by `binding` when given, or `None`
+    when every frame dropped.
     """
     from oxyz._project import enforce_projection
 
-    data, survivors, reports = triple
+    data, survivors, reports, presence = projected
     survived = set(survivors)
     for req_index, deviations in reports:
         dropped = req_index not in survived
@@ -850,15 +1081,32 @@ def _resolve_projected_batch(
     if not survivors:
         return None
     batch = _batch_from_data(data, survivors)
+    if binding is not None and conformance == "warn":
+        # Under "required" and "strict" every deviation has already raised.
+        kept = binding.kept(batch, presence, reports, survived)
+        if kept is None:
+            return None
+        batch, presence = kept
     if spec is not None and spec.frame is not None:
-        _enforce_frame_rule_on_batch(batch, spec.frame, conformance)
-    return batch
+        lattice = None if binding is None else binding.carried("Lattice", presence)
+        _enforce_frame_rule_on_batch(batch, spec.frame, conformance, lattice)
+    if binding is None:
+        return batch
+    return binding.cast_batch(batch, presence, owned=True)
 
 
 def _enforce_frame_rule_on_batch(
-    batch: Batch, frame_rule: FrameRule, conformance: Conformance
+    batch: Batch,
+    frame_rule: FrameRule,
+    conformance: Conformance,
+    lattice: np.ndarray | None = None,
 ) -> None:
-    """Check each frame's atom count and `Lattice` against the frame rule."""
+    """Check each frame's atom count and `Lattice` against the frame rule.
+
+    `lattice` marks the frames that carry `Lattice`, where the batch's own
+    metadata cannot tell; by default every frame carries it if the batch has
+    the key.
+    """
     import warnings
 
     from oxyz._schema_match import SchemaError, SchemaWarning, Violation, message
@@ -866,7 +1114,8 @@ def _enforce_frame_rule_on_batch(
     lo, hi = frame_rule.n_atoms_min, frame_rule.n_atoms_max
     n_atoms = batch.n_atoms
     indices = batch.frame_indices
-    lattice_missing = frame_rule.lattice_required and "Lattice" not in batch.metadata
+    if lattice is None:
+        lattice = np.full(batch.n_frames, "Lattice" in batch.metadata)
     for pos in range(batch.n_frames):
         idx = int(indices[pos])
         violations: list[Violation] = []
@@ -876,7 +1125,7 @@ def _enforce_frame_rule_on_batch(
             violations.append(
                 Violation("frame", "n_atoms", "mismatch", bounds, str(count))
             )
-        if lattice_missing:
+        if frame_rule.lattice_required and not lattice[pos]:
             violations.append(
                 Violation("frame", "Lattice", "missing", "required", None)
             )

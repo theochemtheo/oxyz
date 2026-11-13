@@ -49,7 +49,7 @@ def oxyz_serial(path: Path) -> list:
 
 @row("numpy frames", "serial")
 def cextxyz_read(path: Path) -> list:
-    from extxyz import read_dicts  # ty: ignore[unresolved-import]
+    from extxyz import read_dicts  # ty: ignore[import-not-found]
 
     frames = read_dicts(str(path))
     assert isinstance(frames, list)

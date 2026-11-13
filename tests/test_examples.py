@@ -19,6 +19,7 @@ EXAMPLES: tuple[str, ...] = (
     "ase_dropin.py",
     "pytorch_targets.py",
     "write_roundtrip.py",
+    "typed_records.py",
 )
 
 

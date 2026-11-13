@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import inspect
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -18,6 +21,13 @@ def test_mode_and_writable_are_exported() -> None:
     assert oxyz.Writable is not None
     assert "Mode" in oxyz.__all__
     assert "Writable" in oxyz.__all__
+
+
+def test_absent_is_exported_as_the_rules_type() -> None:
+    from oxyz._schema_spec import Absent
+
+    assert oxyz.Absent is Absent
+    assert "Absent" in oxyz.__all__
 
 
 # Readers share one keyword tail for the threads, schema and IO options.
@@ -75,3 +85,29 @@ def test_schema_public_api_exported():
     ):
         assert hasattr(oxyz, name), name
     assert name in oxyz.__all__ if (name := "SchemaSpec") else True
+
+
+def test_a_read_without_record_loads_no_record_machinery() -> None:
+    path = Path(__file__).parent / "data" / "mace_ref_energy_forces_stress.xyz"
+    code = f"""
+import sys
+import oxyz
+spec = oxyz.SchemaSpec(
+    metadata=(oxyz.MetadataRule("REF_energy", oxyz.Kind.REAL),), mode="project"
+)
+oxyz.read({str(path)!r}, schema=spec)
+list(oxyz.iread({str(path)!r}, schema=spec))
+oxyz.read({str(path)!r}, schema=spec, mode="validate")
+oxyz.read_batch({str(path)!r}, schema=spec)
+oxyz.read_batch({str(path)!r}, schema=spec, mode="validate")
+for threads in (1, None):
+    for mode in ("project", "validate"):
+        list(oxyz.iread_batch(
+            {str(path)!r}, schema=spec, mode=mode, frames_per_batch=1, threads=threads
+        ))
+print([m for m in ("oxyz._record_bind", "oxyz._record_fields") if m in sys.modules])
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert result.stdout.strip() == "[]"

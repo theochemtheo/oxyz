@@ -14,10 +14,7 @@ CORPUS = sorted(path for ext in ("*.xyz", "*.extxyz") for path in DATA_DIR.glob(
 
 
 def as_array(value: object) -> np.ndarray:
-    """Assert that ``value`` is an ndarray and re-type it for ty.
-
-    A ty workaround; delete it once test_ty_canary.py fails.
-    """
+    """Assert that ``value`` is an ndarray and narrow it for ty."""
     assert isinstance(value, np.ndarray)
     return value
 

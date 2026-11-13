@@ -40,7 +40,7 @@ class NameLookup[C, M]:
     def _sides(self) -> tuple[Mapping[str, C], Mapping[str, M]]:
         raise NotImplementedError
 
-    def __getitem__(self, name: str) -> C | M:
+    def __getitem__(self, name: str, /) -> C | M:
         """Return the column or metadata entry called `name`, as stored.
 
         Raises `KeyError` when neither side has it, and

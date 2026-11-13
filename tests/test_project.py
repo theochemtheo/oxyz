@@ -27,11 +27,15 @@ def test_validate_mode_compiles_to_none():
     assert compile_projection(spec, "validate") is None
 
 
+def test_schema_spec_plans_promote():
+    assert compile_projection(SchemaSpec(mode="project"), "project") == ([], [], True)
+
+
 def test_project_plan_real_gets_nan_fill_by_default():
     spec = SchemaSpec(columns=(ColumnRule("charge", Kind.REAL, required=False),))
     plan = compile_projection(spec, "project")
     assert plan is not None
-    columns, metadata = plan
+    columns, metadata, _promote = plan
     name, letter, width, required, fill = columns[0]
     assert (name, letter, width, required) == ("charge", "R", 1, False)
     assert math.isnan(fill)
@@ -42,9 +46,10 @@ def test_project_plan_metadata_shape_crosses_as_tuple():
     spec = SchemaSpec(metadata=(MetadataRule("stress", Kind.REAL, shape=(9,)),))
     plan = compile_projection(spec, "project")
     assert plan is not None
-    _columns, metadata = plan
-    name, letter, shape, required, _fill = metadata[0]
+    _columns, metadata, _promote = plan
+    name, letter, shape, required, _fill, column_major = metadata[0]
     assert (name, letter, shape, required) == ("stress", "R", (9,), True)
+    assert column_major is False
 
 
 def test_project_plan_optional_int_without_fill_is_spec_error():
@@ -58,7 +63,7 @@ def test_project_plan_required_int_without_fill_is_allowed():
     spec = SchemaSpec(columns=(ColumnRule("id", Kind.INT, required=True),))
     plan = compile_projection(spec, "project")
     assert plan is not None
-    columns, _metadata = plan
+    columns, _metadata, _promote = plan
     assert columns[0][4] is None  # no fill
 
 
@@ -123,3 +128,39 @@ def test_optional_no_natural_null_without_fill_is_spec_error(kind):
     spec = SchemaSpec(columns=(ColumnRule("x", kind, required=False),))
     with pytest.raises(SchemaError, match="fill"):
         compile_projection(spec, "project")
+
+
+@pytest.mark.parametrize("kind", list(Kind))
+def test_omit_rule_compiles_without_a_fill_for_every_kind(kind):
+    plan = compile_projection(
+        SchemaSpec(columns=(ColumnRule("x", kind, required=False, absent="omit"),)),
+        "project",
+    )
+    assert plan is not None
+    assert plan[0][0][3:] == (False, None)
+
+
+def test_omit_takes_precedence_over_a_declared_fill():
+    plan = compile_projection(
+        SchemaSpec(
+            columns=(
+                ColumnRule("x", Kind.REAL, required=False, absent="omit", fill=0.5),
+            ),
+            metadata=(
+                MetadataRule("k", Kind.INT, required=False, absent="omit", fill=3),
+            ),
+        ),
+        "project",
+    )
+    assert plan is not None
+    assert plan[0][0][4] is None
+    assert plan[1][0][4] is None
+
+
+def test_omit_on_a_required_rule_has_no_effect():
+    plan = compile_projection(
+        SchemaSpec(columns=(ColumnRule("x", Kind.REAL, absent="omit"),)), "project"
+    )
+    assert plan is not None
+    assert plan[0][0][3] is True
+    assert math.isnan(plan[0][0][4])

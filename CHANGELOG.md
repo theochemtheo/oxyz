@@ -6,6 +6,34 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Typed records: declare a `Record` and read frames with `record=` on `read`
+  and `iread`, or batches as `RecordBatch[R]` on `read_batch` and
+  `iread_batch`. Fields are statically typed, optional fields batch as filled
+  arrays with `batch.present(...)`.
+- Schema rules take `absent: omit`: under project mode an absent optional
+  field is left out of the frame instead of filled. Its type is exported as
+  `oxyz.Absent`.
+
+### Changed
+
+- Projection promotes an integer value to float for a REAL rule, so an
+  integer-valued `Lattice` no longer fails a project-mode schema; an integer
+  above 2^53 loses precision in the conversion. Validate mode is unchanged.
+
+### Fixed
+
+- Record fields named `cls` or `self` work in conversions, batch construction
+  and indexing.
+- Batches with unsigned offsets support per-atom frame ids and reordered gathers.
+- Batch assembly errors report the source file's frame index, including selected
+  frames and later streaming batches.
+
+### Internal
+
+- ty floor raised to 0.0.100.
+
 ## [1.3.1] - 2026-11-13
 
 ### Security

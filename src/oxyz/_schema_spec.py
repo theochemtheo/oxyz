@@ -26,6 +26,8 @@ if TYPE_CHECKING:
 
 # Whether a schema validates (reports) or projects (reshapes each frame).
 Mode = Literal["validate", "project"]
+# Whether a projection fills an absent optional entry or leaves it out of the frame.
+Absent = Literal["fill", "omit"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +55,11 @@ class ColumnRule:
     fill
         Value projection fills an absent column with. REAL defaults to NaN, so
         only an optional INT/BOOL/STR column needs one.
+    absent
+        Under project mode, whether an absent optional field is filled or left
+        out of the frame. `"omit"` needs no `fill` and takes precedence over
+        one; a batch read cannot mix frames that have the field with frames
+        that lack it. No effect on a required rule.
     """
 
     name: str
@@ -63,6 +70,7 @@ class ColumnRule:
     min: int | None = None
     max: int | None = None
     fill: float | int | bool | str | None = None
+    absent: Absent = "fill"
 
     def __repr__(self) -> str:
         """Show the fields that differ from their defaults."""
@@ -91,6 +99,8 @@ class MetadataRule:
         See `ColumnRule.max`.
     fill
         See `ColumnRule.fill`.
+    absent
+        See `ColumnRule.absent`.
     """
 
     key: str
@@ -101,6 +111,7 @@ class MetadataRule:
     min: int | None = None
     max: int | None = None
     fill: float | int | bool | str | None = None
+    absent: Absent = "fill"
 
     def __repr__(self) -> str:
         """Show the fields that differ from their defaults."""
@@ -137,6 +148,15 @@ def _kind(letter: object) -> Kind:
         raise ValueError(f"unknown kind {letter!r}; use one of R, I, L, S") from None
 
 
+def _absent(value: object) -> Absent:
+    if value == "fill":
+        return "fill"
+    if value == "omit":
+        return "omit"
+    msg = f"unknown absent {value!r}; use 'fill' or 'omit'"
+    raise ValueError(msg)
+
+
 def _column_rule(name: str, attrs: Mapping[str, Any]) -> ColumnRule:
     return ColumnRule(
         name=name,
@@ -147,6 +167,7 @@ def _column_rule(name: str, attrs: Mapping[str, Any]) -> ColumnRule:
         min=attrs.get("min"),
         max=attrs.get("max"),
         fill=attrs.get("fill"),
+        absent=_absent(attrs.get("absent", "fill")),
     )
 
 
@@ -161,6 +182,7 @@ def _metadata_rule(key: str, attrs: Mapping[str, Any]) -> MetadataRule:
         min=attrs.get("min"),
         max=attrs.get("max"),
         fill=attrs.get("fill"),
+        absent=_absent(attrs.get("absent", "fill")),
     )
 
 
@@ -488,6 +510,8 @@ def _column_attrs(rule: ColumnRule) -> dict[str, Any]:
     # A 0 or False fill is a real value.
     if rule.fill is not None:
         attrs["fill"] = rule.fill
+    if rule.absent == "omit":
+        attrs["absent"] = "omit"
     return attrs
 
 
@@ -503,6 +527,8 @@ def _metadata_attrs(rule: MetadataRule) -> dict[str, Any]:
             attrs[key] = value
     if rule.fill is not None:
         attrs["fill"] = rule.fill
+    if rule.absent == "omit":
+        attrs["absent"] = "omit"
     return attrs
 
 

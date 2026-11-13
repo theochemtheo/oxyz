@@ -21,7 +21,7 @@ def test_iread_batch_is_the_public_streaming_batch_name() -> None:
 
 
 def as_array(value: object) -> np.ndarray:
-    """Same ty-limitation shim as test_extxyz.as_array; delete with the canary."""
+    """Assert that ``value`` is an ndarray and narrow it for ty."""
     assert isinstance(value, np.ndarray)
     return value
 
@@ -231,6 +231,7 @@ def test_read_batch_whole_file_empty_is_no_frames(tmp_path: Path) -> None:
         {"atoms_per_batch": 0},
         {"frames_per_batch": 2, "seed": 0},
         {"frames_per_batch": 2, "threads": 0},
+        {"frames_per_batch": 2, "max_scaler": 4},
         {"atoms_per_batch": 4, "memory_scales_with": "n_atoms"},
         {"memory_scales_with": "n_atoms", "max_scaler": 0},
         {"memory_scales_with": "n_atoms", "max_scaler": 4, "shuffle": True},
@@ -518,15 +519,66 @@ def test_get_batch_projected_empty_indices_errors():
     from oxyz import _rust
 
     idx = _rust.IndexedFrames(str(DATA_DIR / "mixed_schema_optional_column.xyz"))
-    plan = ([("pos", "R", 3, True, float("nan"))], [])
+    plan = ([("pos", "R", 3, True, float("nan"))], [], False)
     with pytest.raises(ValueError, match="empty"):
         idx.get_batch_projected([], plan)
+
+
+def _presence_entry_points():
+    from oxyz import _rust
+
+    path = DATA_DIR / "mixed_schema_optional_column.xyz"
+
+    def chunks():
+        yield path.read_bytes()
+
+    return {
+        "path": lambda plan, threads: _rust.read_batch_projected(
+            str(path), None, threads, "infer", None, plan=plan
+        ),
+        "reader": lambda plan, threads: _rust.read_batch_projected_reader(
+            chunks(), "plain", None, threads, None, plan=plan
+        ),
+        "indexed": lambda plan, threads: _rust.IndexedFrames(
+            str(path), False
+        ).get_batch_projected([0, 1], plan, threads),
+        "streamed": lambda plan, _threads: next(
+            iter(_rust.BatchIterProjected(str(path), 2, plan, "infer", None))
+        ),
+    }
+
+
+@pytest.mark.parametrize("threads", [1, None])
+@pytest.mark.parametrize("entry", ["path", "reader", "indexed", "streamed"])
+def test_projected_batch_reports_presence_per_survivor(entry, threads):
+    plan = ([("pos", "R", 3, True, None), ("charge", "R", 1, False, -1.5)], [], True)
+    data, survivors, _reports, presence = _presence_entry_points()[entry](plan, threads)
+    assert survivors == [0, 1]
+    assert data["columns"]["charge"].tolist() == [0.5, -0.5, -1.5, -1.5]
+    assert presence.dtype == np.bool_
+    assert presence.tolist() == [[True], [False]]
+
+
+def test_projected_batch_presence_is_shaped_by_survivors_and_optionals():
+    from oxyz import _rust
+
+    path = DATA_DIR / "mixed_schema_optional_column.xyz"
+    plan = ([("pos", "R", 3, True, None)], [], False)
+    *_, presence = _rust.read_batch_projected(str(path), None, 1, plan=plan)
+    assert presence.shape == (2, 0)
+    none_survive = (
+        [("id", "I", 1, True, None), ("charge", "R", 1, False, -1.5)],
+        [],
+        False,
+    )
+    *_, presence = _rust.read_batch_projected(str(path), None, 1, plan=none_survive)
+    assert presence.shape == (0, 1)
 
 
 def test_build_plan_rejects_multidim_metadata_shape():
     from oxyz import _rust
 
-    plan = ([], [("stress", "R", (2, 3), False, 0.0)])  # 2-D shape unsupported
+    plan = ([], [("stress", "R", (2, 3), False, 0.0)], False)  # 2-D shape unsupported
     with pytest.raises(ValueError, match="dimension"):
         _rust.read_first_frame_projected(
             str(DATA_DIR / "mixed_schema_optional_column.xyz"), plan=plan
@@ -698,3 +750,65 @@ def test_validate_batch_selection_and_out_of_range(tmp_path):
     assert batch.frame_indices.tolist() == [1, 0, 1]
     with pytest.raises(IndexError, match="out of range"):
         oxyz.read_batch(ok, [5], schema=spec)
+
+
+@pytest.mark.parametrize("index", [-4, "-4"])
+def test_read_batch_rejects_a_negative_index_before_the_file(index):
+    with pytest.raises(IndexError, match=r"-4.*3 frames"):
+        oxyz.read_batch(VARYING, index)
+
+
+@pytest.mark.parametrize("index", [-1, [0], slice(None, None, -1)])
+def test_iread_rejects_archive_members_on_plain_files(index):
+    with pytest.raises(ValueError, match=r"member=.*archive"):
+        list(oxyz.iread(VARYING, index, member="inner.xyz"))
+
+
+def test_iread_batch_rejects_archive_members_on_plain_files():
+    with pytest.raises(ValueError, match=r"member=.*archive"):
+        oxyz.iread_batch(VARYING, frames_per_batch=2, member="inner.xyz")
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [[0.0, 1.0], [[0, 1]], ["0", "1"], np.array(1)],
+    ids=["floats", "two-dimensional", "strings", "zero-dimensional"],
+)
+def test_batch_gather_rejects_non_integer_or_non_vector_positions(selection):
+    batch = oxyz.read_batch(VARYING)
+    with pytest.raises(TypeError, match="1-D sequence of integers"):
+        batch[selection]
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [[], np.array([], dtype=np.intp), [False, False], slice(1, 1, -1)],
+    ids=["list", "array", "mask", "reverse-slice"],
+)
+def test_empty_batch_gathers_preserve_field_shapes(selection):
+    batch = oxyz.read_batch(VARYING, [2, 0])
+    empty = batch[selection]
+    assert (empty.n_frames, empty.total_atoms) == (0, 0)
+    assert_array_equal(empty.offsets, [0])
+    assert empty.frame_indices.shape == (0,)
+    assert list(empty.columns["species"]) == []
+    assert as_array(empty.columns["pos"]).shape == (0, 3)
+    assert as_array(empty.columns["forces"]).shape == (0, 3)
+    assert as_array(empty.metadata["energy"]).shape == (0,)
+    assert as_array(empty.metadata["Lattice"]).shape == (0, 9)
+
+
+@pytest.mark.parametrize("threads", [1, None])
+def test_validate_batches_preserve_values_and_source_indices(threads):
+    from oxyz import Kind, MetadataRule, SchemaSpec
+
+    spec = SchemaSpec(metadata=(MetadataRule("energy", Kind.REAL),))
+    batches = list(
+        oxyz.iread_batch(VARYING, frames_per_batch=1, schema=spec, threads=threads)
+    )
+    assert [b.frame_indices.tolist() for b in batches] == [[0], [1], [2]]
+    assert [b.offsets.tolist() for b in batches] == [[0, 3], [0, 1], [0, 2]]
+    assert_allclose(
+        [as_array(b.metadata["energy"])[0] for b in batches],
+        [-76.3, -13.6, -31.8],
+    )
