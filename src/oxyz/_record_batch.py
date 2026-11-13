@@ -333,7 +333,8 @@ class RecordBatch[R: Record](FrameLayout, metaclass=RecordBatchMeta):
     tags : numpy.ndarray, optional
         Keyword only: an integer array of length `n_frames`, each frame's
         member as an index into `members`. All zeros, the first member, by
-        default. Type checkers do not see it, as with `present`.
+        default. A batch of one record ignores it and holds zeros. Type
+        checkers do not see it, as with `present`.
 
     Raises
     ------
@@ -387,7 +388,11 @@ class RecordBatch[R: Record](FrameLayout, metaclass=RecordBatchMeta):
                 raise type(error)(f"{name}.{field}: {error}") from None
         masks = dict(self._present or {})
         _check_masks(name, layout, masks, n_frames)
-        tags = _check_tags(name, _tags, n_frames, len(layout.members))
+        if len(layout.members) == 1:
+            # One member's tags say nothing, so a resizing `replace` needs none.
+            tags = np.zeros(n_frames, dtype=np.intp)
+        else:
+            tags = _check_tags(name, _tags, n_frames, len(layout.members))
         for field in layout.optional:
             masks.setdefault(field, np.ones(n_frames, dtype=np.bool_))
         object.__setattr__(self, "_present", masks)
@@ -836,7 +841,7 @@ def _check_masks(
 def _check_tags(
     name: str, tags: object, n_frames: int, n_members: int
 ) -> npt.NDArray[np.integer]:
-    """Return `tags`, checked to index the members, or all zeros for `None`."""
+    """Return a union batch's `tags`, checked to index the members; zeros for `None`."""
     if tags is None:
         return np.zeros(n_frames, dtype=np.intp)
     if not isinstance(tags, np.ndarray) or tags.dtype.kind not in "iu":

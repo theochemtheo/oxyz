@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import itertools
 import pickle
 import re
@@ -721,6 +722,45 @@ def test_single_record_batches_have_one_member_and_zero_tags():
     assert not single.tags.any()
     assert single.where(MadFrame).all()
     assert type(single[0]) is MadFrame
+
+
+def test_a_single_record_batch_resizes_through_replace_without_tags():
+    single = oxyz.read_batch(MAD, [0, 1, 2], record=RecordBatch[MadFrame])
+    first = single[:1]
+    names = ("species", "positions", "forces", "energy", "subset")
+    fields = {name: getattr(first, name) for name in names}
+    resized = dataclasses.replace(
+        single, offsets=first.offsets, frame_indices=first.frame_indices, **fields
+    )
+    assert len(resized) == 1
+    assert resized.tags.tolist() == [0]
+    assert resized[0] == single[0]
+
+
+def test_a_union_batch_resizing_through_replace_needs_tags(
+    mad: RecordBatch[MadSample],
+):
+    first = mad[:1]
+    fields = {
+        name: getattr(first, name) for name in type(first).__batch_layout__.fields
+    }
+    with pytest.raises(ValueError, match=r"tags: expected shape \(1,\)"):
+        dataclasses.replace(
+            mad,
+            offsets=first.offsets,
+            frame_indices=first.frame_indices,
+            present={name: first.present(name) for name in ("cell", "stress")},
+            **fields,
+        )
+    resized = dataclasses.replace(
+        mad,
+        offsets=first.offsets,
+        frame_indices=first.frame_indices,
+        present={name: first.present(name) for name in ("cell", "stress")},
+        tags=first.tags.copy(),
+        **fields,
+    )
+    assert resized == first
 
 
 def test_union_batch_spec_and_from_batch():
