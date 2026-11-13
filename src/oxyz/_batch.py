@@ -13,6 +13,7 @@ from oxyz._frames import (
     MetadataValue,
     _bind_record,
     _check_threads,
+    _open_first_frame,
     _projection,
     _require_schema_for_mode,
 )
@@ -24,7 +25,7 @@ if TYPE_CHECKING:
 
     from oxyz._record_batch import RecordBatch
     from oxyz._record_bind import Binding
-    from oxyz._rust import DeviationData, ProjectedBatch, ProjectionPlan
+    from oxyz._rust import ProjectedBatch, ProjectionPlan
     from oxyz._schema_match import Conformance
     from oxyz._schema_spec import FrameRule, Mode, SchemaSpec
 
@@ -35,8 +36,48 @@ packing: `"n_atoms"` is the atom count; `"n_atoms_x_density"` is
 memory."""
 
 
+class FrameLayout:
+    """The CSR frame layout `offsets` describes, shared by both batch kinds."""
+
+    __slots__ = ()
+
+    offsets: np.ndarray
+
+    def __len__(self) -> int:
+        """Return the number of frames, `n_frames`."""
+        return self.n_frames
+
+    @property
+    def n_frames(self) -> int:
+        """Number of frames in the batch."""
+        return len(self.offsets) - 1
+
+    @property
+    def total_atoms(self) -> int:
+        """Total atom count across all frames."""
+        return int(self.offsets[-1])
+
+    @property
+    def n_atoms(self) -> np.ndarray:
+        """Per-frame atom counts, `np.diff(offsets)`."""
+        return np.diff(self.offsets)
+
+    @property
+    def ptr(self) -> np.ndarray:
+        """Alias of `offsets`, under its PyG name."""
+        return self.offsets
+
+    @property
+    def batch(self) -> np.ndarray:
+        """Per-atom frame id within this batch (PyG's `batch` vector).
+
+        Recomputed on each access; hoist it out of a hot loop.
+        """
+        return np.repeat(np.arange(self.n_frames), self.n_atoms)
+
+
 @dataclass(frozen=True, slots=True, eq=False)
-class Batch(NameLookup[ColumnValues, ColumnValues]):  # noqa: PLW1641  a dict of arrays is unhashable by construction
+class Batch(NameLookup[ColumnValues, ColumnValues], FrameLayout):  # noqa: PLW1641  a dict of arrays is unhashable by construction
     """Frames concatenated atom-major, CSR-style (PyG's batch layout).
 
     Frame `i` occupies rows `offsets[i]:offsets[i + 1]` of every column.
@@ -105,10 +146,6 @@ class Batch(NameLookup[ColumnValues, ColumnValues]):  # noqa: PLW1641  a dict of
     def _sides(self) -> tuple[dict[str, ColumnValues], dict[str, ColumnValues]]:
         return self.columns, self.metadata
 
-    def __len__(self) -> int:
-        """Return the number of frames, `n_frames`."""
-        return self.n_frames
-
     def __iter__(self) -> Iterator[Frame]:
         """Yield each frame in turn, as `batch[i]` would."""
         for i in range(self.n_frames):
@@ -173,34 +210,6 @@ class Batch(NameLookup[ColumnValues, ColumnValues]):  # noqa: PLW1641  a dict of
                 self.columns, self.metadata, self.offsets, self.frame_indices, positions
             )
         )
-
-    @property
-    def n_frames(self) -> int:
-        """Number of frames in the batch."""
-        return len(self.offsets) - 1
-
-    @property
-    def total_atoms(self) -> int:
-        """Total atom count across all frames."""
-        return int(self.offsets[-1])
-
-    @property
-    def n_atoms(self) -> np.ndarray:
-        """Per-frame atom counts, `np.diff(offsets)`."""
-        return np.diff(self.offsets)
-
-    @property
-    def ptr(self) -> np.ndarray:
-        """Alias of `offsets`, under its PyG name."""
-        return self.offsets
-
-    @property
-    def batch(self) -> np.ndarray:
-        """Per-atom frame id within this batch (PyG's `batch` vector).
-
-        Recomputed on each access; hoist it out of a hot loop.
-        """
-        return np.repeat(np.arange(self.n_frames), self.n_atoms)
 
 
 type Unbox = Callable[[str, object], object]
@@ -599,26 +608,6 @@ def _read_batch_projected(  # noqa: PLR0913  the read options plus the projectio
     if result is not None:
         return result
     return _empty_batch() if binding is None else binding.empty_batch()
-
-
-def _open_first_frame(
-    path: str | Path,
-    compression: Compression,
-    member: str | None,
-    storage_options: _remote.StorageOptions | None,
-) -> None:
-    """Open `path` and parse its first frame, raising what reading it would."""
-    if _remote.is_remote(path):
-        src = _remote.open_source(
-            path,
-            compression=compression,
-            member=member,
-            storage_options=storage_options,
-        )
-        frames = _rust.FrameIter.from_reader(src.obj, src.codec, src.member)
-    else:
-        frames = _rust.FrameIter(str(path), compression, member)
-    next(iter(frames), None)
 
 
 @overload
@@ -1089,36 +1078,18 @@ def _resolve_projected_batch(
     if not survivors:
         return None
     batch = _batch_from_data(data, survivors)
-    if binding is not None:
+    if binding is not None and conformance == "warn":
         # Under "required" and "strict" every deviation has already raised.
-        keep = _kept(reports, survived) if conformance == "warn" else None
-        if keep is not None:
-            if not keep.any():
-                return None
-            picks = np.flatnonzero(keep)
-            batch, presence = batch[picks], presence[picks]
+        kept = binding.kept(batch, presence, reports, survived)
+        if kept is None:
+            return None
+        batch, presence = kept
     if spec is not None and spec.frame is not None:
         lattice = None if binding is None else binding.carried("Lattice", presence)
         _enforce_frame_rule_on_batch(batch, spec.frame, conformance, lattice)
     if binding is None:
         return batch
     return binding.cast_batch(batch, presence, owned=True)
-
-
-def _kept(
-    reports: list[tuple[int, list[DeviationData]]], survived: set[int]
-) -> np.ndarray | None:
-    """Which survivors a record read keeps, or `None` for all of them.
-
-    The core keeps a frame whose field of the wrong kind it can fill; a
-    record read drops it.
-    """
-    from oxyz._project import mismatched
-
-    keep = [
-        not mismatched(deviations) for index, deviations in reports if index in survived
-    ]
-    return None if all(keep) else np.array(keep)
 
 
 def _enforce_frame_rule_on_batch(

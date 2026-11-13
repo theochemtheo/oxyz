@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import gc
 import gzip
 import inspect
 import pickle
@@ -9,6 +10,7 @@ import re
 import types
 import typing
 import warnings
+import weakref
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -570,7 +572,7 @@ def test_generic_batch_unpickles_where_its_class_is_not_yet_derived(monkeypatch)
         present={"stress": np.array([True, False])},
     )
     data = pickle.dumps(b)
-    monkeypatch.setattr(_record_batch, "_derived", {})
+    monkeypatch.delattr(MaceSample, "__record_batch__")
     again = pickle.loads(data)
     assert type(again) is batch_class(RecordBatch[MaceSample])
     assert type(again) is not type(b)
@@ -578,6 +580,32 @@ def test_generic_batch_unpickles_where_its_class_is_not_yet_derived(monkeypatch)
     assert again.present("stress").tolist() == [True, False]
     assert again[1].stress is None
     np.testing.assert_array_equal(again.positions, b.positions)
+
+
+def test_a_derived_batch_class_does_not_outlive_its_record():
+    def derive() -> weakref.ref[type[Record]]:
+        class Passing(Record):
+            energy: Meta[float] = Meta()
+
+        assert batch_class(RecordBatch[Passing]) is batch_class(RecordBatch[Passing])
+        return weakref.ref(Passing)
+
+    record = derive()
+    for clear in typing._cleanups:  # ty: ignore[missing-attribute] — typing's own subscription caches
+        clear()
+    gc.collect()
+    assert record() is None
+
+
+def test_a_record_subclass_derives_its_own_batch_class():
+    class Extended(MaceSample):
+        step: Meta[int] = Meta()
+
+    base = batch_class(RecordBatch[MaceSample])
+    derived = batch_class(RecordBatch[Extended])
+    assert derived is not base
+    assert derived.__record__ is Extended
+    assert batch_class(RecordBatch[MaceSample]) is base
 
 
 def test_repr_summarises_without_data():

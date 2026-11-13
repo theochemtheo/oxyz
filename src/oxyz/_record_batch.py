@@ -21,7 +21,14 @@ import numpy as np
 import numpy.typing as npt
 
 from oxyz import _html, _summary
-from oxyz._batch import frame_rows, gather_rows, position, positions, slice_rows
+from oxyz._batch import (
+    FrameLayout,
+    frame_rows,
+    gather_rows,
+    position,
+    positions,
+    slice_rows,
+)
 from oxyz._record import (
     FieldSpec,
     Record,
@@ -196,7 +203,7 @@ class RecordBatchMeta(type):
         return cls
 
 
-class RecordBatch[R: Record](metaclass=RecordBatchMeta):
+class RecordBatch[R: Record](FrameLayout, metaclass=RecordBatchMeta):
     """Many records of one class, concatenated atom-major, CSR-style.
 
     A batch holds each field of its record `R` in batch form: a per-atom
@@ -409,38 +416,6 @@ class RecordBatch[R: Record](metaclass=RecordBatchMeta):
             **values,
         )
 
-    @property
-    def n_frames(self) -> int:
-        """Number of frames in the batch."""
-        return len(self.offsets) - 1
-
-    @property
-    def total_atoms(self) -> int:
-        """Total atom count across all frames."""
-        return int(self.offsets[-1])
-
-    @property
-    def n_atoms(self) -> np.ndarray:
-        """Per-frame atom counts, `np.diff(offsets)`."""
-        return np.diff(self.offsets)
-
-    @property
-    def ptr(self) -> np.ndarray:
-        """Alias of `offsets`, under its PyG name."""
-        return self.offsets
-
-    @property
-    def batch(self) -> np.ndarray:
-        """Per-atom frame id within this batch (PyG's `batch` vector).
-
-        Recomputed on each access; hoist it out of a hot loop.
-        """
-        return np.repeat(np.arange(self.n_frames), self.n_atoms)
-
-    def __len__(self) -> int:
-        """Return the number of frames, `n_frames`."""
-        return self.n_frames
-
     def __iter__(self) -> Iterator[R]:
         """Yield each frame's record in turn, as `batch[i]` would."""
         for i in range(self.n_frames):
@@ -643,7 +618,7 @@ class RecordBatch[R: Record](metaclass=RecordBatchMeta):
         cls = type(self)
         layout = cls.__batch_layout__
         record = layout.record
-        target = RecordBatch[record] if _derived.get(record) is cls else cls  # ty: ignore[invalid-type-form]
+        target = RecordBatch[record] if _derived(record) is cls else cls  # ty: ignore[invalid-type-form]
         state: dict[str, object] = {
             "offsets": self.offsets,
             "frame_indices": self.frame_indices,
@@ -732,9 +707,6 @@ def _rebuild(target: object, state: dict[str, Any]) -> RecordBatch[Any]:
     return batch_class(target)._trusted(**state)  # noqa: SLF001 — same module
 
 
-_derived: dict[type[Record], type[RecordBatch[Any]]] = {}
-
-
 def batch_class(target: object) -> type[RecordBatch[Any]]:
     """Return the batch class `target` names.
 
@@ -751,13 +723,23 @@ def batch_class(target: object) -> type[RecordBatch[Any]]:
     if get_origin(target) is RecordBatch:
         (record,) = get_args(target)
         record = _check_record("RecordBatch[R]", record)
-        derived = _derived.get(record)
+        derived = _derived(record)
         if derived is None:
-            derived = _derived.setdefault(record, _derive(record))
+            derived = _derive(record)
+            type.__setattr__(record, _DERIVED, derived)
         return derived
     raise TypeError(
         f"expected a RecordBatch subclass or RecordBatch[R], got {target!r}"
     )
+
+
+# Kept on the record class, so a derived class lives exactly as long as its record.
+_DERIVED = "__record_batch__"
+
+
+def _derived(record: type[Record]) -> type[RecordBatch[Any]] | None:
+    """Return the class derived for `record` itself, not one inherited from a base."""
+    return vars(record).get(_DERIVED)
 
 
 def _derive(record: type[Record]) -> type[RecordBatch[Any]]:

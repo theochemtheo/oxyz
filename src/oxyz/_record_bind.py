@@ -11,9 +11,10 @@ from typing import TYPE_CHECKING, Any, cast, final, get_origin
 import numpy as np
 
 from oxyz._frames import Frame
+from oxyz._project import mismatched
 from oxyz._record import Record
 from oxyz._record_batch import RecordBatch, batch_class
-from oxyz._schema import KIND_TO_LETTER, Kind, column_sig, metadata_sig
+from oxyz._schema import KIND_TO_LETTER, column_sig, metadata_sig
 from oxyz._schema_match import SchemaError
 from oxyz._schema_spec import SchemaSpec
 
@@ -26,7 +27,7 @@ if TYPE_CHECKING:
     from oxyz._batch import Batch
     from oxyz._record import FieldSpec, Fill
     from oxyz._record_fields import FieldType
-    from oxyz._rust import ProjectionPlan
+    from oxyz._rust import DeviationData, ProjectionPlan
     from oxyz._schema_match import Conformance
 
 type _Fields = tuple[tuple[str, FieldType, FieldSpec[Any]], ...]
@@ -100,6 +101,34 @@ class Binding:
             frame_indices=batch.frame_indices,
             **values,
         )
+
+    def kept(
+        self,
+        batch: Batch,
+        presence: npt.NDArray[np.bool_],
+        reports: list[tuple[int, list[DeviationData]]],
+        survived: set[int],
+    ) -> tuple[Batch, npt.NDArray[np.bool_]] | None:
+        """Return the survivors a record read keeps under `"warn"`, or `None`.
+
+        The core keeps a frame whose field of the wrong kind it can fill; a
+        record read drops it. `presence` and `survived` are the core's report
+        for `batch`, and `reports` its deviations per requested frame.
+        """
+        keep = np.array(
+            [
+                not mismatched(deviations)
+                for index, deviations in reports
+                if index in survived
+            ],
+            dtype=np.bool_,
+        )
+        if keep.all():
+            return batch, presence
+        if not keep.any():
+            return None
+        picks = np.flatnonzero(keep)
+        return batch[picks], presence[picks]
 
     def empty_batch(self) -> RecordBatch[Any]:
         """Return a `target` batch of no frames, its fields of their batch dtypes."""
@@ -273,7 +302,6 @@ def _check_agrees(
                 continue
             kind = column.kind
             found = column_sig(column.kind, column.width)
-            expected = column_sig(field.kind, field.width)
             agrees = column.width == field.width
         else:
             metadata = schema.rule_for(key, "metadata")
@@ -281,18 +309,16 @@ def _check_agrees(
                 continue
             kind, shape = metadata.kind, tuple(metadata.shape)
             found = metadata_sig(kind, shape)
-            expected = metadata_sig(field.kind, field.shape)
             # A 2-D value is read as its flattened length, so its rule is too.
             agrees = shape == field.shape or (
                 len(shape) > 1 and field.shape == (math.prod(shape),)
             )
-        promotes = kind == Kind.INT and field.kind == Kind.REAL
-        if agrees and (kind == field.kind or (promotes and not strict)):
+        if agrees and field.takes(kind, strict=strict):
             continue
-        reason = "; the record is strict" if agrees and promotes else ""
+        note = field.strict_note(kind) if agrees else ""
         raise SchemaError(
             f"{record.__name__}.{name}: schema= gives {field.axis} {key!r} as "
-            f"{found}, the record reads {expected}{reason}",
+            f"{found}, the record reads {field.signature()}{note}",
             name=key,
         )
 
@@ -345,13 +371,11 @@ def _presence(
         return spec.fill is None, spec.fill
     if not batch:
         return False, None
-    if spec.fill is not None:
-        return False, spec.fill
-    if field.kind == Kind.REAL:
-        return False, math.nan
+    fill = field.batch_fill(spec.fill)
+    if fill is not None:
+        return False, fill
     raise SchemaError(
-        f"{record.__name__}.{name}: an optional {KIND_TO_LETTER[field.kind]} "
-        f"field has no natural null; give it a fill= to read it into a batch",
+        f"{record.__name__}.{name}: {field.no_null()} to read it into a batch",
         name=_key(spec),
     )
 

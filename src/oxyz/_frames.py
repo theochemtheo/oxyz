@@ -697,6 +697,26 @@ def _stream_projected(
     return iter(_rust.FrameIterProjected(str(path), plan, compression, member))
 
 
+def _open_first_frame(
+    path: str | Path,
+    compression: Compression,
+    member: str | None,
+    storage_options: _remote.StorageOptions | None,
+) -> None:
+    """Open `path` and parse its first frame, raising what reading it would."""
+    if _remote.is_remote(path):
+        src = _remote.open_source(
+            path,
+            compression=compression,
+            member=member,
+            storage_options=storage_options,
+        )
+        frames = _rust.FrameIter.from_reader(src.obj, src.codec, src.member)
+    else:
+        frames = _rust.FrameIter(str(path), compression, member)
+    next(iter(frames), None)
+
+
 def _read_all(
     path: str | Path,
     *,

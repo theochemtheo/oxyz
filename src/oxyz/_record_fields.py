@@ -125,6 +125,38 @@ class FieldType:
             return list(row)
         return row
 
+    def signature(self) -> str:
+        """Return the signature of this field's value in a file: `R:3`, `R[9]`."""
+        if self.axis == "column":
+            return column_sig(self.kind, self.width)
+        return metadata_sig(self.kind, self.shape)
+
+    def takes(self, kind: Kind | None, *, strict: bool) -> bool:
+        """Report whether a value of `kind` fits this field.
+
+        It fits if it has the field's kind, or is an integer for a float
+        field unless `strict`.
+        """
+        return kind == self.kind or (not strict and self._promotes(kind))
+
+    def strict_note(self, kind: Kind | None) -> str:
+        """Return the note on a refused `kind` that only strictness refuses."""
+        return "; the record is strict" if self._promotes(kind) else ""
+
+    def batch_fill(self, fill: Fill | None) -> Fill | None:
+        """Return what a batch fills an absent value with, given the declared `fill`.
+
+        An optional float field defaults to NaN; `None` means nothing fills it.
+        """
+        if fill is None and self.optional and self.kind == Kind.REAL:
+            return math.nan
+        return fill
+
+    def no_null(self) -> str:
+        """Describe why `batch_fill` found nothing, for an optional field."""
+        letter = KIND_TO_LETTER[self.kind]
+        return f"an optional {letter} field has no natural null; give it a fill="
+
     def batched(self) -> FieldType:
         """Return the batch form of this field type."""
         return self if self.batch_form else dataclasses.replace(self, batch_form=True)
@@ -178,6 +210,9 @@ class FieldType:
         if isinstance(value, (np.ndarray, list)):
             return _summary.summarise(value)
         return repr(value)
+
+    def _promotes(self, kind: Kind | None) -> bool:
+        return kind == Kind.INT and self.kind == Kind.REAL
 
     def _stored_shape(self, rows: int) -> tuple[int, ...]:
         """Return the shape a reader stores this form's value in, before any cast."""
@@ -301,13 +336,10 @@ def batch_value(
     batched = field.batched()
     where = f"{field.axis} {key!r}"
     if key not in stored:
-        fill = spec.fill
-        if fill is None and field.optional and field.kind == Kind.REAL:
-            fill = math.nan
+        fill = field.batch_fill(spec.fill)
         if fill is None:
             reason = (
-                f"absent, and an optional {KIND_TO_LETTER[field.kind]} field has "
-                "no natural null to fill it with; give it a fill="
+                f"absent, and {field.no_null()}"
                 if field.optional
                 else "missing (required)"
             )
@@ -318,20 +350,16 @@ def batch_value(
         return value, False
     raw = stored[key]
     found = _stored_kind(raw)
-    promotes = found == Kind.INT and field.kind == Kind.REAL
-    if found != field.kind and not (promotes and not strict):
-        if field.axis == "column":
-            expected = column_sig(field.kind, field.width)
-        else:
-            expected = metadata_sig(field.kind, field.shape)
+    if not field.takes(found, strict=strict):
         described = (
             _summary.summarise(raw)
             if isinstance(raw, (np.ndarray, list))
             else type(raw).__name__
         )
-        reason = "; the record is strict" if promotes else ""
         raise SchemaError(
-            f"{where}: expected {expected}, found {described}{reason}", name=key
+            f"{where}: expected {field.signature()}, found {described}"
+            f"{field.strict_note(found)}",
+            name=key,
         )
     try:
         shape = batched._stored_shape(rows)  # noqa: SLF001 — same module
@@ -360,20 +388,16 @@ def _check_signature(field: FieldType, key: str, raw: object, *, strict: bool) -
         )
     if field.axis == "column":
         kind, width = column_signature(raw)
-        found, expected = column_sig(kind, width), column_sig(field.kind, field.width)
+        found = column_sig(kind, width)
         agrees = width == field.width
     else:
         kind, shape = _metadata_signature(raw, key)
-        found, expected = (
-            metadata_sig(kind, shape),
-            metadata_sig(field.kind, field.shape),
-        )
+        found = metadata_sig(kind, shape)
         agrees = shape == field.shape
-    promotes = kind == Kind.INT and field.kind == Kind.REAL
-    if not agrees or (kind != field.kind and not promotes) or (promotes and strict):
-        reason = "; the record is strict" if agrees and promotes else ""
+    if not (agrees and field.takes(kind, strict=strict)):
+        note = field.strict_note(kind) if agrees else ""
         raise SchemaError(
-            f"{field.axis} {key!r}: expected {expected}, found {found}{reason}",
+            f"{field.axis} {key!r}: expected {field.signature()}, found {found}{note}",
             name=key,
         )
 
