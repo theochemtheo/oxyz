@@ -73,7 +73,9 @@ class FrameLayout:
 
         Recomputed on each access; hoist it out of a hot loop.
         """
-        return np.repeat(np.arange(self.n_frames), self.n_atoms)
+        return np.repeat(
+            np.arange(self.n_frames), self.n_atoms.astype(np.intp, copy=False)
+        )
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -292,13 +294,14 @@ def gather_rows(
     picks: np.ndarray,
 ) -> tuple[dict[str, Any], dict[str, Any], np.ndarray, np.ndarray]:
     """Frames at `picks` copied in order, with fresh offsets."""
-    starts = offsets[picks]
-    counts = offsets[picks + 1] - starts
+    starts = offsets[picks].astype(np.intp, copy=False)
+    counts = offsets[picks + 1].astype(np.intp, copy=False) - starts
     gathered = np.zeros(len(picks) + 1, dtype=offsets.dtype)
     np.cumsum(counts, out=gathered[1:])
     # Atom row `k` of the gather is row `k - gathered[f] + starts[f]` of the
     # source, for the frame `f` it falls in.
-    rows = np.arange(gathered[-1]) + np.repeat(starts - gathered[:-1], counts)
+    row_offsets = gathered[:-1].astype(np.intp, copy=False)
+    rows = np.arange(int(gathered[-1])) + np.repeat(starts - row_offsets, counts)
     return (
         {name: _take(value, rows) for name, value in columns.items()},
         {name: _take(value, picks) for name, value in metadata.items()},

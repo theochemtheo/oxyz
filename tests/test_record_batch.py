@@ -246,6 +246,18 @@ def test_init_keeps_arrays_as_given_and_instances_are_frozen():
         b.energy = np.zeros(2)
 
 
+@pytest.mark.parametrize("dtype", [np.uint32, np.uint64])
+def test_unsigned_offsets_support_atom_ids_and_reordered_gathers(dtype):
+    offsets = np.array([0, 3, 6], dtype=dtype)
+    batch = make_batch(MaceBatch, offsets=offsets)
+    assert batch.offsets is offsets
+    assert batch.batch.tolist() == [0, 0, 0, 1, 1, 1]
+    gathered = batch[[1, 0, 1]]
+    assert gathered.offsets.tolist() == [0, 3, 6, 9]
+    assert gathered.positions[:, 0].tolist() == [9, 12, 15, 0, 3, 6, 9, 12, 15]
+    assert gathered.frame_indices.tolist() == [7, 4, 7]
+
+
 def test_receiver_named_fields_survive_frame_conversion():
     frame = oxyz.Frame(n_atoms=0, columns={}, metadata={"cls": "a", "self": "b"})
     record = ReceiverNames.from_frame(frame)

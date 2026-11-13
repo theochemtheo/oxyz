@@ -26,6 +26,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Record fields named `cls` or `self` work in conversions, batch construction
   and indexing.
+- Batches with unsigned offsets support per-atom frame ids and reordered gathers.
 
 ### Internal
 
