@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
     from oxyz._frames import Frame
     from oxyz._record_fields import FieldType
+    from oxyz._record_union import UnionPlan
     from oxyz._schema_spec import Absent, ColumnRule, MetadataRule, SchemaSpec
 
 type Fill = float | int | bool | str
@@ -567,39 +568,7 @@ class Record(metaclass=RecordMeta):
         drops it; and a batch read with it raises when frames differ in an
         omitted field.
         """
-        from oxyz._schema import Kind
-        from oxyz._schema_spec import ColumnRule, MetadataRule, SchemaSpec
-
-        columns: list[ColumnRule] = []
-        metadata: list[MetadataRule] = []
-        for _, field, key in cls.__record_fields__:
-            assert key.key is not None  # noqa: S101 — type-narrowing only
-            required = not field.optional and key.fill is None
-            omits = field.optional and key.fill is None and field.kind != Kind.REAL
-            absent: Absent = "omit" if omits else "fill"
-            if field.axis == "column":
-                rule = ColumnRule(
-                    key.key,
-                    field.kind,
-                    width=field.width,
-                    required=required,
-                    fill=key.fill,
-                    absent=absent,
-                )
-                columns.append(rule)
-            else:
-                rule = MetadataRule(
-                    key.key,
-                    field.kind,
-                    shape=field.shape,
-                    required=required,
-                    fill=key.fill,
-                    absent=absent,
-                )
-                metadata.append(rule)
-        return SchemaSpec(
-            columns=tuple(columns), metadata=tuple(metadata), mode="project"
-        )
+        return spec_of(cls.__record_fields__)
 
     @classmethod
     def from_frame(cls, frame: Frame) -> Self:
@@ -683,3 +652,53 @@ class Record(metaclass=RecordMeta):
     def __setstate__(self, state: dict[str, object]) -> None:
         for name, value in state.items():
             object.__setattr__(self, name, value)
+
+
+def spec_of(
+    fields: tuple[tuple[str, FieldType, FieldSpec[Any]], ...],
+    union: UnionPlan | None = None,
+) -> SchemaSpec:
+    """Return the project-mode `SchemaSpec` with one rule per field, in order.
+
+    Without `union`, a field is required unless it is `X | None` or has a
+    fill, as `Record.spec` describes. With `union`, the plan decides: a key
+    every member requires is required, and a matching key is optional as an
+    `X | None` field is.
+    """
+    from oxyz._schema import Kind
+    from oxyz._schema_spec import ColumnRule, MetadataRule, SchemaSpec
+
+    columns: list[ColumnRule] = []
+    metadata: list[MetadataRule] = []
+    matching = frozenset(union.matching) if union is not None else frozenset()
+    for _, field, key in fields:
+        assert key.key is not None  # noqa: S101 — type-narrowing only
+        if union is None:
+            required = not field.optional and key.fill is None
+            optional = field.optional
+        else:
+            required = (key.axis, key.key) in union.required
+            optional = (key.axis, key.key) in matching
+        omits = optional and key.fill is None and field.kind != Kind.REAL
+        absent: Absent = "omit" if omits else "fill"
+        if field.axis == "column":
+            rule = ColumnRule(
+                key.key,
+                field.kind,
+                width=field.width,
+                required=required,
+                fill=key.fill,
+                absent=absent,
+            )
+            columns.append(rule)
+        else:
+            rule = MetadataRule(
+                key.key,
+                field.kind,
+                shape=field.shape,
+                required=required,
+                fill=key.fill,
+                absent=absent,
+            )
+            metadata.append(rule)
+    return SchemaSpec(columns=tuple(columns), metadata=tuple(metadata), mode="project")

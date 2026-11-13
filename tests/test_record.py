@@ -1291,7 +1291,7 @@ def test_the_record_base_is_not_a_record_class():
 
 def test_record_instance_is_not_a_record_class():
     with pytest.raises(TypeError, match=r"got MaceSample\(n_atoms=3"):
-        oxyz.read(MACE, record=make_mace())  # ty: ignore[no-matching-overload]
+        oxyz.read(MACE, record=make_mace())  # ty: ignore[invalid-type-form]
 
 
 class Squares(Record):

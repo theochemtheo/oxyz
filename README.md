@@ -349,12 +349,107 @@ typed = oxyz.read_batch("mixed.extxyz", record=SampleBatch)
 typed.energy  # NDArray[float64]
 ```
 
+### Mixed datasets
+
+Some datasets hold more than one kind of frame. MAD-1.5 has molecules with no
+`Lattice`, crystals, and strained crystals that also carry `stress`. Declare
+a record for each kind and read the file into their union: each frame
+becomes the member whose keys it carries.
+
+```python
+import numpy as np
+import numpy.typing as npt
+import oxyz
+from oxyz import Cell, Column, Matrix3, Meta, Record, RecordBatch
+
+type Array = npt.NDArray[np.float64]
+
+
+class MadFrame(Record):  # shared fields; not itself a member
+    species: Column[list[str]] = Column()
+    positions: Column[Array] = Column("pos", width=3)
+    forces: Column[Array] = Column(width=3)
+    energy: Meta[float] = Meta()
+    subset: Meta[str] = Meta()
+
+
+class Molecule(MadFrame):
+    pass
+
+
+class Crystal(MadFrame):
+    cell: Cell[Array] = Cell()
+
+
+class Strained(MadFrame):
+    cell: Cell[Array] = Cell()
+    stress: Matrix3[Array] = Matrix3()
+
+
+type MadSample = Molecule | Crystal | Strained
+
+samples = oxyz.read("mad.xyz", record=MadSample)  # list[Molecule | Crystal | Strained]
+match samples[0]:
+    case Strained(stress=stress): ...
+    case Crystal(): ...
+    case Molecule(): ...
+
+batch = oxyz.read_batch("mad.xyz", record=RecordBatch[MadSample])
+batch[Strained.stress]  # NDArray[float64], (n_frames, 3, 3); NaN where not a Strained
+batch[MadFrame.energy]  # NDArray[float64], (n_frames,)
+batch.where(Strained)   # bool, (n_frames,)
+batch[0]                # Molecule
+```
+
+Here no member field is `X | None`, so molecules get no zero cell, and a
+`Strained` never holds a NaN the file did not contain.
+
+Members must be siblings: no member may subclass another. To a type checker, a
+union of a class and its subclass is the base class alone: were `Crystal` a
+subclass of `Molecule`, a read of `Molecule | Crystal` would be typed
+`list[Molecule]`, and a `match` could not narrow it. Share fields through a
+base class that is not itself a member, as `MadFrame` is, or by reusing
+`Annotated` field declarations. Members that declare the same key must give it
+the same field name, the same type, `| None` included, and the same `fill=`,
+and members must agree on `strict`. A union that breaks these rules raises
+`TypeError` before the file is opened.
+
+A frame's member is decided by which keys it carries, not by their values.
+The deciding keys are those some member can do without, here `Lattice` and
+`stress`. A member admits a frame that carries every deciding key the member
+requires and none that the member does not declare: a frame with neither is
+a `Molecule`, with `Lattice` alone a `Crystal`, and with both a `Strained`.
+The order of the members does not matter, because two members that could
+admit the same frame raise `TypeError` naming both. `Cell()` tells crystals
+from molecules because it requires `Lattice`; a `Crystal` declared with
+`Cell(fill=0.0)` or `Cell[Array | None]` would also admit a frame without
+one, and collide with `Molecule`.
+
+A frame no member admits, such as one with `stress` and no `Lattice`, raises
+`SchemaError` giving its frame index, the keys it carries and what each
+member admits; under `conformance="warn"` it is dropped with a warning. A
+frame that matches can still fail as that member, on a missing shared field
+or a value of the wrong kind.
+
+`RecordBatch[MadSample]` holds every member's fields, each as one array over
+all frames. Where a frame's member lacks a field, the field holds its `fill=`,
+or NaN for a float field declared without one; a field of any other kind must
+declare a `fill=`. `present` is false there. `members` is the tuple of member
+classes in the order the union names them, and `tags` gives each frame's
+member as an index into `members`. `where()` marks the frames whose member is
+one of those given; a class that is not a member, such as the base `MadFrame`,
+raises `TypeError`. `batch[i]` equals `oxyz.read(path, i, record=MadSample)`,
+and `batch[batch.where(Strained)]` gathers the strained frames, still typed as
+the union.
+
 ### Existing data and schemas
 
 `Sample.from_frame(frame)` and `SampleBatch.from_batch(batch)` check data you
-already hold and return records with read-only arrays. Records read from a
-file own writable arrays. Records are frozen and slotted; constructing one
-by hand checks its field types, shapes and row counts, keeping arrays as given.
+already hold and return records with read-only arrays. `from_batch` takes a
+single record's batch class, since a plain `Batch` cannot say which member of
+a union each frame is. Records read from a file own writable arrays. Records
+are frozen and slotted; constructing one by hand checks its field types,
+shapes and row counts, keeping arrays as given.
 
 `Sample.spec()` gives a project-mode `SchemaSpec` describing the fields.
 Passing `schema=` alongside `record=` applies the schema's frame rule and
@@ -698,6 +793,8 @@ oxyz.infer_schema(path)                      -> Schema
 # They also take record=None. A Record subclass R makes read/iread return R in
 # place of Frame; a RecordBatch[R] or declared subclass makes read_batch and
 # iread_batch return it in place of Batch. record= cannot be combined with mode=.
+# A union of sibling records, A | B, may stand in for R: each frame becomes the
+# member whose keys it carries, and RecordBatch[A | B] holds every member's fields.
 
 oxyz.write(path, obj, *, append=False, compression="infer", level=None, threads=None) -> None
 oxyz.Writer(path, *, append=False, compression="infer", level=None, batch=None)   # incremental, a context manager
@@ -744,8 +841,8 @@ Contracts worth knowing before relying on them:
   alone. `Batch` assembly requires every gathered frame to share a schema;
   `infer_schema` tells you in advance whether a file qualifies. To batch such
   a file, project it to a fixed shape (`mode="project"`), or read it into a
-  `RecordBatch`, which fills an absent optional field and records in
-  `present` which frames carried it.
+  `RecordBatch`, of one record or a union of records, which fills an absent
+  field and records in `present` which frames carried it.
 - **Duplicate metadata keys collapse:** `Frame.metadata` is a dict; if a
   comment line repeats a key, the last occurrence wins.
 - **`Batch.batch` is computed per access** (`np.repeat` over the atom

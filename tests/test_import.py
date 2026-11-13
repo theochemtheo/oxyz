@@ -111,3 +111,33 @@ print([m for m in ("oxyz._record_bind", "oxyz._record_fields") if m in sys.modul
         [sys.executable, "-c", code], capture_output=True, text=True, check=True
     )
     assert result.stdout.strip() == "[]"
+
+
+def test_record_reads_do_not_import_typing_extensions() -> None:
+    path = Path(__file__).parent / "data" / "mad_r2scan_sample.extxyz"
+    code = f"""
+import sys
+sys.modules["typing_extensions"] = None
+import numpy as np
+import numpy.typing as npt
+import oxyz
+from oxyz import Cell, Column, Meta, Record, RecordBatch
+
+class Molecule(Record):
+    positions: Column[npt.NDArray[np.float64]] = Column("pos", width=3)
+    energy: Meta[float] = Meta()
+
+class Crystal(Record):
+    positions: Column[npt.NDArray[np.float64]] = Column("pos", width=3)
+    energy: Meta[float] = Meta()
+    cell: Cell[npt.NDArray[np.float64]] = Cell()
+
+records = oxyz.read({str(path)!r}, record=Molecule | Crystal)
+print(sorted({{type(r).__name__ for r in records}}))
+batch = oxyz.read_batch({str(path)!r}, record=RecordBatch[Molecule | Crystal])
+print(sorted({{type(r).__name__ for r in batch}}))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert result.stdout.splitlines() == ["['Crystal', 'Molecule']"] * 2

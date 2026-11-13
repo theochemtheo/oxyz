@@ -444,14 +444,17 @@ def read_batch[B: RecordBatch[Any]](  # noqa: PLR0913  the read/schema/projectio
         indices gathered in order (repeats allowed). Default: every frame.
     record
         A batch class to read into instead of a `Batch`: `RecordBatch[R]`
-        for a `Record` subclass `R`, or a declared subclass of it. Frames
-        are projected onto the record's fields as `read` with `record=R`
-        projects them, and only the selected frames are read. Under
-        `conformance="warn"` the batch holds the frames whose records
-        `read` returns for the same `index`. An `X | None` field is filled
-        where a frame lacks it (NaN for a float field, else its `fill=`,
-        which a batch read of an integer, bool or string `X | None` field
-        requires) and `present` says which frames carried it. The batch's
+        for a `Record` subclass `R` or a union of sibling ones, or a
+        declared subclass of it. Frames are projected onto the record's
+        fields as `read` with `record=R` projects them, and only the
+        selected frames are read. Under `conformance="warn"` the batch
+        holds the frames whose records `read` returns for the same `index`.
+        An `X | None` field is filled where a frame lacks it (NaN for a
+        float field, else its `fill=`, which a batch read of an integer,
+        bool or string `X | None` field requires) and `present` says which
+        frames carried it. With a union, a field some member lacks is
+        filled and masked the same way in that member's frames, and `tags`
+        gives each frame's member. The batch's
         arrays are writable and belong to it alone. An empty selection, or
         one whose frames all drop, gives a batch of no frames with the
         record's fields, where a read without `record` raises. Cannot be
@@ -487,11 +490,13 @@ def read_batch[B: RecordBatch[Any]](  # noqa: PLR0913  the read/schema/projectio
         On an out-of-range or negative explicit index.
     oxyz.SchemaError
         With `record`, as for `read`. Before reading: `schema` disagrees
-        with the record, or an integer, bool or string `X | None` field has
-        no `fill=`.
+        with the record, or an integer, bool or string field that is
+        `X | None`, or that some member of a union lacks, has no `fill=`.
     TypeError
-        `record` is not a batch class; a `Record` subclass `R` is named
-        here as `RecordBatch[R]`.
+        `record` is not the batch class of a `Record` subclass, or of a
+        union of sibling ones that agree on their shared keys and tell each
+        frame apart; a `Record` subclass `R` is named here as
+        `RecordBatch[R]`.
     ValueError
         `mode` is given with `record`.
 
@@ -698,7 +703,8 @@ def iread_batch[B: RecordBatch[Any]](  # noqa: C901, PLR0913, PLR0912  the keywo
         File path, an S3-compatible URL, or `"-"` for stdin.
     record
         A batch class to yield instances of instead of `Batch`es:
-        `RecordBatch[R]` or a declared subclass of it; see `read_batch`.
+        `RecordBatch[R]`, for a record or a union of sibling records, or a
+        declared subclass of it; see `read_batch`.
         Each batch holds the frames of its share of the file that `read`
         with `record=R` keeps.
     frames_per_batch
@@ -741,8 +747,8 @@ def iread_batch[B: RecordBatch[Any]](  # noqa: C901, PLR0913, PLR0912  the keywo
         On an invalid combination of options, or a strategy the source cannot
         support; `mode` given with `record`.
     oxyz.SchemaError
-        With `record`, as for `read_batch`. A disagreeing `schema`, or an
-        `X | None` field that needs a `fill=`, raises from this call, before
+        With `record`, as for `read_batch`. A disagreeing `schema`, or a
+        field that needs a `fill=`, raises from this call, before
         any frame is read.
     TypeError
         `record` is not a batch class; see `read_batch`.
@@ -1081,18 +1087,18 @@ def _resolve_projected_batch(
     if not survivors:
         return None
     batch = _batch_from_data(data, survivors)
-    if binding is not None and conformance == "warn":
-        # Under "required" and "strict" every deviation has already raised.
-        kept = binding.kept(batch, presence, reports, survived)
-        if kept is None:
-            return None
-        batch, presence = kept
-    if spec is not None and spec.frame is not None:
-        lattice = None if binding is None else binding.carried("Lattice", presence)
-        _enforce_frame_rule_on_batch(batch, spec.frame, conformance, lattice)
     if binding is None:
+        if spec is not None and spec.frame is not None:
+            _enforce_frame_rule_on_batch(batch, spec.frame, conformance)
         return batch
-    return binding.cast_batch(batch, presence, owned=True)
+    kept = binding.kept(batch, presence, reports, survived, conformance)
+    if kept is None:
+        return None
+    batch, presence, tags = kept
+    if spec is not None and spec.frame is not None:
+        lattice = binding.carried("Lattice", presence)
+        _enforce_frame_rule_on_batch(batch, spec.frame, conformance, lattice)
+    return binding.cast_batch(batch, presence, tags, owned=True)
 
 
 def _enforce_frame_rule_on_batch(

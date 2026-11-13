@@ -77,7 +77,31 @@ oxyz.read(p, record=r)                                           # error
 MaceSample(n_atoms=3, positions=a, forces=a, stress=None, cell=a, config_type="x")
 """
 
-BATCHES = """\
+UNIONS = """\
+class MadFrame(Record):
+    positions: Column[Array] = Column("pos", width=3)
+    energy: Meta[float] = Meta()
+
+
+class Molecule(MadFrame):
+    pass
+
+
+class Crystal(MadFrame):
+    cell: Cell[Array] = Cell()
+
+
+class Strained(MadFrame):
+    cell: Cell[Array] = Cell()
+    stress: Matrix3[Array] = Matrix3()
+
+
+type MadSample = Molecule | Crystal | Strained
+"""
+
+BATCHES = (
+    UNIONS
+    + """\
 class MaceBatch(RecordBatch[MaceSample]):
     positions: Array
     forces: Array
@@ -135,6 +159,29 @@ def batches(
     t: RecordBatch[Table],
     n: RecordBatch[NoCell],
 ) -> None:
+"""
+)
+
+MAD = "Molecule | Crystal | Strained"
+
+UNION_REVEALS = f"""\
+reveal_type(oxyz.read(p, record=Molecule | Crystal))  # T: list[Molecule | Crystal]
+reveal_type(oxyz.read(p, record=MadSample))           # T: list[{MAD}]
+reveal_type(oxyz.read(p, 0, record=MadSample))        # T: {MAD}
+reveal_type(oxyz.iread(p, record=MadSample))          # T: Iterator[{MAD}]
+match oxyz.read(p, 0, record=MadSample):
+    case Strained() as s:
+        reveal_type(s)                                # T: Strained
+    case Crystal() as c:
+        reveal_type(c)                                # T: Crystal & ~Strained
+    case Molecule() as m:
+        reveal_type(m)                       # T: Molecule & ~Strained & ~Crystal
+"""
+
+UNION_ERRORS = """\
+oxyz.read(p, record=int)                                         # error
+oxyz.read(p, record=Molecule | int)                              # error
+oxyz.iread(p, record=Molecule | int)                             # error
 """
 
 FLOAT = "ndarray[_AnyShape, dtype[float64]]"
@@ -196,6 +243,16 @@ BATCH_REVEALS = f"""\
     reveal_type(MaceBatch.spec())                              # T: SchemaSpec
     reveal_type(RecordBatch[MaceSample].from_batch(oxyz.read_batch(p)))  # T: {GENERIC}
     reveal_type(RecordBatch[MaceSample].spec())                # T: SchemaSpec
+    u = oxyz.read_batch(p, record=RecordBatch[MadSample])
+    reveal_type(u)                             # T: RecordBatch[MadSample]
+    reveal_type(oxyz.read_batch(p, record=RecordBatch[{MAD}]))  # T: RecordBatch[{MAD}]
+    reveal_type(u[0])                          # T: {MAD}
+    for s in u:
+        reveal_type(s)                         # T: {MAD}
+    reveal_type(u[Strained.stress])            # T: {FLOAT}
+    reveal_type(u.where(Strained))             # T: {BOOL}
+    reveal_type(u.tags)                        # T: {INT}
+    reveal_type(u.members)                     # T: tuple[type[Record], ...]
 """
 
 BATCH_ERRORS = """\
@@ -278,3 +335,11 @@ def test_batch_lookups_have_batch_form_types(tmp_path: Path):
 
 def test_misuse_of_a_batch_is_a_static_error(tmp_path: Path):
     check_fixture(tmp_path, BATCHES + BATCH_ERRORS)
+
+
+def test_a_union_reads_as_its_members(tmp_path: Path):
+    check_fixture(tmp_path, UNIONS + UNION_REVEALS)
+
+
+def test_a_union_with_a_non_record_is_a_static_error(tmp_path: Path):
+    check_fixture(tmp_path, UNIONS + UNION_ERRORS)

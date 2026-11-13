@@ -12,6 +12,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and `iread`, or batches as `RecordBatch[R]` on `read_batch` and
   `iread_batch`. Fields are statically typed, optional fields batch as filled
   arrays with `batch.present(...)`.
+- Unions of records: `record=A | B` reads each frame as the member whose fields
+  it carries; `RecordBatch[A | B]` holds every member's fields densely, with
+  `members`, `tags` and `where()`.
 - Schema rules take `absent: omit`: under project mode an absent optional
   field is left out of the frame instead of filled. Its type is exported as
   `oxyz.Absent`.
