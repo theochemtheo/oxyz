@@ -411,6 +411,39 @@ def test_omit_rule_on_metadata_with_mixed_presence_cannot_batch(tmp_path):
         oxyz.read_batch(path, schema=spec)
 
 
+@pytest.mark.parametrize("projected", [False, True])
+@pytest.mark.parametrize("streamed", [False, True])
+@pytest.mark.parametrize("threads", [1, None])
+def test_batch_contract_errors_name_the_file_frame(
+    tmp_path, projected, streamed, threads
+):
+    import oxyz
+
+    path = _stepped_file(
+        tmp_path, "energy=-1.5", "energy=-2.5", "energy=-3.5", "step=3"
+    )
+    schema = (
+        SchemaSpec(
+            metadata=(
+                MetadataRule("energy", Kind.REAL, required=False, absent="omit"),
+            ),
+            mode="project",
+        )
+        if projected
+        else None
+    )
+
+    def read_selected():
+        if streamed:
+            list(iread_batch(path, frames_per_batch=2, schema=schema, threads=threads))
+        else:
+            read_batch(path, [2, 3], schema=schema, threads=threads)
+
+    with pytest.raises(oxyz.ParseError, match=r"frame 3 .*energy") as caught:
+        read_selected()
+    assert caught.value.frame_index == 3
+
+
 LATTICE = SchemaSpec(
     metadata=(MetadataRule("Lattice", Kind.REAL, shape=(9,)),), mode="project"
 )

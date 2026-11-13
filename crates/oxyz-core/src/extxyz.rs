@@ -140,6 +140,14 @@ impl ExtxyzError {
         match self {
             ExtxyzError::InFrame { frame_index, .. }
             | ExtxyzError::FrameOutOfRange { frame_index, .. } => Some(*frame_index),
+            ExtxyzError::Batch(
+                BatchError::ColumnMismatch { frame, .. }
+                | BatchError::MissingColumn { frame, .. }
+                | BatchError::UnexpectedColumn { frame, .. }
+                | BatchError::MetadataMismatch { frame, .. }
+                | BatchError::MissingMetadata { frame, .. }
+                | BatchError::UnexpectedMetadata { frame, .. },
+            ) => Some(*frame),
             _ => None,
         }
     }
@@ -262,14 +270,14 @@ pub fn iter_batches_from<R: BufRead>(reader: R, frames_per_batch: usize) -> Resu
         return Err(BatchError::ZeroFramesPerBatch.into());
     }
     Ok(BatchIter {
-        frames: FrameIter::new(reader),
+        frames: FrameIter::new(reader).enumerate(),
         frames_per_batch,
     })
 }
 
 /// Chunks a [`FrameIter`] into [`Batch`]es; fused like the frame iterator.
 pub struct BatchIter<R: BufRead> {
-    frames: FrameIter<R>,
+    frames: std::iter::Enumerate<FrameIter<R>>,
     frames_per_batch: usize,
 }
 
@@ -281,12 +289,12 @@ impl<R: BufRead> Iterator for BatchIter<R> {
         for _ in 0..self.frames_per_batch {
             match self.frames.next() {
                 None => break,
-                Some(Ok(frame)) => {
-                    if let Err(error) = builder.push(frame) {
+                Some((frame_index, Ok(frame))) => {
+                    if let Err(error) = builder.push_at(frame, frame_index) {
                         return Some(Err(error.into()));
                     }
                 }
-                Some(Err(error)) => return Some(Err(error)),
+                Some((_, Err(error))) => return Some(Err(error)),
             }
         }
 
@@ -875,7 +883,7 @@ fn assemble_batch(
                 .remove(&index)
                 .expect("scanner yields every selected in-range frame")?,
         };
-        builder.push(frame)?;
+        builder.push_at(frame, index)?;
     }
     Ok(builder.finish()?)
 }
@@ -889,8 +897,8 @@ pub fn read_all_batch(path: impl AsRef<Path>) -> Result<Batch> {
 /// [`read_all_batch`] over an already-opened reader.
 pub fn read_all_batch_from<R: BufRead>(reader: R) -> Result<Batch> {
     let mut builder = BatchBuilder::new();
-    for frame in FrameIter::new(reader) {
-        builder.push(frame?)?;
+    for (index, frame) in FrameIter::new(reader).enumerate() {
+        builder.push_at(frame?, index)?;
     }
     finish_or_empty(builder)
 }
@@ -913,8 +921,11 @@ pub fn read_all_batch_parallel_from<R: BufRead + Send>(
     threads: Option<usize>,
 ) -> Result<Batch> {
     let mut builder = BatchBuilder::new();
-    for frame in read_frames_parallel_from(reader, threads)? {
-        builder.push(frame)?;
+    for (index, frame) in read_frames_parallel_from(reader, threads)?
+        .into_iter()
+        .enumerate()
+    {
+        builder.push_at(frame, index)?;
     }
     finish_or_empty(builder)
 }
@@ -965,7 +976,7 @@ impl ProjectedAccumulator {
         if projected.dropped {
             return Ok(());
         }
-        self.builder.push(projected.frame)?;
+        self.builder.push_at(projected.frame, index)?;
         self.survivors.push(index);
         self.presence.extend(projected.present);
         Ok(())
@@ -1218,7 +1229,7 @@ impl IndexedFrames {
     pub fn get_batch(&mut self, indices: &[usize]) -> Result<Batch> {
         let mut builder = BatchBuilder::new();
         for &frame_index in indices {
-            builder.push(self.get(frame_index)?)?;
+            builder.push_at(self.get(frame_index)?, frame_index)?;
         }
         Ok(builder.finish()?)
     }
@@ -1259,8 +1270,8 @@ impl IndexedFrames {
         }?;
 
         let mut builder = BatchBuilder::new();
-        for frame in frames {
-            builder.push(frame)?;
+        for (&(frame_index, _), frame) in entries.iter().zip(frames) {
+            builder.push_at(frame, frame_index)?;
         }
         Ok(builder.finish()?)
     }

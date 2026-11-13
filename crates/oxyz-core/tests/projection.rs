@@ -637,6 +637,31 @@ fn projected_batch_with_mixed_presence_of_an_omitted_field_names_the_frame() {
 }
 
 #[test]
+fn projected_batch_errors_use_selected_file_indices() {
+    let plan = ProjectionPlan {
+        columns: vec![
+            real_col_plan("pos", 3, true),
+            real_plan("charge", 1, false, None),
+        ],
+        ..Default::default()
+    };
+    for result in [
+        read_batch_projected_from(DRIFT.as_bytes(), &[2, 3], &plan),
+        read_batch_projected_parallel_from(DRIFT.as_bytes(), &[2, 3], None, &plan),
+    ] {
+        let err = match result {
+            Err(err) => err,
+            Ok(_) => panic!("mixed presence must fail"),
+        };
+        assert_eq!(err.frame_index(), Some(3));
+        assert!(matches!(
+            err,
+            ExtxyzError::Batch(BatchError::MissingColumn { frame: 3, name }) if name == "charge"
+        ));
+    }
+}
+
+#[test]
 fn projected_batch_with_mixed_presence_of_an_omitted_metadata_key_names_the_frame() {
     let text = "1\nProperties=species:S:1:pos:R:3 energy=-1.5\nH 0 0 0\n\
                 1\nProperties=species:S:1:pos:R:3\nH 0 0 0\n\

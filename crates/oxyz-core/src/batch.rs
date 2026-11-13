@@ -105,10 +105,13 @@ impl BatchBuilder {
     }
 
     pub fn push(&mut self, frame: Frame) -> Result<(), BatchError> {
-        let frame_pos = self.n_frames();
+        self.push_at(frame, self.n_frames())
+    }
+
+    pub(crate) fn push_at(&mut self, frame: Frame, frame_pos: usize) -> Result<(), BatchError> {
         let n_atoms = frame.n_atoms;
 
-        if frame_pos == 0 {
+        if self.n_frames() == 0 {
             self.columns = frame.columns;
             self.metadata = frame
                 .metadata
