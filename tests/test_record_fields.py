@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sys
 import types
 from typing import TYPE_CHECKING, Annotated, assert_type
 
@@ -193,15 +192,6 @@ def test_quantype_value_without_its_module_is_a_type_error():
         field_type(QUANTITY_FIELD, Meta())
 
 
-def test_quantype_value_is_delegated_to_the_quantype_module(monkeypatch):
-    sentinel = FieldType(Kind.REAL, "metadata")
-    module = types.SimpleNamespace(field_type=lambda annotation, spec: sentinel)
-    monkeypatch.setitem(sys.modules, "oxyz._record_quantype", module)
-    assert field_type(QUANTITY_FIELD, Meta()) is sentinel
-    with pytest.raises(TypeError, match="not a supported field type"):
-        field_type(Meta[complex], Meta())
-
-
 @pytest.mark.parametrize(
     ("field", "expected"),
     [
@@ -297,7 +287,7 @@ def test_cell_and_matrix3_batch_casts_are_views_in_ase_layout():
     assert m3s[1].tolist() == rows[1].reshape(3, 3, order="F").tolist()
 
 
-def test_two_dimensional_metadata_is_flattened_row_major_before_the_cast():
+def test_two_dimensional_metadata_is_flattened_and_a_matrix3_kept_as_written():
     square = np.arange(9.0).reshape(3, 3)
     flat = FieldType(Kind.REAL, "metadata", shape=(9,)).cast(square, owned=True)
     assert isinstance(flat, np.ndarray)
@@ -307,7 +297,7 @@ def test_two_dimensional_metadata_is_flattened_row_major_before_the_cast():
     assert isinstance(cell, np.ndarray)
     assert isinstance(m3, np.ndarray)
     assert cell.tolist() == square.tolist()
-    assert m3.tolist() == square.T.tolist()
+    assert m3.tolist() == square.tolist()
 
 
 def test_unowned_cast_is_read_only_and_promotes():

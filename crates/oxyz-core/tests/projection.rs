@@ -60,6 +60,7 @@ fn real_meta(name: &str, shape: Option<usize>, required: bool, fill: Option<f64>
         shape,
         required,
         fill: fill.map(Fill::Real),
+        column_major: false,
     }
 }
 
@@ -390,6 +391,7 @@ fn plain_meta(name: &str, kind: ColumnKind, shape: Option<usize>, fill: Fill) ->
         shape,
         required: false,
         fill: Some(fill),
+        column_major: false,
     }
 }
 
@@ -468,6 +470,7 @@ fn required_metadata_absent_without_fill_drops_frame() {
             shape: None,
             required: true,
             fill: None,
+            column_major: false,
         }],
         ..Default::default()
     };
@@ -733,6 +736,7 @@ fn plan_entry_meta(name: &str, kind: ColumnKind, shape: Option<usize>) -> PlanMe
         shape,
         required: false,
         fill: None,
+        column_major: false,
     }
 }
 
@@ -1015,4 +1019,55 @@ fn presence_flags_count_a_promoted_field_as_present() {
     let p = project_frame(&int_frame(), &real_plan_over_int_frame(true));
     assert!(p.deviations.is_empty());
     assert_eq!(p.present, vec![true, true, true]);
+}
+
+fn column_major_plan(promote_int: bool) -> ProjectionPlan {
+    let mut entry = plan_entry_meta("m", ColumnKind::Real, Some(6));
+    entry.column_major = true;
+    ProjectionPlan {
+        metadata: vec![entry],
+        promote_int,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_column_major_entry_flattens_a_2d_value_column_by_column() {
+    let real = frame_meta(
+        0,
+        vec![(
+            "m".into(),
+            Value::RealArray2D {
+                rows: 2,
+                cols: 3,
+                data: vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            },
+        )],
+    );
+    let int = frame_meta(
+        0,
+        vec![(
+            "m".into(),
+            Value::IntArray2D {
+                rows: 2,
+                cols: 3,
+                data: vec![1, 2, 3, 4, 5, 6],
+            },
+        )],
+    );
+    let expected = Value::RealArray(vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0]);
+    for (frame, promote_int) in [(real, false), (int, true)] {
+        let out = project_frame(&frame, &column_major_plan(promote_int));
+        assert!(out.deviations.is_empty());
+        assert_eq!(out.frame.metadata[0].1, expected);
+    }
+}
+
+#[test]
+fn a_column_major_entry_keeps_a_flat_value_as_written() {
+    let flat = Value::RealArray(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    let frame = frame_meta(0, vec![("m".into(), flat.clone())]);
+    let out = project_frame(&frame, &column_major_plan(false));
+    assert!(out.deviations.is_empty());
+    assert_eq!(out.frame.metadata[0].1, flat);
 }

@@ -286,8 +286,10 @@ def read[R: Record](  # noqa: PLR0913  the index/schema/projection/source option
         A `Record` subclass to read each frame into instead of a `Frame`.
         Each frame is projected onto the record's fields, as `Record.spec`
         describes them, and its arrays are writable and belong to that
-        record alone. A record read parses the whole file, as a schema
-        read does. Cannot be combined with `mode`. With `record`, `schema`
+        record alone. A record read checks only the frames `index`
+        selects. A non-negative integer or a bounded forward slice stops
+        reading after its last frame; any other `index` parses the whole
+        file. Cannot be combined with `mode`. With `record`, `schema`
         describes the dataset rather than reshaping it: its frame rule
         applies (one that requires `Lattice` needs a field that reads it,
         such as a `Cell`), and its rule for any key the record reads must
@@ -477,8 +479,9 @@ def iread[R: Record](  # noqa: PLR0913  the index/schema/projection/source optio
     record
         A `Record` subclass to yield instances of instead of frames: the
         records `read` returns for the same arguments, with the same frames
-        dropped. A forward slice streams and stops reading after its last
-        frame; any other `index` reads the whole file first.
+        dropped. A forward slice streams, and a non-negative integer reads
+        no further than its frame; a negative integer, a reverse slice or a
+        sequence reads the whole file first.
     schema
         A `SchemaSpec`, or a path to a schema file; see `read`.
     conformance
@@ -633,13 +636,13 @@ def _keep_projected(
     spec: SchemaSpec,
     indices: Iterable[int],
 ) -> list[Frame]:
-    """Apply projection policy to `(data, deviations)` items; return kept frames."""
+    """Apply projection policy to projected frames; return the kept ones."""
     from oxyz import _schema_match
     from oxyz._project import enforce_projection
 
     frame_compiled = _frame_rule_compiled(spec)
     out: list[Frame] = []
-    for index, (data, deviations) in zip(indices, raw, strict=True):
+    for index, (data, deviations, _) in zip(indices, raw, strict=True):
         keep = enforce_projection(deviations, conformance, index, dropped=data is None)
         if keep and data is not None:
             frame = _frame_from_data(data)
@@ -818,7 +821,7 @@ def _iter_all(
 
         projected = _stream_projected(path, plan, compression, member, storage_options)
         frame_compiled = _frame_rule_compiled(spec)
-        for index, (data, deviations) in enumerate(projected):
+        for index, (data, deviations, _) in enumerate(projected):
             keep = enforce_projection(
                 deviations, conformance, index, dropped=data is None
             )
@@ -853,59 +856,34 @@ def _iter_all(
         yield frame
 
 
-def _read_records(
-    path: str | Path,
-    binding: Binding,
-    *,
-    threads: int | None,
-    conformance: Conformance,
-    compression: Compression,
-    member: str | None,
-    storage_options: _remote.StorageOptions | None,
-) -> list[Record | None]:
-    """Read every frame into `binding`'s record, `None` where a frame was dropped."""
-    raw = _read_projected(
-        path, binding.frame_plan, threads, compression, member, storage_options
-    )
-    return list(_cast_projected(enumerate(raw), conformance, binding))
-
-
-def _stream_records(
-    path: str | Path,
-    binding: Binding,
-    *,
-    conformance: Conformance,
-    compression: Compression,
-    member: str | None,
-    storage_options: _remote.StorageOptions | None,
-) -> Iterator[Record | None]:
-    """Stream `_read_records`; the file closes when the iterator is dropped."""
-    projected = _stream_projected(
-        path, binding.frame_plan, compression, member, storage_options
-    )
-    yield from _cast_projected(enumerate(projected), conformance, binding)
-
-
 def _cast_projected(
     items: Iterable[tuple[int, ProjectedFrame]],
     conformance: Conformance,
     binding: Binding,
 ) -> Iterator[Record | None]:
-    """Apply projection policy to each frame and cast it; `None` where it dropped."""
+    """Apply projection policy to each frame and cast it; `None` where it dropped.
+
+    A field of the wrong kind drops the frame even where the field has a fill.
+    """
     from oxyz import _schema_match
-    from oxyz._project import enforce_projection
+    from oxyz._project import enforce_projection, mismatched
 
     frame_compiled = _frame_rule_compiled(binding.spec)
     build = binding.caster(conformance)
-    for index, (data, deviations) in items:
-        keep = enforce_projection(deviations, conformance, index, dropped=data is None)
+    for index, (data, deviations, present) in items:
+        dropped = data is None or mismatched(deviations)
+        keep = enforce_projection(deviations, conformance, index, dropped=dropped)
         if not keep or data is None:
             yield None
             continue
         frame = _frame_from_data(data)
         if frame_compiled is not None:
             _schema_match.enforce_frame(
-                frame, frame_compiled, conformance, index, frame_rule_only=True
+                binding.rule_frame(frame, present),
+                frame_compiled,
+                conformance,
+                index,
+                frame_rule_only=True,
             )
         yield build(frame, index)
 

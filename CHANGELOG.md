@@ -13,7 +13,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `iread_batch`. Fields are statically typed, optional fields batch as filled
   arrays with `batch.present(...)`.
 - Schema rules take `absent: omit`: under project mode an absent optional
-  field is left out of the frame instead of filled.
+  field is left out of the frame instead of filled. Its type is exported as
+  `oxyz.Absent`.
 
 ### Changed
 

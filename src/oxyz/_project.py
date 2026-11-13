@@ -216,7 +216,7 @@ def _plan_entry(rule: ColumnRule | MetadataRule, *, is_metadata: bool) -> tuple:
         )
     if is_metadata:
         assert isinstance(rule, MetadataRule)  # noqa: S101 — type-narrowing only
-        return (name, letter, tuple(rule.shape), rule.required, fill)
+        return (name, letter, tuple(rule.shape), rule.required, fill, False)
     assert isinstance(rule, ColumnRule)  # noqa: S101 — type-narrowing only
     return (name, letter, rule.width, rule.required, fill)
 
@@ -250,6 +250,11 @@ def _to_violation(deviation: DeviationData) -> Violation:
         expected=deviation["expected"],
         found=deviation["found"],
     )
+
+
+def mismatched(deviations: list[DeviationData]) -> bool:
+    """Report whether any deviation is a field of the wrong kind or shape."""
+    return any(deviation["deviation"] == "mismatch" for deviation in deviations)
 
 
 def enforce_projection(

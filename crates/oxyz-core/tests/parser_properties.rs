@@ -250,6 +250,7 @@ proptest! {
                     shape,
                     required,
                     fill: has_fill.then(|| fill_of(kind_of(kind_i))),
+                    column_major: false,
                 })
                 .collect(),
             promote_int,

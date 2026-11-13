@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-import importlib
 import math
 import types
 from dataclasses import dataclass
@@ -218,7 +217,8 @@ class FieldType:
     def _cast_array(self, raw: np.ndarray, *, owned: bool) -> np.ndarray:
         out = raw
         if self.axis == "metadata" and not self.batch_form and raw.ndim > 1:
-            out = out.reshape(-1)
+            # A nested 3x3 flattened by column is its flat Fortran-order form.
+            out = out.reshape(-1, order="F" if self.layout == "matrix3" else "C")
         if self.kind == Kind.REAL and out.dtype.kind in "iu":
             out = out.astype(np.float64)
         if self.layout == "cell":
@@ -430,12 +430,6 @@ def field_type(annotation: object, spec: FieldSpec[Any]) -> FieldType:
     (value,) = get_args(annotation)
     value, optional = _strip_none(_bare(value))
     found = _describe(value)
-    if found is None and _is_quantype(value):
-        try:
-            quantype_fields = importlib.import_module("oxyz._record_quantype")
-        except ImportError:
-            raise _unsupported(annotation, spec) from None
-        return quantype_fields.field_type(annotation, spec)
     if found is None or found not in _allowed_forms(spec):
         raise _unsupported(annotation, spec)
     kind, _ = found
@@ -503,11 +497,6 @@ def _strip_none(value: object) -> tuple[object, bool]:
     if len(rest) == 1 and len(members) == 2:  # noqa: PLR2004 — `X | None`
         return rest[0], True
     return value, False
-
-
-def _is_quantype(value: object) -> bool:
-    module = type(value).__module__
-    return module == "quantype" or module.startswith("quantype.")
 
 
 def _unsupported(annotation: object, spec: FieldSpec[Any]) -> TypeError:

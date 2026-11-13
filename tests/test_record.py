@@ -6,6 +6,7 @@ import inspect
 import math
 import pickle
 import re
+import warnings
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -416,9 +417,7 @@ def test_spec_is_the_project_mode_schema_and_round_trips():
         ),
         metadata=(
             MetadataRule("REF_energy", Kind.REAL),
-            MetadataRule(
-                "REF_stress", Kind.REAL, shape=(6,), required=False, absent="omit"
-            ),
+            MetadataRule("REF_stress", Kind.REAL, shape=(6,), required=False),
             MetadataRule("Lattice", Kind.REAL, shape=(9,)),
             MetadataRule("config_type", Kind.STR),
         ),
@@ -432,20 +431,31 @@ def test_spec_carries_fills():
         charge: Meta[int | None] = Meta(fill=0)
         cell: Cell[Array] = Cell(fill=0.0)
         virial: Matrix3[Array | None] = Matrix3()
+        label: Meta[str | None] = Meta()
 
     spec = Filled.spec()
     assert spec == SchemaSpec(
         mode="project",
         columns=(ColumnRule("labels", Kind.STR, required=False, fill="X"),),
         metadata=(
-            MetadataRule("charge", Kind.INT, required=False, fill=0, absent="omit"),
+            MetadataRule("charge", Kind.INT, required=False, fill=0),
             MetadataRule("Lattice", Kind.REAL, shape=(9,), required=False, fill=0.0),
-            MetadataRule(
-                "virial", Kind.REAL, shape=(9,), required=False, absent="omit"
-            ),
+            MetadataRule("virial", Kind.REAL, shape=(9,), required=False),
+            MetadataRule("label", Kind.STR, required=False, absent="omit"),
         ),
     )
     assert SchemaSpec.from_yaml(spec.to_yaml()) == spec
+
+
+def test_a_plain_batch_read_with_the_spec_fills_as_the_record_batch_does():
+    plain = oxyz.read_batch(MAD, schema=MadSample.spec())
+    typed = oxyz.read_batch(MAD, record=oxyz.RecordBatch[MadSample])
+    lattice, stress = (np.asarray(plain.metadata[k]) for k in ("Lattice", "stress"))
+    np.testing.assert_array_equal(plain.metadata["energy"], typed[MadSample.energy])
+    np.testing.assert_array_equal(lattice.reshape(-1, 3, 3), typed[MadSample.cell])
+    np.testing.assert_array_equal(
+        stress.reshape(-1, 3, 3).transpose(0, 2, 1), typed[MadSample.stress]
+    )
 
 
 def test_declaration_forms_give_identical_specs():
@@ -467,7 +477,7 @@ def test_declaration_forms_give_identical_specs():
 
     specs = [cls.spec() for cls in (Default, InAnnotated, ViaAlias, AliasAgain)]
     assert specs[0].metadata == (
-        MetadataRule("E", Kind.REAL, required=False, fill=0.0, absent="omit"),
+        MetadataRule("E", Kind.REAL, required=False, fill=0.0),
     )
     assert all(spec == specs[0] for spec in specs)
 
@@ -792,9 +802,9 @@ def test_iread_yields_what_read_returns():
     assert list(oxyz.iread(MAD, [150, 3], record=MadSample)) == [whole[150], whole[3]]
 
 
-def test_read_equals_from_frame_over_the_spec():
+def test_read_equals_from_frame():
     assert oxyz.read(MAD, record=MadSample) == [
-        MadSample.from_frame(f) for f in oxyz.read(MAD, schema=MadSample.spec())
+        MadSample.from_frame(f) for f in oxyz.read(MAD)
     ]
 
 
@@ -898,14 +908,26 @@ def test_matrix3_reads_in_fortran_order(tmp_path: Path):
     np.testing.assert_array_equal(r.stress, np.arange(1.0, 10.0).reshape(3, 3).T)
 
 
-def test_matrix3_reads_a_nested_3x3_transposed(tmp_path: Path):
-    path = frames_file(tmp_path / "nested.xyz", "stress=[[1,2,3],[4,5,6],[7,8,9]]")
-    transposed = [[1.0, 4.0, 7.0], [2.0, 5.0, 8.0], [3.0, 6.0, 9.0]]
+def test_matrix3_reads_a_nested_3x3_as_written(tmp_path: Path):
+    path = frames_file(
+        tmp_path / "nested.xyz",
+        "stress=[[1,2,3],[4,5,6],[7,8,9]]",
+        'stress="1 4 7 2 5 8 3 6 9"',
+    )
+    written = np.arange(1.0, 10.0).reshape(3, 3)
+    recs = oxyz.read(path, record=Stressed)
+    for r in [
+        *recs,
+        *oxyz.iread(path, record=Stressed),
+        oxyz.read(path, 0, record=Stressed),
+    ]:
+        np.testing.assert_array_equal(r.stress, written)
     np.testing.assert_array_equal(
-        oxyz.read(path, 0, record=Stressed).stress, transposed
+        Stressed.from_frame(oxyz.read(path, 0)).stress, written
     )
     batch = oxyz.read_batch(path, record=oxyz.RecordBatch[Stressed])
-    np.testing.assert_array_equal(batch[Stressed.stress][0], transposed)
+    np.testing.assert_array_equal(batch[Stressed.stress], [written, written])
+    assert list(batch) == recs
 
 
 def test_warn_drops_a_frame_missing_a_required_real_field(tmp_path: Path):
@@ -937,6 +959,32 @@ def test_warn_drops_a_wrong_kind_optional_field(tmp_path: Path):
     assert (e.value.frame_index, e.value.name) == (1, "stress")
 
 
+def test_warn_drops_a_wrong_kind_field_that_has_a_fill(tmp_path: Path):
+    class FilledEnergy(Record):
+        step: Meta[int] = Meta()
+        energy: Meta[float] = Meta(fill=0.0)
+
+    path = frames_file(
+        tmp_path / "filled.xyz", "step=0 energy=-1.5", "step=1 energy=abc", "step=2"
+    )
+    with pytest.warns(oxyz.SchemaWarning, match="energy"):
+        recs = oxyz.read(path, record=FilledEnergy, conformance="warn")
+    assert [(r.step, r.energy) for r in recs] == [(0, -1.5), (2, 0.0)]
+    with pytest.warns(oxyz.SchemaWarning, match="energy"):
+        assert list(oxyz.iread(path, record=FilledEnergy, conformance="warn")) == recs
+    with pytest.warns(oxyz.SchemaWarning, match="energy"):
+        batch = oxyz.read_batch(
+            path, record=oxyz.RecordBatch[FilledEnergy], conformance="warn"
+        )
+    assert list(batch) == recs
+    with pytest.raises(SchemaError) as e:
+        FilledEnergy.from_frame(oxyz.read(path, 1))
+    assert e.value.name == "energy"
+    with pytest.raises(SchemaError) as e:
+        oxyz.read(path, record=FilledEnergy)
+    assert (e.value.frame_index, e.value.name) == (1, "energy")
+
+
 def test_everything_dropped_is_an_empty_list(tmp_path: Path):
     path = frames_file(tmp_path / "none.xyz", "step=0", "step=1")
     with pytest.warns(oxyz.SchemaWarning):
@@ -958,11 +1006,11 @@ def test_an_int_index_counts_file_frames_and_a_dropped_one_raises(tmp_path: Path
         "step=3",
     )
     for index, step in ((0, 0), (2, 2), (-2, 2), (-4, 0)):
-        with pytest.warns(oxyz.SchemaWarning, match="energy"):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
             assert (
                 oxyz.read(path, index, record=Stepped, conformance="warn").step == step
             )
-        with pytest.warns(oxyz.SchemaWarning, match="energy"):
             (streamed,) = oxyz.iread(path, index, record=Stepped, conformance="warn")
         assert streamed.step == step
     for index in (3, -1):
@@ -977,21 +1025,70 @@ def test_an_int_index_counts_file_frames_and_a_dropped_one_raises(tmp_path: Path
         ):
             oxyz.iread(path, index, record=Stepped, conformance="warn")
     for index in (4, -5):
-        with pytest.warns(oxyz.SchemaWarning), pytest.raises(IndexError, match="range"):
+        with pytest.raises(
+            IndexError, match=r"frame -?\d out of range: file has 4 frames"
+        ):
             oxyz.read(path, index, record=Stepped, conformance="warn")
-    with pytest.warns(oxyz.SchemaWarning), pytest.raises(IndexError, match="range"):
+    with pytest.raises(IndexError, match="range"):
         oxyz.read(path, [0, 4], record=Stepped, conformance="warn")
 
 
-def test_a_forward_slice_stops_after_its_last_file_frame(tmp_path: Path):
+def test_a_record_read_checks_only_the_frames_it_selects(tmp_path: Path):
+    path = frames_file(
+        tmp_path / "bad_last.xyz", "step=0 energy=0.0", "step=1 energy=1.0", "step=2"
+    )
+    batch_record: Any = oxyz.RecordBatch[Stepped]
+    for index, steps in ((0, [0]), (-2, [1]), ("0:2", [0, 1]), ("1::-1", [1, 0])):
+        recs = oxyz.read(path, index, record=Stepped)
+        assert [r.step for r in (recs if isinstance(recs, list) else [recs])] == steps
+        assert [r.step for r in oxyz.iread(path, index, record=Stepped)] == steps
+        batch = oxyz.read_batch(path, index, record=batch_record)
+        assert batch[Stepped.step].tolist() == steps
+    assert [r.step for r in oxyz.read(path, [1, 0], record=Stepped)] == [1, 0]
+    for index in (2, -1, "1:", [2]):
+        with pytest.raises(SchemaError) as e:
+            oxyz.read(path, index, record=Stepped)
+        assert (e.value.frame_index, e.value.name) == (2, "energy")
+        with pytest.raises(SchemaError) as e:
+            list(oxyz.iread(path, index, record=Stepped))
+        assert (e.value.frame_index, e.value.name) == (2, "energy")
+
+
+def test_an_int_or_bounded_forward_slice_stops_after_its_last_frame(tmp_path: Path):
     path = frames_file(tmp_path / "tail.xyz", "step=0 energy=0.0", "step=1")
     with path.open("a") as f:
         f.write("not an atom count\n")
+    assert oxyz.read(path, 0, record=Stepped).step == 0
+    (streamed,) = oxyz.iread(path, 0, record=Stepped)
+    assert streamed.step == 0
     with pytest.warns(oxyz.SchemaWarning, match="energy"):
-        recs = list(oxyz.iread(path, "0:2", record=Stepped, conformance="warn"))
+        recs = oxyz.read(path, slice(0, 2), record=Stepped, conformance="warn")
     assert [r.step for r in recs] == [0]
-    with pytest.raises(oxyz.ParseError):
-        oxyz.read(path, "0:2", record=Stepped, conformance="warn")
+    with pytest.warns(oxyz.SchemaWarning, match="energy"):
+        assert list(oxyz.iread(path, "0:2", record=Stepped, conformance="warn")) == recs
+    for index in (-1, [0], "0:"):
+        with pytest.raises(oxyz.ParseError):
+            oxyz.read(path, index, record=Stepped, conformance="warn")
+
+
+def test_a_bad_index_string_fails_before_the_file_is_read(tmp_path: Path):
+    bad = unparseable(tmp_path)
+    for read in (oxyz.read, oxyz.iread):
+        with pytest.raises(ValueError, match="abc") as e:
+            read(bad, "abc", record=Stepped)
+        assert not isinstance(e.value, oxyz.ParseError)
+
+
+def test_a_repeated_index_gives_records_that_share_nothing():
+    for picked in (
+        oxyz.read(MACE, [0, 0], record=MaceSample),
+        list(oxyz.iread(MACE, [0, 0], record=MaceSample)),
+    ):
+        first, second = picked
+        assert first == second
+        assert first is not second
+        for name in ("positions", "forces", "cell"):
+            assert not np.shares_memory(getattr(first, name), getattr(second, name))
 
 
 def test_read_fields_are_writable_and_unshared():
@@ -1136,16 +1233,21 @@ def flat_and_square(tmp_path: Path) -> tuple[Path, Path]:
     return flat, square
 
 
-def test_two_d_metadata_reads_like_the_flat_one(tmp_path: Path):
+def test_two_d_metadata_reads_like_the_flat_one_but_a_matrix3_as_written(
+    tmp_path: Path,
+):
     flat, square = flat_and_square(tmp_path)
-    expected = oxyz.read(flat, 0, record=Squares)
+    from_flat = oxyz.read(flat, 0, record=Squares)
     np.testing.assert_array_equal(
-        expected.cell, [[5.0, 1.0, 0.0], [0.0, 5.0, 2.0], [0.0, 0.0, 5.0]]
+        from_flat.cell, [[5.0, 1.0, 0.0], [0.0, 5.0, 2.0], [0.0, 0.0, 5.0]]
     )
     np.testing.assert_array_equal(
-        expected.virial, [[1.5, 4.0, 7.0], [2.0, 5.0, 8.0], [3.0, 6.0, 9.0]]
+        from_flat.virial, [[1.5, 4.0, 7.0], [2.0, 5.0, 8.0], [3.0, 6.0, 9.0]]
     )
-    np.testing.assert_array_equal(expected.moments, np.arange(1.0, 10.0))
+    np.testing.assert_array_equal(from_flat.moments, np.arange(1.0, 10.0))
+    expected = dataclasses.replace(
+        from_flat, virial=np.array([[1.5, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
+    )
     assert oxyz.read(square, 0, record=Squares) == expected
     assert list(oxyz.iread(square, record=Squares)) == [expected]
     inferred = oxyz.infer_schema(square).to_spec()
@@ -1153,10 +1255,10 @@ def test_two_d_metadata_reads_like_the_flat_one(tmp_path: Path):
     assert oxyz.read(square, record=Squares, schema=inferred) == [expected]
 
 
-def test_two_d_metadata_with_a_frame_rule_reads_like_the_flat_one(tmp_path: Path):
-    flat, square = flat_and_square(tmp_path)
+def test_two_d_metadata_with_a_frame_rule_reads_as_without_one(tmp_path: Path):
+    _, square = flat_and_square(tmp_path)
     rule = SchemaSpec(frame=FrameRule(n_atoms_max=5))
-    expected = oxyz.read(flat, record=Squares, schema=rule)
+    expected = oxyz.read(square, record=Squares)
     assert len(expected) == 1
     assert oxyz.read(square, record=Squares, schema=rule) == expected
     assert list(oxyz.iread(square, record=Squares, schema=rule)) == expected
@@ -1201,6 +1303,15 @@ def test_a_satisfied_frame_rule_under_strict_reports_nothing(
         == recs
     )
     assert not recwarn.list
+
+
+def test_a_schema_built_with_lists_binds(tmp_path: Path):
+    rules: Any = [MetadataRule("energy", Kind.REAL)]
+    spec = SchemaSpec(metadata=rules, frame=FrameRule(n_atoms_max=1))
+    path = frames_file(tmp_path / "one.xyz", "step=0 energy=1.0")
+    assert oxyz.read(path, 0, record=Stepped, schema=spec).energy == 1.0
+    batch_record: Any = oxyz.RecordBatch[Stepped]
+    assert len(oxyz.read_batch(path, record=batch_record, schema=spec)) == 1
 
 
 def test_bind_is_cached(tmp_path: Path):
@@ -1253,6 +1364,7 @@ def test_binding_plans_follow_the_field_table():
     columns, metadata, _ = binding.frame_plan
     assert [e[4] for e in columns] == [None, None, None]
     assert [e[4] for e in metadata] == [None, 0, None, None, 0.0]
+    assert [e[5] for e in metadata] == [False, False, False, True, False]
     assert without_fills(binding.batch_plan) == (*shape, True)
     columns, metadata, _ = binding.batch_plan
     assert [e[4] for e in columns[:2]] == [None, "X"]
@@ -1266,11 +1378,13 @@ def test_binding_plans_follow_the_field_table():
         ("spin", 3),
         ("stress", 4),
     )
-    assert binding.omitted == {
-        ("column", "labels"),
-        ("column", "charges"),
-        ("metadata", "spin"),
-        ("metadata", "stress"),
+    assert binding.reported == {
+        "labels": 0,
+        "charges": 1,
+        "charge": 2,
+        "spin": 3,
+        "stress": 4,
+        "cell": 5,
     }
 
 
@@ -1285,7 +1399,7 @@ def test_batch_plan_needs_a_fill_for_an_optional_non_real_field():
         count: Meta[int | None] = Meta()
 
     binding = bind(Counted)
-    assert binding.frame_plan[1] == [("count", "I", (), False, None)]
+    assert binding.frame_plan[1] == [("count", "I", (), False, None, False)]
     with pytest.raises(SchemaError, match=r"Counted\.count") as e:
         _ = binding.batch_plan
     assert e.value.name == "count"

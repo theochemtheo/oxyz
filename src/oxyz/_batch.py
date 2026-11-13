@@ -1091,9 +1091,7 @@ def _resolve_projected_batch(
     batch = _batch_from_data(data, survivors)
     if binding is not None:
         # Under "required" and "strict" every deviation has already raised.
-        keep = (
-            _kept(reports, survived, binding.omitted) if conformance == "warn" else None
-        )
+        keep = _kept(reports, survived) if conformance == "warn" else None
         if keep is not None:
             if not keep.any():
                 return None
@@ -1108,24 +1106,17 @@ def _resolve_projected_batch(
 
 
 def _kept(
-    reports: list[tuple[int, list[DeviationData]]],
-    survived: set[int],
-    omitted: frozenset[tuple[str, str]],
+    reports: list[tuple[int, list[DeviationData]]], survived: set[int]
 ) -> np.ndarray | None:
     """Which survivors a record read keeps, or `None` for all of them.
 
-    The batch plan fills an `X | None` field found with the wrong kind, so
-    the core keeps that frame; the frame plan omits the field, so a frame
-    read drops it.
+    The core keeps a frame whose field of the wrong kind it can fill; a
+    record read drops it.
     """
+    from oxyz._project import mismatched
+
     keep = [
-        not any(
-            deviation["deviation"] == "mismatch"
-            and (deviation["axis"], deviation["name"]) in omitted
-            for deviation in deviations
-        )
-        for index, deviations in reports
-        if index in survived
+        not mismatched(deviations) for index, deviations in reports if index in survived
     ]
     return None if all(keep) else np.array(keep)
 

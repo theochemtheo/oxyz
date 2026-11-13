@@ -907,7 +907,8 @@ def test_two_d_metadata_batch_rows_equal_the_frame_read(tmp_path: Path):
     assert [r.names for r in recs] == [["a", "b", "c", "d"], ["e", "f", "g", "h"]]
     np.testing.assert_array_equal(b.cell[0], [[5, 1, 0], [0, 5, 2], [0, 0, 5]])
     np.testing.assert_array_equal(
-        b.virial[0], [[1.5, 4.0, 7.0], [2.0, 5.0, 8.0], [3.0, 6.0, 9.0]]
+        b.virial,
+        [[[1.5, 2, 3], [4, 5, 6], [7, 8, 9]], [[2.5, 4, 7], [2, 5, 8], [3, 6, 9]]],
     )
     np.testing.assert_array_equal(b.moments[0], np.arange(1.0, 10.0))
     for kwargs in SEQUENTIAL_AND_PLANNED:
@@ -1277,6 +1278,34 @@ def test_a_lattice_frame_rule_on_a_field_keyed_lattice_checks_each_frame():
         assert (e.value.frame_index, e.value.name) == (0, "Lattice")
     whole = oxyz.read_batch(MAD, record=target)
     assert 0 < whole.present("lattice").sum() < len(whole)
+
+
+def test_a_lattice_frame_rule_reads_lattice_from_the_file_not_the_fill(
+    tmp_path: Path,
+):
+    class FilledCell(Record):
+        energy: Meta[float] = Meta()
+        cell: Cell[Array] = Cell(fill=0.0)
+
+    path = tmp_path / "half_latticed.xyz"
+    path.write_text(
+        "1\nProperties=species:S:1:pos:R:3 energy=0.0 "
+        'Lattice="1 0 0 0 1 0 0 0 1"\nH 0 0 0\n'
+        "1\nProperties=species:S:1:pos:R:3 energy=1.0\nH 0 0 0\n"
+    )
+    target: Any = RecordBatch[FilledCell]
+    reads = (
+        lambda **kw: oxyz.read(path, record=FilledCell, **kw),
+        lambda **kw: list(oxyz.iread(path, record=FilledCell, **kw)),
+        lambda **kw: list(oxyz.read_batch(path, record=target, **kw)),
+    )
+    for read in reads:
+        with pytest.raises(SchemaError) as e:
+            read(schema=LATTICE_REQUIRED)
+        assert (e.value.frame_index, e.value.name) == (1, "Lattice")
+        with pytest.warns(oxyz.SchemaWarning, match="Lattice"):
+            recs = read(schema=LATTICE_REQUIRED, conformance="warn")
+        assert [r.energy for r in recs] == [0.0, 1.0]
 
 
 def test_an_atom_count_frame_rule_on_a_batch_read_raises_with_context():

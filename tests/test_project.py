@@ -47,8 +47,9 @@ def test_project_plan_metadata_shape_crosses_as_tuple():
     plan = compile_projection(spec, "project")
     assert plan is not None
     _columns, metadata, _promote = plan
-    name, letter, shape, required, _fill = metadata[0]
+    name, letter, shape, required, _fill, column_major = metadata[0]
     assert (name, letter, shape, required) == ("stress", "R", (9,), True)
+    assert column_major is False
 
 
 def test_project_plan_optional_int_without_fill_is_spec_error():

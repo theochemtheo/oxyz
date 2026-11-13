@@ -291,16 +291,15 @@ batch["energy"]                                       # the same array, typed An
 Each field is declared with a specifier, which says where the value lives:
 `Column` for a per-atom column, `Meta` for a comment-line entry, `Cell` for the
 3x3 cell read from `Lattice`, and `Matrix3` for another 3x3 entry such as
-`stress` or `virial`. `Matrix3` reads a value written as a nested 3x3 as its
-nine values in the order written, then lays them out in Fortran order as for
-the flat form, so it comes out transposed; read such a key with
-`Meta(shape=(9,))` and reshape it. The annotation is the specifier subscripted
-with the value type, `Meta[float]`. The specifier is either the default value
-(`energy: Meta[float] = Meta("REF_energy")`) or the second argument of
-`Annotated`, which lets one alias be shared by several records. The value types
-are `float`, `int`, `bool`, `str`, `NDArray[np.float64]`, `NDArray[np.int64]`,
-`NDArray[np.bool_]`, `list[str]`, and `list[list[str]]` for a string column
-wider than 1, each with `| None` for an optional field.
+`stress` or `virial`. `Matrix3` reads nine flat values in Fortran order, as
+ASE does, and a value written as a nested 3x3 as written. The annotation is
+the specifier subscripted with the value type, `Meta[float]`. The specifier is
+either the default value (`energy: Meta[float] = Meta("REF_energy")`) or the
+second argument of `Annotated`, which lets one alias be shared by several
+records. The value types are `float`, `int`, `bool`, `str`,
+`NDArray[np.float64]`, `NDArray[np.int64]`, `NDArray[np.bool_]`, `list[str]`,
+and `list[list[str]]` for a string column wider than 1, each with `| None` for
+an optional field.
 `Column(width=3)` and `Meta(shape=(6,))` give the width and shape of an array.
 Anything else raises `TypeError` when the class is defined, naming the field.
 A key that a schema would read as a pattern (`*`, `?`, `[`, or a `re:` prefix)
@@ -331,8 +330,9 @@ frame lacked it, and `batch.present(key)` is the mask of frames that carried
 it. `batch[i]` consults the mask, so it gives `None` for an absent field and
 keeps a NaN that was in the file. Under `conformance="warn"`, a frame missing a
 required field, or carrying a field of the wrong kind, is dropped with a
-warning. An index still counts the file's frames, so a selection can give
-fewer records than it names, and `read` and `read_batch` keep the same frames.
+warning, even where the field has a `fill`. An index still counts the file's
+frames, so a selection can give fewer records than it names, and `read` and
+`read_batch` check only the frames selected and keep the same ones.
 
 To a type checker, `RecordBatch[Sample]` has no field attributes, though it
 has them at runtime. To get them statically, declare a subclass that lists each
@@ -357,11 +357,14 @@ and per-atom fields are concatenated, as in `Batch`. A batch indexes as
 list or a mask gives a copy.
 
 `Sample.spec()` is the `SchemaSpec` that describes the fields, so a record can
-be written out as YAML and passed as `schema=`. A plain read with it is not the
-record read: its rule for an `X | None` field is `absent: omit`, so
-`read_batch("mixed.extxyz", schema=Sample.spec())` raises on frames that differ
-in `forces`, and under `conformance="warn"` a frame missing `energy` is kept
-with NaN where the record read drops it. Passing `schema=` along
+be written out as YAML and passed as `schema=`. Its rules fill an optional
+field as a record batch does, so `read_batch("mixed.extxyz",
+schema=Sample.spec())` gives NaN where a frame lacks `forces`. A plain read
+with it is not the record read, though: a frame read fills where the record has
+`None`, and under `conformance="warn"` a frame missing `energy` is kept with
+NaN where the record read drops it. An `X | None` field of a kind other than
+float, declared without a `fill`, has `absent: omit`, and a batch read raises
+on frames that differ in it. Passing `schema=` along
 with `record=` applies the schema's frame rule and checks that its rule for each
 key the record reads agrees with the field; the record's own fields do the
 projecting. A frame rule that requires `Lattice` needs a field that reads it,

@@ -200,11 +200,11 @@ class Matrix3[T](FieldSpec[T]):
     """Declare a per-frame 3x3 matrix, read from a 9-value entry.
 
     The annotation is `Matrix3[NDArray[np.float64]]`, optionally `| None`.
-    The nine values are read in Fortran order, as ASE reads `stress` and
+    Nine flat values are read in Fortran order, as ASE reads `stress` and
     `virial`; `Cell` reads `Lattice` in C order. A value written as a nested
-    3x3 is read as its nine values in the order written, then laid out as
-    the flat form is, so it comes out transposed; for such a key, declare
-    `Meta(shape=(9,))` and reshape the value.
+    3x3 is read as written. `from_batch` cannot tell the two apart, as a
+    `Batch` flattens a nested 3x3 row by row, and reads it as nine flat
+    values.
 
     Parameters
     ----------
@@ -542,17 +542,19 @@ class Record(metaclass=RecordMeta):
         """Return the project-mode `SchemaSpec` that describes this record's fields.
 
         One rule per field, in declaration order: a field that is neither
-        `X | None` nor given a fill is required, one with `fill=` is
-        optional with that fill, and an `X | None` field is optional with
-        `absent="omit"`. The record's `strict` setting is not part of the
-        spec.
+        `X | None` nor given a fill is required, and any other field is
+        optional and filled as a record batch fills it: with its `fill=`,
+        or NaN for a float. An `X | None` field of another kind declared
+        without a fill has `absent="omit"`. The record's `strict` setting is
+        not part of the spec.
 
-        A plain read with this spec is not a record read. Under
-        `conformance="warn"` it fills a required float field that a frame
-        lacks with NaN and keeps the frame, where a record read drops it;
-        and a batch read with it raises when frames differ in an `X | None`
-        field.
+        A plain read with this spec is not a record read. It fills where a
+        record has `None`; under `conformance="warn"` it keeps a frame that
+        lacks a required float field, filled with NaN, where a record read
+        drops it; and a batch read with it raises when frames differ in an
+        omitted field.
         """
+        from oxyz._schema import Kind
         from oxyz._schema_spec import ColumnRule, MetadataRule, SchemaSpec
 
         columns: list[ColumnRule] = []
@@ -560,7 +562,8 @@ class Record(metaclass=RecordMeta):
         for _, field, key in cls.__record_fields__:
             assert key.key is not None  # noqa: S101 — type-narrowing only
             required = not field.optional and key.fill is None
-            absent: Absent = "omit" if field.optional else "fill"
+            omits = field.optional and key.fill is None and field.kind != Kind.REAL
+            absent: Absent = "omit" if omits else "fill"
             if field.axis == "column":
                 rule = ColumnRule(
                     key.key,

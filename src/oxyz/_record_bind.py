@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, cast, final, get_origin
 
 import numpy as np
 
+from oxyz._frames import Frame
 from oxyz._record import Record
 from oxyz._record_batch import RecordBatch, batch_class
 from oxyz._schema import KIND_TO_LETTER, Kind, column_sig, metadata_sig
@@ -17,13 +18,12 @@ from oxyz._schema_match import SchemaError
 from oxyz._schema_spec import SchemaSpec
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping, Sequence
     from pathlib import Path
 
     import numpy.typing as npt
 
     from oxyz._batch import Batch
-    from oxyz._frames import Frame
     from oxyz._record import FieldSpec, Fill
     from oxyz._record_fields import FieldType
     from oxyz._rust import ProjectionPlan
@@ -46,8 +46,8 @@ class Binding:
     spec: SchemaSpec
     frame_plan: ProjectionPlan
     fields: _Fields
+    reported: Mapping[str, int]
     optional: tuple[tuple[str, int], ...]
-    omitted: frozenset[tuple[str, str]]
     _build: Callable[..., Record] = dataclasses.field(repr=False, compare=False)
 
     @property
@@ -114,17 +114,25 @@ class Binding:
     def carried(
         self, key: str, present: npt.NDArray[np.bool_]
     ) -> npt.NDArray[np.bool_]:
-        """Return which frames of a projected batch carry metadata `key`.
+        """Return which projected frames carried metadata `key` in the file.
 
-        `present` is the core's presence report for those frames.
+        `present` is the core's presence report: a row per frame, or one
+        frame's row alone.
         """
-        columns = dict(self.optional)
         for name, field, spec in self.fields:
             if field.axis == "metadata" and spec.key == key:
-                if name in columns:
-                    return present[:, columns[name]]
-                return np.ones(len(present), dtype=np.bool_)
-        return np.zeros(len(present), dtype=np.bool_)
+                if name in self.reported:
+                    return present[..., self.reported[name]]
+                return np.ones(present.shape[:-1], dtype=np.bool_)
+        return np.zeros(present.shape[:-1], dtype=np.bool_)
+
+    def rule_frame(self, frame: Frame, present: Sequence[bool]) -> Frame:
+        """Return `frame` as a frame rule sees it: without a filled `Lattice`."""
+        if "Lattice" not in frame.metadata or self.carried(
+            "Lattice", np.asarray(present, dtype=np.bool_)
+        ):
+            return frame
+        return Frame(n_atoms=frame.n_atoms, columns={}, metadata={})
 
 
 def bind(
@@ -160,7 +168,18 @@ def bind(
         target = _record_class(target)
     if schema is not None and not isinstance(schema, SchemaSpec):
         schema = SchemaSpec.from_file(schema)
+    if schema is not None and not _hashable(schema):
+        # A spec built with lists reads like one built with tuples; it skips the cache.
+        return _bind.__wrapped__(target, schema)
     return _bind(target, schema)
+
+
+def _hashable(value: object) -> bool:
+    try:
+        hash(value)
+    except TypeError:
+        return False
+    return True
 
 
 def _names_batch(target: object) -> bool:
@@ -208,34 +227,33 @@ def _bind(target: type, schema: SchemaSpec | None) -> Binding:
         _check_lattice_read(record, fields, schema)
         if schema.frame is not None:
             spec = dataclasses.replace(spec, frame=schema.frame)
+    reported = _reported(fields)
     return Binding(
         target=target,
         record=record,
         spec=spec,
         frame_plan=_plan(record, fields, promote=not strict, batch=False),
         fields=fields,
-        optional=_reported(fields),
-        omitted=frozenset(
-            (field.axis, _key(key)) for _, field, key in fields if field.optional
+        reported=reported,
+        optional=tuple(
+            (name, reported[name]) for name, field, _ in fields if field.optional
         ),
         _build=_builder(record, fields, strict=strict),
     )
 
 
-def _reported(fields: _Fields) -> tuple[tuple[str, int], ...]:
-    """Each `X | None` field and its column in the core's presence report.
+def _reported(fields: _Fields) -> dict[str, int]:
+    """Each field with a column in the core's presence report, and that column.
 
     The report has a column per optional plan entry, columns then metadata.
     """
     entries = [
-        (name, field.optional)
+        name
         for axis in ("column", "metadata")
         for name, field, spec in fields
         if field.axis == axis and (field.optional or spec.fill is not None)
     ]
-    return tuple(
-        (name, column) for column, (name, omits) in enumerate(entries) if omits
-    )
+    return {name: column for column, name in enumerate(entries)}
 
 
 def _key(spec: FieldSpec[Any]) -> str:
@@ -307,7 +325,10 @@ def _plan(
         if field.axis == "column":
             columns.append((_key(spec), letter, field.width, required, fill))
         else:
-            metadata.append((_key(spec), letter, field.shape, required, fill))
+            column_major = field.layout == "matrix3"
+            metadata.append(
+                (_key(spec), letter, field.shape, required, fill, column_major)
+            )
     return columns, metadata, promote
 
 

@@ -40,6 +40,8 @@ pub struct PlanMetadata {
     pub required: bool,
     /// As for [`PlanColumn::fill`].
     pub fill: Option<Fill>,
+    /// Flatten a 2-D value column by column rather than row by row.
+    pub column_major: bool,
 }
 
 /// The fixed shape to project each frame onto, in declaration order.
@@ -183,10 +185,21 @@ fn project_metadata(
         }
         match lookup {
             Lookup::Conforming(value) => {
-                metadata.push((CompactString::from(pm.name.as_str()), value.clone()));
+                let value = if pm.column_major {
+                    transposed(value)
+                } else {
+                    value.clone()
+                };
+                metadata.push((CompactString::from(pm.name.as_str()), value));
             }
             Lookup::Promotable(value) => {
-                metadata.push((CompactString::from(pm.name.as_str()), promote_value(value)));
+                let value = promote_value(value);
+                let value = if pm.column_major {
+                    transposed(&value)
+                } else {
+                    value
+                };
+                metadata.push((CompactString::from(pm.name.as_str()), value));
             }
             found => {
                 let mismatched = matches!(found, Lookup::Mismatch(_));
@@ -304,6 +317,25 @@ fn promote_column(column: &Column) -> Column {
         name: column.name.clone(),
         width: column.width,
         data,
+    }
+}
+
+/// `data`, a `rows` by `cols` array in row-major order, read column by column.
+fn by_column<T: Clone>(rows: usize, cols: usize, data: &[T]) -> Vec<T> {
+    (0..cols)
+        .flat_map(|c| (0..rows).map(move |r| r * cols + c))
+        .map(|i| data[i].clone())
+        .collect()
+}
+
+/// A 2-D value flattened column by column; any other value as it is.
+fn transposed(value: &Value) -> Value {
+    match value {
+        Value::RealArray2D { rows, cols, data } => Value::RealArray(by_column(*rows, *cols, data)),
+        Value::IntArray2D { rows, cols, data } => Value::IntArray(by_column(*rows, *cols, data)),
+        Value::BoolArray2D { rows, cols, data } => Value::BoolArray(by_column(*rows, *cols, data)),
+        Value::StrArray2D { rows, cols, data } => Value::StrArray(by_column(*rows, *cols, data)),
+        other => other.clone(),
     }
 }
 
