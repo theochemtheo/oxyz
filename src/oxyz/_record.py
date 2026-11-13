@@ -66,6 +66,8 @@ class FieldSpec[T]:
         Shape of a per-frame value; `()` for a per-atom field or a scalar.
     fill : float, int, bool, str or None
         Value used where the key is absent from a frame.
+        For an `X | None` field, used only in batches; an individual record
+        gets `None`.
     name : str or None
         The field name, once bound.
     owner : type or None
@@ -132,6 +134,8 @@ class Column[T](FieldSpec[T]):
         Values per atom. Above 1, an array value has shape `(n_atoms, width)`.
     fill : float, int, bool or str, optional
         Value used where the column is absent. Must match the field's kind.
+        For an `X | None` field, used only in batches; an individual record
+        gets `None`.
     """
 
     __slots__ = ()
@@ -159,6 +163,8 @@ class Meta[T](FieldSpec[T]):
         `()` for a scalar, `(k,)` for an array of `k` values.
     fill : float, int, bool or str, optional
         Value used where the entry is absent. Must match the field's kind.
+        For an `X | None` field, used only in batches; an individual record
+        gets `None`.
     """
 
     __slots__ = ()
@@ -186,6 +192,8 @@ class Cell[T](FieldSpec[T]):
     fill : float, optional
         Value given to all nine entries where `Lattice` is absent; `0.0`
         matches `Frame.cell`.
+        For an optional field, used only in batches; an individual record
+        gets `None`.
     """
 
     __slots__ = ()
@@ -212,6 +220,8 @@ class Matrix3[T](FieldSpec[T]):
         Entry key in the comment line. Defaults to the field name.
     fill : float, optional
         Value given to all nine entries where the entry is absent.
+        For an optional field, used only in batches; an individual record
+        gets `None`.
     """
 
     __slots__ = ()
@@ -442,6 +452,9 @@ class Record(metaclass=RecordMeta):
             positions: Column[NDArray[np.float64]] = Column("pos", width=3)
             forces: Annotated[Column[NDArray[np.float64]], Column(width=3)]
             energy: Meta[float] = Meta("REF_energy")
+
+    Keep aliases used by postponed annotations at module scope;
+    function-local names cannot be resolved when the class is defined.
 
     The `Annotated` form allows an alias shared across records. Every
     field, and `n_atoms`, is a required keyword argument of `__init__`,
