@@ -30,6 +30,10 @@ The same single pass can also tell you the dataset's schema: which columns
 and metadata keys appear, with what types and shapes, and how consistently.
 That is the part of dataset ingestion that usually goes unchecked.
 
+For datasets with known fields, [typed records](#typed-records) give named,
+statically typed attributes instead of dictionary lookups — think
+Pydantic/SQLAlchemy.
+
 ## Quickstart
 
 ```sh
@@ -251,73 +255,62 @@ Validate mode is unchanged.
 
 ## Typed records
 
-A `Record` is a class that names the fields you want from a frame, with their
-types. `read(..., record=Sample)` returns `Sample` objects instead of
-`Frame`s, and a type checker knows the type of every attribute. A
-`RecordBatch[Sample]` is the batched form, read by `read_batch`.
+Use a `Record` when your code expects known fields and should access them as
+statically typed attributes. A `Frame` keeps arbitrary file fields; a record
+keeps just the fields you declare, projecting and checking them as it reads.
+
+The declaration style combines Pydantic's annotated, validated models with
+SQLAlchemy's typed field declarations. Like SQLAlchemy's `Mapped[T]`,
+`Meta[T]` gives a value on an instance and a typed field key on the class:
+`sample.energy` is a `float`, while `Sample.energy` selects the batch's energy
+array.
 
 ```python
-from typing import Annotated
-
 import numpy as np
 import numpy.typing as npt
 import oxyz
-from oxyz import Cell, Column, Meta, Record, RecordBatch
+from oxyz import Column, Meta, Record, RecordBatch
 
 type Array = npt.NDArray[np.float64]
-type Forces = Annotated[Column[Array | None], Column(width=3)]
 
 
 class Sample(Record):
     positions: Column[Array] = Column("pos", width=3)
-    forces: Forces                       # optional: None where a frame has none
-    energy: Meta[float] = Meta()         # the key defaults to the field name
-    cell: Cell[Array] = Cell()           # 3x3, from Lattice
-    species: Column[list[str]] = Column()
+    energy: Meta[float] = Meta()
 
 
-samples = oxyz.read("mixed.extxyz", record=Sample)    # list[Sample]
-samples[0].energy                                     # float
-samples[2].forces                                     # None
-
-batch = oxyz.read_batch("mixed.extxyz", record=RecordBatch[Sample])
-batch[2]                                              # Sample
-batch[Sample.energy]                                  # NDArray[float64], shape (3,)
-batch[Sample.forces]                                  # NDArray[float64], NaN where absent
-batch.present(Sample.forces)                          # array([True, True, False])
-batch["energy"]                                       # the same array, typed Any
+samples = oxyz.read("mixed.extxyz", record=Sample)  # list[Sample]
+samples[0].positions                               # NDArray[float64]
+samples[0].energy                                  # float
 ```
 
-Each field is declared with a specifier, which says where the value lives:
-`Column` for a per-atom column, `Meta` for a comment-line entry, `Cell` for the
-3x3 cell read from `Lattice`, and `Matrix3` for another 3x3 entry such as
-`stress` or `virial`. `Matrix3` reads nine flat values in Fortran order, as
-ASE does, and a value written as a nested 3x3 as written. The annotation is
-the specifier subscripted with the value type, `Meta[float]`. The specifier is
-either the default value (`energy: Meta[float] = Meta("REF_energy")`) or the
-second argument of `Annotated`, which lets one alias be shared by several
-records. The value types are `float`, `int`, `bool`, `str`,
-`NDArray[np.float64]`, `NDArray[np.int64]`, `NDArray[np.bool_]`, `list[str]`,
-and `list[list[str]]` for a string column wider than 1, each with `| None` for
-an optional field.
-`Column(width=3)` and `Meta(shape=(6,))` give the width and shape of an array.
-Anything else raises `TypeError` when the class is defined, naming the field.
-A key that a schema would read as a pattern (`*`, `?`, `[`, or a `re:` prefix)
-is rejected the same way.
+Field names are independent of file keys: `positions` reads `pos`, while a
+specifier without a key defaults to the field name. `Column` reads a per-atom
+column and `Meta` a comment-line entry. The annotation wraps the value type;
+`Column(width=3)` and `Meta(shape=(6,))` give an array's width or shape.
+Scalars use `float`, `int`, `bool` or `str`; arrays use float64, int64 or bool
+numpy dtypes, and string arrays use lists.
 
-ty does not apply class-based field specifiers. A field declared in the default
-form is therefore typed as optional in the constructor under ty, though it is
-required at runtime and mypy treats it as required. The `Annotated` form is
-required under both. Attribute types are right under ty, mypy and pyright.
+`Cell` reads `Lattice` as a 3x3 cell in ASE's row-vector convention. `Matrix3`
+reads other 3x3 entries such as `stress` or `virial`: flat values use Fortran
+order, and a nested 3x3 is read as written. Reusable field declarations can
+put the specifier in `Annotated` instead of the default value.
 
-On the class, a field name is its key: `Sample.energy` is a `Meta[float]`
-carrying the field name and the file key. `batch[Sample.energy]` is typed by the
-key, so the result is an array and not `Any`. Pass `strict=True` as a class
-keyword (`class Sample(Record, strict=True)`) to stop a float field accepting an
-integer value from the file. By default `energy=0` and an integer `Lattice`
-read as floats.
+By default, float fields accept integer values and promote them. Use
+`class Sample(Record, strict=True)` to require the declared kinds exactly.
 
-A field that is absent from a frame is handled as follows.
+### Optional fields and batches
+
+Add `| None` to allow a field to be absent:
+
+```python
+class TrainingSample(Sample):
+    forces: Column[Array | None] = Column(width=3)
+
+
+samples = oxyz.read("mixed.extxyz", record=TrainingSample)
+samples[2].forces  # None
+```
 
 | Declaration | Absent from a frame | In a batch, where absent |
 |---|---|---|
@@ -325,65 +318,50 @@ A field that is absent from a frame is handled as follows.
 | `X` with `fill=v` | `v` | `v` |
 | `X \| None` | `None` | NaN for floats; other kinds need `fill=` |
 
-A batch never holds `None`. An optional field is a dense array, filled where a
-frame lacked it, and `batch.present(key)` is the mask of frames that carried
-it. `batch[i]` consults the mask, so it gives `None` for an absent field and
-keeps a NaN that was in the file. Under `conformance="warn"`, a frame missing a
-required field, or carrying a field of the wrong kind, is dropped with a
-warning, even where the field has a `fill`. An index still counts the file's
-frames, so a selection can give fewer records than it names, and `read` and
-`read_batch` check only the frames selected and keep the same ones.
-
-To a type checker, `RecordBatch[Sample]` has no field attributes, though it
-has them at runtime. To get them statically, declare a subclass that lists each
-field with its batched type and no default:
+A `RecordBatch[TrainingSample]` gives typed access by field key. Per-atom
+fields are concatenated, scalar metadata becomes an array, and array metadata
+gains a leading frame axis, as in `Batch`.
 
 ```python
-class SampleBatch(RecordBatch[Sample]):
+batch = oxyz.read_batch("mixed.extxyz", record=RecordBatch[TrainingSample])
+batch[TrainingSample.energy]          # NDArray[float64], shape (3,)
+batch[TrainingSample.forces]          # NDArray[float64], NaN where absent
+batch.present(TrainingSample.forces)  # array([True, True, False])
+batch[2].forces                       # None
+```
+
+Batches hold filled arrays, not `None`; the presence mask distinguishes an
+absent field from a NaN in the file. Indexing follows `Batch`: an integer
+gives a record, a slice gives views, and a step, list or mask gathers a copy.
+Under `conformance="warn"`, frames missing required fields or carrying
+wrong-kind fields are dropped with a warning. Indices still refer to file frames.
+
+For typed batch attributes as well, declare each field's batched type:
+
+```python
+class SampleBatch(RecordBatch[TrainingSample]):
     positions: Array
-    forces: Array
     energy: Array
-    cell: Array
-    species: list[str]
+    forces: Array
 
 
 typed = oxyz.read_batch("mixed.extxyz", record=SampleBatch)
-typed.energy                                          # NDArray[float64]
+typed.energy  # NDArray[float64]
 ```
 
-A scalar field becomes a 1-D array, an array field gains a leading frame axis,
-and per-atom fields are concatenated, as in `Batch`. A batch indexes as
-`Batch` does: an integer gives a `Sample`, a slice gives views, and a step, a
-list or a mask gives a copy.
+### Existing data and schemas
 
-`Sample.spec()` is the `SchemaSpec` that describes the fields, so a record can
-be written out as YAML and passed as `schema=`. Its rules fill an optional
-field as a record batch does, so `read_batch("mixed.extxyz",
-schema=Sample.spec())` gives NaN where a frame lacks `forces`. A plain read
-with it is not the record read, though: a frame read fills where the record has
-`None`, and under `conformance="warn"` a frame missing `energy` is kept with
-NaN where the record read drops it. An `X | None` field of a kind other than
-float, declared without a `fill`, has `absent: omit`, and a batch read raises
-on frames that differ in it. Passing `schema=` along
-with `record=` applies the schema's frame rule and checks that its rule for each
-key the record reads agrees with the field; the record's own fields do the
-projecting. A frame rule that requires `Lattice` needs a field that reads it,
-such as a `Cell`, and raises `SchemaError` before the file is opened otherwise.
+`Sample.from_frame(frame)` and `SampleBatch.from_batch(batch)` check data you
+already hold and return records with read-only arrays. Records read from a
+file own writable arrays. Records are frozen and slotted; constructing one
+by hand checks its field types, shapes and row counts, keeping arrays as given.
 
-Construction is checked or trusted, depending on how the record is made.
-`Sample(...)` checks every field: Python type or dtype, width or shape, and row
-count against `n_atoms`. It raises `TypeError` or `ValueError` naming the field,
-and keeps the arrays it is given. The readers do not repeat that check, because
-projection has already established it. `Sample.from_frame(frame)` and
-`SampleBatch.from_batch(batch)` check a frame or batch you already hold, and
-raise `SchemaError` on a missing key, a wrong kind, width, shape, dtype or row
-count. The only conversion is the integer to float promotion above.
+`Sample.spec()` gives a project-mode `SchemaSpec` describing the fields.
+Passing `schema=` alongside `record=` applies the schema's frame rule and
+checks that its field types agree; the record determines the projection.
 
-Writability depends on the entry point. Records and batches from the readers
-own their arrays, which are writable. Those from `from_frame` and `from_batch`
-are read-only views of the source arrays, so a later write to the frame shows
-through; use `.copy()` for an independent array. Records are frozen and slotted,
-and compare by value with NaN equal to NaN.
+See [`examples/typed_records.py`](examples/typed_records.py) for a runnable
+version using the supplied [`mixed.extxyz`](examples/data/mixed.extxyz).
 
 ## PyTorch targets
 
