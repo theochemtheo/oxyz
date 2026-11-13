@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "oxyz"
-version = "1.3.0"
+version = "1.3.1"
 description = "Fast, schema-aware extxyz reading for atomistic machine-learning workflows"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -153,6 +153,10 @@ convention = "numpy"
 ]
 "scripts/**" = ["T20", "INP", "D"]
 "examples/**" = ["T20", "INP", "D"]
+
+[tool.ty.src]
+# PEP 723 scripts have independent dependency environments.
+exclude-scripts = true
 
 [tool.pytest.ini_options]
 # The doctests need every optional target installed; the CI tiers skip them.
