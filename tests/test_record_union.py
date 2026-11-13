@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import itertools
+import math
 import pickle
 import re
 import typing
@@ -265,6 +266,23 @@ def test_union_errors(build: Callable[[], tuple[type[Record], ...]], pattern: st
         union_plan(build())
 
 
+def test_a_shared_nan_fill_binds_and_reads():
+    class NanBase(MadFrame):
+        charge: Meta[float] = Meta(fill=math.nan)
+
+    class Bare(NanBase):
+        pass
+
+    class Celled(NanBase):
+        cell: Cell[Array] = Cell()
+
+    recs = oxyz.read(MAD, record=Bare | Celled)
+    assert Counter(type(r) for r in recs) == {Bare: 49, Celled: 152}
+    assert all(math.isnan(r.charge) for r in recs)
+    batch = oxyz.read_batch(MAD, record=RecordBatch[Bare | Celled])
+    assert np.isnan(batch[NanBase.charge]).all()
+
+
 def test_optional_member_admits_both_signatures():
     class Maybe(MadFrame):
         cell: Cell[Array | None] = Cell()
@@ -389,7 +407,9 @@ def test_unadmitted_frame_raises_with_index_and_signature(tmp_path: Path):
     with pytest.raises(oxyz.SchemaError, match="stress") as e:
         oxyz.read(path, record=MadSample)
     assert e.value.frame_index == 1
-    assert "Strained" in str(e.value)
+    assert "no member of Molecule | Crystal | Strained admits keys {stress}" in str(
+        e.value
+    )
 
 
 def test_unadmitted_frame_is_dropped_under_warn(tmp_path: Path):
@@ -424,6 +444,22 @@ def test_missing_all_required_key_is_the_projection_error(tmp_path: Path):
     assert (e.value.frame_index, e.value.name) == (0, "energy")
 
 
+def test_an_optional_member_field_is_none_where_its_key_is_absent(tmp_path: Path):
+    class Charged(MadFrame):
+        cell: Cell[Array] = Cell()
+        charge: Meta[float | None] = Meta()
+
+    path = mad_file(
+        tmp_path / "charged.xyz", "", LATTICE_TAIL, f"{LATTICE_TAIL} charge=0.5"
+    )
+    recs = oxyz.read(path, record=Molecule | Charged)
+    assert [type(r) for r in recs] == [Molecule, Charged, Charged]
+    assert [getattr(r, "charge", "lacks") for r in recs] == ["lacks", None, 0.5]
+    batch = oxyz.read_batch(path, record=RecordBatch[Molecule | Charged])
+    assert [batch[i] for i in range(3)] == recs
+    assert batch.present(Charged.charge).tolist() == [False, False, True]
+
+
 def test_a_fill_field_one_member_lacks_is_filled_on_a_frame_read():
     class WithQ(MadFrame):
         cell: Cell[Array] = Cell()
@@ -445,11 +481,28 @@ def test_binding_errors_happen_before_the_file_is_opened(tmp_path: Path):
         oxyz.read(missing, record=Molecule | int)  # ty: ignore[no-matching-overload]
 
 
+def test_a_union_on_a_batch_read_names_its_batch_form(tmp_path: Path):
+    missing = tmp_path / "missing.xyz"
+    with pytest.raises(
+        TypeError, match=re.escape("takes RecordBatch[Molecule | Crystal] or a")
+    ):
+        oxyz.read_batch(missing, record=Molecule | Crystal)  # ty: ignore[no-matching-overload]
+    with pytest.raises(
+        TypeError, match=re.escape("RecordBatch[Molecule | Crystal | Strained]")
+    ):
+        oxyz.read_batch(missing, record=MadSample)  # ty: ignore[no-matching-overload]
+    with pytest.raises(TypeError, match="RecordBatch subclass or RecordBatch"):
+        oxyz.read_batch(missing, record=Molecule | int)  # ty: ignore[no-matching-overload]
+
+
 def test_schema_check_runs_over_the_union_keys(tmp_path: Path):
     schema = oxyz.SchemaSpec(metadata=(oxyz.MetadataRule("stress", oxyz.Kind.STR),))
     with pytest.raises(oxyz.SchemaError, match="stress") as e:
         oxyz.read(tmp_path / "missing.xyz", record=MadSample, schema=schema)
     assert e.value.name == "stress"
+    assert str(e.value).startswith(
+        "Strained.stress (in Molecule | Crystal | Strained): schema= gives"
+    )
 
 
 def test_binding_spec_is_the_merged_project_spec():
@@ -592,6 +645,7 @@ def test_hand_built_union_batch_checks_tags():
         one_frame(tags=np.array([0.0]))
     assert type(one_frame()[0]) is Molecule
     assert type(one_frame(tags=np.array([2]))[0]) is Strained
+    assert one_frame(tags=np.array([2], dtype=np.uint8)).tags.dtype == np.intp
 
 
 def test_a_member_the_file_never_contains(tmp_path: Path, recs: list[MadSample]):
@@ -646,6 +700,10 @@ def test_non_real_field_some_member_lacks_needs_a_fill(tmp_path: Path):
             tmp_path / "missing.xyz", record=RecordBatch[Molecule | Labelled]
         )
     assert e.value.name == "label"
+    assert str(e.value) == (
+        "Labelled.label (in Molecule | Labelled): a S field some member lacks has "
+        "no natural null; give it a fill= to read it into a batch"
+    )
 
 
 def warned_frames(caught: pytest.WarningsRecorder) -> list[int]:
@@ -653,7 +711,17 @@ def warned_frames(caught: pytest.WarningsRecorder) -> list[int]:
     return [int(re.findall(r"^frame (\d+)", str(w.message))[0]) for w in caught]
 
 
-def test_warn_keeps_the_same_frames_on_every_path(tmp_path: Path):
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({"frames_per_batch": 1}, id="planned"),
+        pytest.param({"frames_per_batch": 1, "threads": 1}, id="sequential"),
+        pytest.param({"atoms_per_batch": 2}, id="atom-budget"),
+    ],
+)
+def test_warn_keeps_the_same_frames_on_every_path(
+    tmp_path: Path, kwargs: dict[str, Any]
+):
     path = mad_file(
         tmp_path / "five.xyz",
         "",
@@ -674,15 +742,38 @@ def test_warn_keeps_the_same_frames_on_every_path(tmp_path: Path):
     with pytest.warns(oxyz.SchemaWarning) as caught:
         windows = list(
             oxyz.iread_batch(
+                path, record=RecordBatch[MadSample], conformance="warn", **kwargs
+            )
+        )
+    assert sorted(warned_frames(caught)) == [1, 3]
+    rows = sorted(
+        (int(index), record)
+        for w in windows
+        for index, record in zip(w.frame_indices, w, strict=True)
+    )
+    assert [index for index, _ in rows] == [0, 2, 4]
+    assert [record for _, record in rows] == recs
+
+
+def test_an_all_dropped_union_batch_is_empty_under_warn(tmp_path: Path):
+    path = mad_file(tmp_path / "dropped.xyz", STRESS_TAIL, STRESS_TAIL)
+    with pytest.warns(oxyz.SchemaWarning):
+        batch = oxyz.read_batch(path, record=RecordBatch[MadSample], conformance="warn")
+    assert type(batch) is batch_class(RecordBatch[MadSample])
+    assert len(batch) == 0
+    assert batch.tags.shape == (0,)
+    assert batch.where(Molecule).shape == (0,)
+    assert batch == batch[:]
+    with pytest.warns(oxyz.SchemaWarning):
+        windows = list(
+            oxyz.iread_batch(
                 path,
                 record=RecordBatch[MadSample],
                 frames_per_batch=1,
                 conformance="warn",
             )
         )
-    assert sorted(warned_frames(caught)) == [1, 3]
-    assert [w.frame_indices.tolist() for w in windows] == [[0], [2], [4]]
-    assert [w[0] for w in windows] == recs
+    assert windows == []
 
 
 def test_unadmitted_frame_in_a_batch_read_raises_with_its_file_index(tmp_path: Path):

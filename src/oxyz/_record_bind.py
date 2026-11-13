@@ -310,15 +310,18 @@ def _names_batch(target: object) -> bool:
 
 
 def _not_a_batch(target: object) -> str:
-    if isinstance(target, type) and issubclass(target, Record) and target is not Record:
-        name = target.__name__
+    try:
+        members = members_of(target)
+    except TypeError:
         return (
-            f"record= on a batch read takes RecordBatch[{name}] or a subclass of "
-            f"it, not the record {name}"
+            "record= on a batch read takes a RecordBatch subclass or RecordBatch[R], "
+            f"got {target!r}"
         )
+    name = " | ".join(member.__name__ for member in members)
+    kind = "record" if len(members) == 1 else "union"
     return (
-        "record= on a batch read takes a RecordBatch subclass or RecordBatch[R], "
-        f"got {target!r}"
+        f"record= on a batch read takes RecordBatch[{name}] or a subclass of "
+        f"it, not the {kind} {name}"
     )
 
 
@@ -353,7 +356,7 @@ def _bind(
     fields, name, strict = union.fields, union.name, union.strict
     spec = spec_of(fields, union)
     if schema is not None:
-        _check_agrees(name, fields, schema, strict=strict)
+        _check_agrees(union, schema, strict=strict)
         _check_lattice_read(name, fields, schema)
         if schema.frame is not None:
             spec = dataclasses.replace(spec, frame=schema.frame)
@@ -404,11 +407,21 @@ def _key(spec: FieldSpec[Any]) -> str:
     return spec.key
 
 
-def _check_agrees(
-    name: str, fields: _Fields, schema: SchemaSpec, *, strict: bool
-) -> None:
+def _field_name(union: UnionPlan, field: str) -> str:
+    """Name `field` by the first member declaring it, then the union, if several."""
+    if len(union.members) == 1:
+        return f"{union.name}.{field}"
+    owner = next(
+        member
+        for member, names in zip(union.members, union.member_fields, strict=True)
+        if field in names
+    )
+    return f"{owner.__name__}.{field} (in {union.name})"
+
+
+def _check_agrees(union: UnionPlan, schema: SchemaSpec, *, strict: bool) -> None:
     """Raise `SchemaError` where `schema`'s rule for a field's key disagrees with it."""
-    for field_name, field, spec in fields:
+    for field_name, field, spec in union.fields:
         key = _key(spec)
         if field.axis == "column":
             column = schema.rule_for(key, "column")
@@ -431,7 +444,7 @@ def _check_agrees(
             continue
         note = field.strict_note(kind) if agrees else ""
         raise SchemaError(
-            f"{name}.{field_name}: schema= gives {field.axis} {key!r} as "
+            f"{_field_name(union, field_name)}: schema= gives {field.axis} {key!r} as "
             f"{found}, the record reads {field.signature()}{note}",
             name=key,
         )
@@ -496,8 +509,14 @@ def _presence(
         fill = math.nan
     if fill is not None:
         return False, fill
+    reason = (
+        field.no_null()
+        if field.optional
+        else f"a {KIND_TO_LETTER[field.kind]} field some member lacks has no "
+        "natural null; give it a fill="
+    )
     raise SchemaError(
-        f"{union.name}.{name}: {field.no_null()} to read it into a batch",
+        f"{_field_name(union, name)}: {reason} to read it into a batch",
         name=_key(spec),
     )
 

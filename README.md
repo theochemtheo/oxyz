@@ -401,17 +401,18 @@ batch.where(Strained)   # bool, (n_frames,)
 batch[0]                # Molecule
 ```
 
-No member field is `X | None`: molecules get no zero cell, and a `Strained`
-never holds a NaN the file did not contain.
+Here no member field is `X | None`, so molecules get no zero cell, and a
+`Strained` never holds a NaN the file did not contain.
 
-Members must be siblings: no member may subclass another. To a type checker,
-a union of a class and its subclass is the base class alone: were `Crystal` a
+Members must be siblings: no member may subclass another. To a type checker, a
+union of a class and its subclass is the base class alone: were `Crystal` a
 subclass of `Molecule`, a read of `Molecule | Crystal` would be typed
 `list[Molecule]`, and a `match` could not narrow it. Share fields through a
 base class that is not itself a member, as `MadFrame` is, or by reusing
-`Annotated` field declarations. Members that declare the same key must give
-it the same field name, type and `fill=`, and members must agree on `strict`.
-A union that breaks these rules raises `TypeError` before the file is opened.
+`Annotated` field declarations. Members that declare the same key must give it
+the same field name, the same type, `| None` included, and the same `fill=`,
+and members must agree on `strict`. A union that breaks these rules raises
+`TypeError` before the file is opened.
 
 A frame's member is decided by which keys it carries, not by their values.
 The deciding keys are those some member can do without, here `Lattice` and
@@ -431,14 +432,14 @@ frame that matches can still fail as that member, on a missing shared field
 or a value of the wrong kind.
 
 `RecordBatch[MadSample]` holds every member's fields, each as one array over
-all frames. Where a frame's member lacks a field, a float field holds NaN and
-any other kind its `fill=`, which such a field must declare; `present` is
-false there. `members` is the tuple of member classes in the order the union
-names them, and `tags` gives each frame's member as an index into `members`.
-`where()` marks the frames whose member is one of those given; a class that
-is not a member, such as the base `MadFrame`, raises `TypeError`. `batch[i]`
-equals `oxyz.read(path, i, record=MadSample)`, and
-`batch[batch.where(Strained)]` gathers the strained frames, still typed as
+all frames. Where a frame's member lacks a field, the field holds its `fill=`,
+or NaN for a float field declared without one; a field of any other kind must
+declare a `fill=`. `present` is false there. `members` is the tuple of member
+classes in the order the union names them, and `tags` gives each frame's
+member as an index into `members`. `where()` marks the frames whose member is
+one of those given; a class that is not a member, such as the base `MadFrame`,
+raises `TypeError`. `batch[i]` equals `oxyz.read(path, i, record=MadSample)`,
+and `batch[batch.where(Strained)]` gathers the strained frames, still typed as
 the union.
 
 ### Existing data and schemas

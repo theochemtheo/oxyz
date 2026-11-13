@@ -17,6 +17,7 @@ from typing import (
     get_origin,
 )
 
+from oxyz import _summary
 from oxyz._record import FieldSpec, Record
 
 if TYPE_CHECKING:
@@ -230,11 +231,7 @@ def _merge(
                     f"{first.__name__}.{first_name} and {member.__name__}.{name} "
                     f"both read {key[0]} key {key[1]!r}"
                 )
-            if (
-                first_ft != ft
-                or (first_spec.fill is None) != (spec.fill is None)
-                or (first_spec.fill != spec.fill)
-            ):
+            if first_ft != ft or not _summary.values_equal(first_spec.fill, spec.fill):
                 raise TypeError(
                     f"{first.__name__} and {member.__name__} declare {key[0]} key "
                     f"{key[1]!r} (field {name!r}) differently: "

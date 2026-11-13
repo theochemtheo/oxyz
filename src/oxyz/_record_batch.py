@@ -299,16 +299,17 @@ class RecordBatch[R: Record](FrameLayout, metaclass=RecordBatchMeta):
     `R` may be a union of sibling records, `RecordBatch[Molecule | Crystal]`
     or a `type` alias of one. The batch then holds the union's merged
     fields: a field some member lacks is filled, and masked, in that
-    member's frames (NaN for a float field, else its `fill=`). `members`
-    is the tuple of member classes, in the order the union names them, and
-    `tags` gives each frame's member as an index into it; `where(*ms)`
-    marks the frames whose member is one of `ms`. `batch[i]` is an instance
-    of `members[tags[i]]`, built from that member's fields alone. Members
-    that declare the same field separately, such as a `cell` on two of
-    them, have distinct keys that both reach the one batch field.
-    `RecordBatch[A | B]` and `RecordBatch[B | A]` are distinct batch types,
-    whose `members` and `tags` follow the order written. A batch of one
-    record has that record as its sole member and all-zero `tags`.
+    member's frames with its `fill=`, or NaN for a float field declared
+    without one. `members` is the tuple of member classes, in the order the
+    union names them, and `tags` gives each frame's member as an index into
+    it; `where(*ms)` marks the frames whose member is one of `ms`.
+    `batch[i]` is an instance of `members[tags[i]]`, built from that
+    member's fields alone. Members that declare the same field separately,
+    such as a `cell` on two of them, have distinct keys that both reach the
+    one batch field. `RecordBatch[A | B]` and `RecordBatch[B | A]` are
+    distinct batch types, whose `members` and `tags` follow the order
+    written. A batch of one record has that record as its sole member and
+    all-zero `tags`.
 
     `oxyz.read_batch(path, record=MaceBatch)` and `oxyz.iread_batch` read a
     file into batches, `from_batch` builds one of a single record from an
@@ -496,7 +497,7 @@ class RecordBatch[R: Record](FrameLayout, metaclass=RecordBatchMeta):
         if record is None:
             raise TypeError(
                 f"{name} is a union batch; from_batch takes a single record's "
-                "batch — read with read_batch(record=…)"
+                "batch. Read with read_batch(record=...) instead"
             )
         strict = record.__record_strict__
         n_frames = _check_layout(name, batch.offsets, batch.frame_indices)
@@ -848,7 +849,7 @@ def _check_masks(
 
 def _check_tags(
     name: str, tags: object, n_frames: int, n_members: int
-) -> npt.NDArray[np.integer]:
+) -> npt.NDArray[np.intp]:
     """Return a union batch's `tags`, checked to index the members; zeros for `None`."""
     if tags is None:
         return np.zeros(n_frames, dtype=np.intp)
@@ -861,7 +862,7 @@ def _check_tags(
         raise ValueError(
             f"{name}.tags: {outside[0]} does not index one of {n_members} members"
         )
-    return tags
+    return tags.astype(np.intp, copy=False)
 
 
 def _rebuild(target: object, state: dict[str, Any]) -> RecordBatch[Any]:
