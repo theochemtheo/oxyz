@@ -177,8 +177,8 @@ def record(obj: Record) -> str:
 
 
 def record_batch(obj: RecordBatch[Any]) -> str:
-    fields = type(obj).__record__.__record_fields__
-    values = {name: getattr(obj, name) for name, _, _ in fields}
+    fields = type(obj).__batch_layout__.fields
+    values = {name: getattr(obj, name) for name in fields}
     return _page(
         type(obj).__name__,
         [f"{obj.n_frames} frames", _atoms(obj.n_atoms, obj.total_atoms)],

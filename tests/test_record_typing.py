@@ -77,7 +77,31 @@ oxyz.read(p, record=r)                                           # error
 MaceSample(n_atoms=3, positions=a, forces=a, stress=None, cell=a, config_type="x")
 """
 
-BATCHES = """\
+UNIONS = """\
+class MadFrame(Record):
+    positions: Column[Array] = Column("pos", width=3)
+    energy: Meta[float] = Meta()
+
+
+class Molecule(MadFrame):
+    pass
+
+
+class Crystal(MadFrame):
+    cell: Cell[Array] = Cell()
+
+
+class Strained(MadFrame):
+    cell: Cell[Array] = Cell()
+    stress: Matrix3[Array] = Matrix3()
+
+
+type MadSample = Molecule | Crystal | Strained
+"""
+
+BATCHES = (
+    UNIONS
+    + """\
 class MaceBatch(RecordBatch[MaceSample]):
     positions: Array
     forces: Array
@@ -136,28 +160,7 @@ def batches(
     n: RecordBatch[NoCell],
 ) -> None:
 """
-
-UNIONS = """\
-class MadFrame(Record):
-    positions: Column[Array] = Column("pos", width=3)
-    energy: Meta[float] = Meta()
-
-
-class Molecule(MadFrame):
-    pass
-
-
-class Crystal(MadFrame):
-    cell: Cell[Array] = Cell()
-
-
-class Strained(MadFrame):
-    cell: Cell[Array] = Cell()
-    stress: Matrix3[Array] = Matrix3()
-
-
-type MadSample = Molecule | Crystal | Strained
-"""
+)
 
 MAD = "Molecule | Crystal | Strained"
 
@@ -240,6 +243,16 @@ BATCH_REVEALS = f"""\
     reveal_type(MaceBatch.spec())                              # T: SchemaSpec
     reveal_type(RecordBatch[MaceSample].from_batch(oxyz.read_batch(p)))  # T: {GENERIC}
     reveal_type(RecordBatch[MaceSample].spec())                # T: SchemaSpec
+    u = oxyz.read_batch(p, record=RecordBatch[MadSample])
+    reveal_type(u)                             # T: RecordBatch[MadSample]
+    reveal_type(oxyz.read_batch(p, record=RecordBatch[{MAD}]))  # T: RecordBatch[{MAD}]
+    reveal_type(u[0])                          # T: {MAD}
+    for s in u:
+        reveal_type(s)                         # T: {MAD}
+    reveal_type(u[Strained.stress])            # T: {FLOAT}
+    reveal_type(u.where(Strained))             # T: {BOOL}
+    reveal_type(u.tags)                        # T: {INT}
+    reveal_type(u.members)                     # T: tuple[type[Record], ...]
 """
 
 BATCH_ERRORS = """\

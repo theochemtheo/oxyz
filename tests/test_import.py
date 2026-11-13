@@ -121,7 +121,7 @@ sys.modules["typing_extensions"] = None
 import numpy as np
 import numpy.typing as npt
 import oxyz
-from oxyz import Cell, Column, Meta, Record
+from oxyz import Cell, Column, Meta, Record, RecordBatch
 
 class Molecule(Record):
     positions: Column[npt.NDArray[np.float64]] = Column("pos", width=3)
@@ -134,8 +134,10 @@ class Crystal(Record):
 
 records = oxyz.read({str(path)!r}, record=Molecule | Crystal)
 print(sorted({{type(r).__name__ for r in records}}))
+batch = oxyz.read_batch({str(path)!r}, record=RecordBatch[Molecule | Crystal])
+print(sorted({{type(r).__name__ for r in batch}}))
 """
     result = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, check=True
     )
-    assert result.stdout.strip() == "['Crystal', 'Molecule']"
+    assert result.stdout.splitlines() == ["['Crystal', 'Molecule']"] * 2

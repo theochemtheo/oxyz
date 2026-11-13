@@ -25,7 +25,7 @@ from oxyz._project import mismatched
 from oxyz._record import Record, spec_of
 from oxyz._record_batch import RecordBatch, batch_class
 from oxyz._record_union import members_of, union_plan
-from oxyz._schema import KIND_TO_LETTER, column_sig, metadata_sig
+from oxyz._schema import KIND_TO_LETTER, Kind, column_sig, metadata_sig
 from oxyz._schema_match import SchemaError, SchemaWarning
 from oxyz._schema_spec import SchemaSpec
 
@@ -110,13 +110,18 @@ class Binding:
         return record
 
     def cast_batch(
-        self, batch: Batch, present: npt.NDArray[np.bool_], *, owned: bool
+        self,
+        batch: Batch,
+        present: npt.NDArray[np.bool_],
+        tags: npt.NDArray[np.intp],
+        *,
+        owned: bool,
     ) -> RecordBatch[Any]:
         """Build a `target` batch from a batch projected with `batch_plan`.
 
         `present` is the core's presence report for the batch's frames, one
-        column per optional plan entry. Unless `owned`, arrays come back
-        read-only.
+        column per optional plan entry, and `tags` each frame's member, as
+        `kept` gives them. Unless `owned`, arrays come back read-only.
         """
         target = cast("type[RecordBatch[Any]]", self.target)
         columns, metadata = batch.columns, batch.metadata
@@ -128,6 +133,7 @@ class Binding:
         }
         return target._trusted(  # noqa: SLF001 — the reader is trusted
             present={name: present[:, column] for name, column in self.optional},
+            tags=tags,
             offsets=batch.offsets,
             frame_indices=batch.frame_indices,
             **values,
@@ -139,33 +145,82 @@ class Binding:
         presence: npt.NDArray[np.bool_],
         reports: list[tuple[int, list[DeviationData]]],
         survived: set[int],
-    ) -> tuple[Batch, npt.NDArray[np.bool_]] | None:
-        """Return the survivors a record read keeps under `"warn"`, or `None`.
+        conformance: Conformance,
+    ) -> tuple[Batch, npt.NDArray[np.bool_], npt.NDArray[np.intp]] | None:
+        """Return the frames a record read keeps, their presence and members.
 
-        The core keeps a frame whose field of the wrong kind it can fill; a
-        record read drops it. `presence` and `survived` are the core's report
+        The result is the kept frames of `batch`, their rows of `presence`,
+        and each one's member as an index into the union's members; `None`
+        when none is kept. `presence` and `survived` are the core's report
         for `batch`, and `reports` its deviations per requested frame.
+
+        Under `"warn"` the core keeps a frame whose field of the wrong kind
+        it can fill; a record read drops it. A frame no member admits raises
+        `SchemaError` under `"strict"` and `"required"`, and under `"warn"`
+        warns and is dropped.
         """
-        keep = np.array(
-            [
-                not mismatched(deviations)
-                for index, deviations in reports
-                if index in survived
-            ],
-            dtype=np.bool_,
-        )
+        if conformance == "warn":
+            keep = np.array(
+                [
+                    not mismatched(deviations)
+                    for index, deviations in reports
+                    if index in survived
+                ],
+                dtype=np.bool_,
+            )
+        else:
+            keep = np.ones(batch.n_frames, dtype=np.bool_)
+        if len(self._builds) == 1:
+            tags = np.zeros(batch.n_frames, dtype=np.intp)
+        else:
+            tags = self._member_tags(batch, presence, keep, warns=conformance == "warn")
         if keep.all():
-            return batch, presence
+            return batch, presence, tags
         if not keep.any():
             return None
         picks = np.flatnonzero(keep)
-        return batch[picks], presence[picks]
+        return batch[picks], presence[picks], tags[picks]
+
+    def _member_tags(
+        self,
+        batch: Batch,
+        presence: npt.NDArray[np.bool_],
+        keep: npt.NDArray[np.bool_],
+        *,
+        warns: bool,
+    ) -> npt.NDArray[np.intp]:
+        """Return each frame's member, from its matching keys' presence.
+
+        A kept frame no member admits is reported, in batch order, and
+        under `warns` is cleared from `keep`.
+        """
+        union = self.union
+        matching = union.matching
+        columns = [self.reported[union.names[key]] for key in matching]
+        rows, inverse = np.unique(presence[:, columns], axis=0, return_inverse=True)
+        inverse = inverse.reshape(-1)
+        signatures = [
+            frozenset(
+                key for key, carried in zip(matching, row, strict=True) if carried
+            )
+            for row in rows
+        ]
+        found = [union.member_for(signature) for signature in signatures]
+        admitted = np.array([member is not None for member in found], dtype=np.bool_)
+        unadmitted = np.flatnonzero(keep & ~admitted[inverse])
+        for position in unadmitted:
+            signature = signatures[inverse[position]]
+            _reject(union, signature, int(batch.frame_indices[position]), warns=warns)
+        keep[unadmitted] = False
+        members = np.array([0 if m is None else m for m in found], dtype=np.intp)
+        return members[inverse]
 
     def empty_batch(self) -> RecordBatch[Any]:
         """Return a `target` batch of no frames, its fields of their batch dtypes."""
         target = cast("type[RecordBatch[Any]]", self.target)
         return target._trusted(  # noqa: SLF001 — the reader is trusted
             present={name: np.zeros(0, dtype=np.bool_) for name, _ in self.optional},
+            tags=np.zeros(0, dtype=np.intp),
             offsets=np.zeros(1, dtype=np.intp),
             frame_indices=np.zeros(0, dtype=np.intp),
             **{name: field.empty() for name, field, _ in self._batched},
@@ -218,7 +273,7 @@ def bind(
         generic = get_origin(target) is RecordBatch
         target = batch_class(target)
         if batch is False:
-            record = target.__record__.__name__
+            record = target.__batch_layout__.union.name
             named = f"RecordBatch[{record}]" if generic else target.__name__
             raise TypeError(
                 f"record= on a frame read takes a Record subclass, not the batch "
@@ -291,10 +346,10 @@ def _bind(
 ) -> Binding:
     if isinstance(target, tuple):
         members, built = target, target[0] if len(target) == 1 else None
+        union = union_plan(members)
     else:
-        members = (cast("type[RecordBatch[Any]]", target).__record__,)
-        built = target
-    union = union_plan(members)
+        union = cast("type[RecordBatch[Any]]", target).__batch_layout__.union
+        members, built = union.members, target
     fields, name, strict = union.fields, union.name, union.strict
     spec = spec_of(fields, union)
     if schema is not None:
@@ -426,7 +481,8 @@ def _presence(
     """Return the plan entry's `(required, fill)`; a required entry has no fill.
 
     A matching key is left absent on a frame read, so that its presence
-    picks the member, and filled on a batch read.
+    picks the member, and filled on a batch read: with its `fill=`, or NaN
+    for a float field without one.
     """
     key = (field.axis, _key(spec))
     if key in union.required:
@@ -435,7 +491,9 @@ def _presence(
         return False, spec.fill
     if not batch:
         return False, None
-    fill = field.batch_fill(spec.fill)
+    fill = spec.fill
+    if fill is None and field.kind == Kind.REAL:
+        fill = math.nan
     if fill is not None:
         return False, fill
     raise SchemaError(
@@ -510,20 +568,25 @@ def _matcher(
         member = member_for(signature)
         if member is not None:
             return builds[member](frame, owned=owned)
-        message = _unadmitted(union, signature, frame_index)
-        if not warns:
-            raise SchemaError(message, frame_index=frame_index)
-        warnings.warn(message, SchemaWarning, stacklevel=2)
+        _reject(union, signature, frame_index, warns=warns)
         return None
 
     return match
 
 
-def _unadmitted(
-    union: UnionPlan, signature: frozenset[Key], frame_index: int | None
-) -> str:
+def _reject(
+    union: UnionPlan,
+    signature: frozenset[Key],
+    frame_index: int | None,
+    *,
+    warns: bool,
+) -> None:
+    """Report a frame no member admits: warn under `warns`, else raise."""
     keys = ", ".join(sorted(key for _, key in signature))
     where = "" if frame_index is None else f"frame {frame_index}: "
-    return (
+    message = (
         f"{where}no member of {union.name} admits keys {{{keys}}}; {union.describe()}"
     )
+    if not warns:
+        raise SchemaError(message, frame_index=frame_index)
+    warnings.warn(message, SchemaWarning, stacklevel=3)

@@ -1,17 +1,30 @@
 from __future__ import annotations
 
 import itertools
+import pickle
 import re
 import typing
 from collections import Counter
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 import pytest
 
 import oxyz
-from oxyz import Cell, Column, Matrix3, Meta, Record
+from oxyz import (
+    Cell,
+    Column,
+    FrameRule,
+    Matrix3,
+    Meta,
+    Record,
+    RecordBatch,
+    SchemaSpec,
+    _summary,
+)
+from oxyz._record_batch import batch_class
 from oxyz._record_bind import bind
 from oxyz._record_union import Key, members_of, union_plan
 
@@ -52,6 +65,16 @@ class Other(MadFrame):
 
 
 type MadSample = Molecule | Crystal | Strained
+
+
+class MadBatch(RecordBatch[MadSample]):
+    species: list[str]
+    positions: Array
+    forces: Array
+    energy: Array
+    subset: list[str]
+    cell: Array
+    stress: Array
 
 
 def expected_member(
@@ -446,3 +469,262 @@ def test_bind_caches_one_binding_per_union():
     )
     assert bind(MadSample).record is None
     assert bind(MadFrame).record is MadFrame
+
+
+@pytest.fixture(scope="module")
+def mad() -> RecordBatch[MadSample]:
+    return oxyz.read_batch(MAD, record=RecordBatch[MadSample])
+
+
+@pytest.fixture(scope="module")
+def recs() -> list[MadSample]:
+    return oxyz.read(MAD, record=MadSample)
+
+
+def test_batch_rows_equal_the_frame_read(
+    mad: RecordBatch[MadSample], recs: list[MadSample]
+):
+    assert len(mad) == len(recs) == 201
+    assert all(mad[i] == recs[i] and type(mad[i]) is type(recs[i]) for i in range(201))
+    assert [type(r) for r in mad] == [member_of(f) for f in oxyz.read(MAD)]
+
+
+def test_tags_members_and_where_agree_with_the_frame_read(
+    mad: RecordBatch[MadSample], recs: list[MadSample]
+):
+    assert mad.members == (Molecule, Crystal, Strained)
+    assert [mad.members[t] for t in mad.tags] == [type(r) for r in recs]
+    assert mad.where(Strained).sum() == 26
+    assert mad.where(Crystal).sum() == 126
+    assert (
+        mad.where(Crystal, Strained) == (mad.where(Crystal) | mad.where(Strained))
+    ).all()
+    assert not mad.where().any()
+    assert not mad.tags.flags.writeable
+
+
+def test_where_rejects_a_non_member(mad: RecordBatch[MadSample]):
+    with pytest.raises(TypeError, match="Molecule, Crystal, Strained"):
+        mad.where(MadFrame)
+
+
+def test_fields_some_members_lack_are_nan_exactly_there(mad: RecordBatch[MadSample]):
+    lacks = ~mad.where(Strained)
+    assert np.isnan(mad[Strained.stress][lacks]).all()
+    assert not np.isnan(mad[Strained.stress][~lacks]).any()
+    assert mad.present(Strained.stress).tolist() == mad.where(Strained).tolist()
+    assert mad.present("cell").tolist() == mad.where(Crystal, Strained).tolist()
+    assert mad.present(MadFrame.energy).all()
+
+
+def test_keys_of_every_member_reach_the_one_field(mad: RecordBatch[MadSample]):
+    class Elsewhere(Record):
+        energy: Meta[float] = Meta()
+
+    assert mad[Crystal.cell] is mad[Strained.cell] is mad["cell"]
+    assert mad[MadFrame.energy] is mad[Molecule.energy]
+    with pytest.raises(KeyError, match=r"Other\.tag .*Molecule \| Crystal"):
+        mad[Other.tag]
+    with pytest.raises(KeyError, match=r"Elsewhere\.energy"):
+        mad[Elsewhere.energy]
+
+
+def test_slices_and_gathers_carry_tags(mad: RecordBatch[MadSample]):
+    strained = mad[mad.where(Strained)]
+    assert type(strained) is type(mad)
+    assert len(strained) == 26
+    assert (strained.tags == 2).all()
+    assert all(type(r) is Strained for r in strained)
+    assert mad[10:20].tags.tolist() == mad.tags[10:20].tolist()
+    assert mad[::7].tags.tolist() == mad.tags[::7].tolist()
+
+
+def test_every_spelling_is_one_class():
+    derived = batch_class(RecordBatch[MadSample])
+    assert derived is batch_class(RecordBatch[Molecule | Crystal | Strained])
+    assert derived is batch_class(
+        RecordBatch[typing.Union[Molecule, Crystal, Strained]]  # noqa: UP007 — the spelling under test
+    )
+    assert batch_class(RecordBatch[Crystal | Molecule]) is not batch_class(
+        RecordBatch[Molecule | Crystal]
+    )
+    assert derived.__name__ == "MoleculeOrCrystalOrStrainedBatch"
+    assert batch_class(RecordBatch[Molecule]).__name__ == "MoleculeBatch"
+
+
+def test_declared_union_batch_reads_the_same(mad: RecordBatch[MadSample]):
+    declared = oxyz.read_batch(MAD, record=MadBatch)
+    assert all(
+        _summary.values_equal(declared[n], mad[n])
+        for n in ("positions", "energy", "cell", "stress")
+    )
+    assert declared.tags.tolist() == mad.tags.tolist()
+    assert declared.members == mad.members
+    assert [type(r) for r in declared] == [type(r) for r in mad]
+
+
+def one_frame(**overrides: Any) -> MadBatch:
+    """A one-frame `MadBatch` built through `__init__`."""
+    nan = np.full((1, 3, 3), np.nan)
+    values: dict[str, Any] = {
+        "offsets": np.array([0, 1]),
+        "frame_indices": np.array([0]),
+        "species": ["H"],
+        "positions": np.zeros((1, 3)),
+        "forces": np.zeros((1, 3)),
+        "energy": np.array([-1.0]),
+        "subset": ["x"],
+        "cell": nan,
+        "stress": nan,
+    }
+    return MadBatch(**(values | overrides))
+
+
+def test_hand_built_union_batch_checks_tags():
+    with pytest.raises(ValueError, match=r"MadBatch\.tags: .*3"):
+        one_frame(tags=np.array([3]))
+    with pytest.raises(ValueError, match=r"MadBatch\.tags: .*-1"):
+        one_frame(tags=np.array([-1]))
+    with pytest.raises(ValueError, match=r"MadBatch\.tags: .*\(1,\)"):
+        one_frame(tags=np.array([0, 0]))
+    with pytest.raises(TypeError, match=r"MadBatch\.tags: .*integer"):
+        one_frame(tags=np.array([0.0]))
+    assert type(one_frame()[0]) is Molecule
+    assert type(one_frame(tags=np.array([2]))[0]) is Strained
+
+
+def test_a_member_the_file_never_contains(tmp_path: Path, recs: list[MadSample]):
+    path = tmp_path / "molecules.xyz"
+    oxyz.write(path, [f for f in oxyz.read(MAD) if "Lattice" not in f.metadata])
+    molecules = oxyz.read_batch(path, record=RecordBatch[MadSample])
+    assert len(molecules) == sum(type(r) is Molecule for r in recs)
+    assert molecules[Crystal.cell].shape == (len(molecules), 3, 3)
+    assert np.isnan(molecules[Strained.stress]).all()
+    assert not molecules.where(Strained).any()
+    assert type(molecules[0]) is Molecule
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({"frames_per_batch": 50, "threads": 1}, id="sequential"),
+        pytest.param({"frames_per_batch": 50}, id="planned"),
+        pytest.param(
+            {"frames_per_batch": 50, "shuffle": True, "seed": 0}, id="shuffled"
+        ),
+        pytest.param({"atoms_per_batch": 400}, id="atom-budget"),
+        pytest.param({"memory_scales_with": "n_atoms", "max_scaler": 400}, id="binned"),
+    ],
+)
+def test_iread_batch_and_threads_parity(
+    mad: RecordBatch[MadSample], kwargs: dict[str, Any]
+):
+    assert oxyz.read_batch(MAD, record=RecordBatch[MadSample], threads=1) == mad
+    seen: list[int] = []
+    for b in oxyz.iread_batch(MAD, record=RecordBatch[MadSample], **kwargs):
+        rows = mad[b.frame_indices]
+        assert type(b) is type(mad)
+        assert b.tags.tolist() == rows.tags.tolist()
+        for name in ("stress", "cell"):
+            assert b.present(name).tolist() == rows.present(name).tolist()
+        assert b == rows
+        seen += b.frame_indices.tolist()
+    assert sorted(seen) == list(range(201))
+
+
+def test_non_real_field_some_member_lacks_needs_a_fill(tmp_path: Path):
+    class Labelled(MadFrame):
+        cell: Cell[Array] = Cell()
+        label: Meta[str] = Meta()
+
+    with pytest.warns(oxyz.SchemaWarning, match="Labelled"):
+        recs = oxyz.read(MAD, record=Molecule | Labelled, conformance="warn")
+    assert {type(r) for r in recs} == {Molecule}
+    with pytest.raises(oxyz.SchemaError, match="label") as e:
+        oxyz.read_batch(
+            tmp_path / "missing.xyz", record=RecordBatch[Molecule | Labelled]
+        )
+    assert e.value.name == "label"
+
+
+def warned_frames(caught: pytest.WarningsRecorder) -> list[int]:
+    """The frame index each caught warning's message starts with, in order."""
+    return [int(re.findall(r"^frame (\d+)", str(w.message))[0]) for w in caught]
+
+
+def test_warn_keeps_the_same_frames_on_every_path(tmp_path: Path):
+    path = mad_file(
+        tmp_path / "five.xyz",
+        "",
+        STRESS_TAIL,
+        LATTICE_TAIL,
+        f"{LATTICE_TAIL} stress=abc",
+        f"{LATTICE_TAIL} {STRESS_TAIL}",
+    )
+    with pytest.warns(oxyz.SchemaWarning) as caught:
+        recs = oxyz.read(path, record=MadSample, conformance="warn")
+    assert sorted(warned_frames(caught)) == [1, 3]
+    with pytest.warns(oxyz.SchemaWarning) as caught:
+        b = oxyz.read_batch(path, record=RecordBatch[MadSample], conformance="warn")
+    assert sorted(warned_frames(caught)) == [1, 3]
+    assert b.frame_indices.tolist() == [0, 2, 4]
+    assert [b[i] for i in range(3)] == recs
+    assert [type(r) for r in b] == [Molecule, Crystal, Strained]
+    with pytest.warns(oxyz.SchemaWarning) as caught:
+        windows = list(
+            oxyz.iread_batch(
+                path,
+                record=RecordBatch[MadSample],
+                frames_per_batch=1,
+                conformance="warn",
+            )
+        )
+    assert sorted(warned_frames(caught)) == [1, 3]
+    assert [w.frame_indices.tolist() for w in windows] == [[0], [2], [4]]
+    assert [w[0] for w in windows] == recs
+
+
+def test_unadmitted_frame_in_a_batch_read_raises_with_its_file_index(tmp_path: Path):
+    path = unadmitted(tmp_path)
+    for index in (":", [2, 1], [2, 0, 1]):
+        with pytest.raises(oxyz.SchemaError, match="Strained") as e:
+            oxyz.read_batch(path, index, record=RecordBatch[MadSample])
+        assert e.value.frame_index == 1
+    with pytest.raises(oxyz.SchemaError) as e:
+        oxyz.read_batch(path, record=RecordBatch[MadSample], conformance="strict")
+    assert e.value.frame_index == 1
+
+
+def test_lattice_frame_rule_sees_a_filled_cell_as_absent():
+    first_molecule = next(
+        i for i, f in enumerate(oxyz.read(MAD)) if "Lattice" not in f.metadata
+    )
+    rule = SchemaSpec(frame=FrameRule(lattice_required=True))
+    with pytest.raises(oxyz.SchemaError) as e:
+        oxyz.read_batch(MAD, record=RecordBatch[Molecule | Crystal], schema=rule)
+    assert e.value.name == "Lattice"
+    assert e.value.frame_index == first_molecule
+
+
+@pytest.mark.parametrize("target", [RecordBatch[MadSample], MadBatch])
+def test_union_batches_pickle(mad: RecordBatch[MadSample], target: Any):
+    batch = oxyz.read_batch(MAD, record=target)
+    again = pickle.loads(pickle.dumps(batch))
+    assert type(again) is type(batch)
+    assert again == batch
+    assert again.tags.tolist() == mad.tags.tolist()
+
+
+def test_single_record_batches_have_one_member_and_zero_tags():
+    single = oxyz.read_batch(MAD, record=RecordBatch[MadFrame])
+    assert single.members == (MadFrame,)
+    assert not single.tags.any()
+    assert single.where(MadFrame).all()
+    assert type(single[0]) is MadFrame
+
+
+def test_union_batch_spec_and_from_batch():
+    assert RecordBatch[MadSample].spec() == bind(MadSample).spec
+    plain = oxyz.read_batch(MAD, schema=bind(MadSample).spec)
+    with pytest.raises(TypeError, match="read_batch"):
+        RecordBatch[MadSample].from_batch(plain)

@@ -1081,18 +1081,18 @@ def _resolve_projected_batch(
     if not survivors:
         return None
     batch = _batch_from_data(data, survivors)
-    if binding is not None and conformance == "warn":
-        # Under "required" and "strict" every deviation has already raised.
-        kept = binding.kept(batch, presence, reports, survived)
-        if kept is None:
-            return None
-        batch, presence = kept
-    if spec is not None and spec.frame is not None:
-        lattice = None if binding is None else binding.carried("Lattice", presence)
-        _enforce_frame_rule_on_batch(batch, spec.frame, conformance, lattice)
     if binding is None:
+        if spec is not None and spec.frame is not None:
+            _enforce_frame_rule_on_batch(batch, spec.frame, conformance)
         return batch
-    return binding.cast_batch(batch, presence, owned=True)
+    kept = binding.kept(batch, presence, reports, survived, conformance)
+    if kept is None:
+        return None
+    batch, presence, tags = kept
+    if spec is not None and spec.frame is not None:
+        lattice = binding.carried("Lattice", presence)
+        _enforce_frame_rule_on_batch(batch, spec.frame, conformance, lattice)
+    return binding.cast_batch(batch, presence, tags, owned=True)
 
 
 def _enforce_frame_rule_on_batch(
