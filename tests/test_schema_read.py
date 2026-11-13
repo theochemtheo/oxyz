@@ -15,7 +15,7 @@ from oxyz import (
     read_batch,
 )
 from oxyz._schema_match import SchemaError, SchemaWarning
-from oxyz._schema_spec import ColumnRule, MetadataRule, SchemaSpec
+from oxyz._schema_spec import ColumnRule, FrameRule, MetadataRule, SchemaSpec
 
 DATA = Path(__file__).parent / "data"
 
@@ -529,3 +529,39 @@ WRONG_SCHEMA_READS = {
 def test_a_schema_that_is_neither_a_spec_nor_a_path_is_a_type_error(reader):
     with pytest.raises(TypeError, match="not 'dict'"):
         reader(DATA / "schema_conformant.extxyz", {"mode": "project"})
+
+
+@pytest.mark.parametrize("mode", ["validate", "project"])
+def test_streamed_schema_frame_rules_report_the_original_frame(mode):
+    spec = SchemaSpec(
+        columns=(
+            ColumnRule("species", Kind.STR),
+            ColumnRule("pos", Kind.REAL, width=3),
+        ),
+        metadata=(MetadataRule("energy", Kind.REAL),),
+        frame=FrameRule(n_atoms_min=2),
+        mode=mode,
+    )
+    frames = iread(DATA / "varying_atom_counts.xyz", schema=spec)
+    first = next(frames)
+    assert first.n_atoms == 3
+    assert first.metadata["energy"] == -76.3
+    assert np.asarray(first.columns["pos"]).shape == (3, 3)
+    with pytest.raises(SchemaError) as caught:
+        next(frames)
+    assert (caught.value.frame_index, caught.value.name) == (1, "n_atoms")
+
+
+@pytest.mark.parametrize("reader", [read, iread])
+@pytest.mark.parametrize("index", [2, -3])
+def test_schema_integer_selection_checks_the_surviving_frame_count(
+    tmp_path, reader, index
+):
+    path = _stepped_file(
+        tmp_path, "energy=0.0", "step=1 energy=1.0", "step=2 energy=2.0"
+    )
+    with (
+        pytest.warns(SchemaWarning, match="step"),
+        pytest.raises(IndexError, match="2 frames available"),
+    ):
+        reader(path, index, schema=STEP_PROJECTION, conformance="warn")

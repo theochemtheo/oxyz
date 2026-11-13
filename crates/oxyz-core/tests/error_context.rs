@@ -252,3 +252,77 @@ fn messages_are_actionable() {
     let error = first_error("1\nenergy=-1.0\nH 0.0 0.0 0.0\n");
     assert!(error.to_string().contains("Properties"), "{error}");
 }
+
+#[test]
+fn every_batch_contract_error_exposes_the_selected_file_frame() {
+    let properties = "Properties=species:S:1:pos:R:3";
+    let charge = format!("{properties}:charge:R:1");
+    let string_charge = format!("{properties}:charge:S:1");
+    let energy = format!("{properties} energy=-1.0");
+    let string_energy = format!("{properties} energy=bad");
+    let cases = [
+        (
+            charge.as_str(),
+            "H 0 0 0 0.5",
+            string_charge.as_str(),
+            "H 0 0 0 bad",
+            "column \"charge\"",
+        ),
+        (
+            charge.as_str(),
+            "H 0 0 0 0.5",
+            properties,
+            "H 0 0 0",
+            "missing column \"charge\"",
+        ),
+        (
+            properties,
+            "H 0 0 0",
+            charge.as_str(),
+            "H 0 0 0 0.5",
+            "unexpected column \"charge\"",
+        ),
+        (
+            energy.as_str(),
+            "H 0 0 0",
+            string_energy.as_str(),
+            "H 0 0 0",
+            "metadata \"energy\"",
+        ),
+        (
+            energy.as_str(),
+            "H 0 0 0",
+            properties,
+            "H 0 0 0",
+            "missing metadata \"energy\"",
+        ),
+        (
+            properties,
+            "H 0 0 0",
+            energy.as_str(),
+            "H 0 0 0",
+            "unexpected metadata \"energy\"",
+        ),
+    ];
+    for (first_comment, first_atom, last_comment, last_atom, expected) in cases {
+        let input = format!(
+            "1\n{first_comment}\n{first_atom}\n\
+             1\n{first_comment}\n{first_atom}\n\
+             1\n{last_comment}\n{last_atom}\n"
+        );
+        let error = read_batch_from(input.as_bytes(), &[1, 2]).unwrap_err();
+        assert_eq!(error.frame_index(), Some(2), "{expected}: {error}");
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+}
+
+#[test]
+fn a_later_streamed_batch_keeps_parse_error_coordinates() {
+    let input = "1\nProperties=species:S:1:pos:R:3\nH 0 0 0\ninvalid count\n";
+    let mut batches = oxyz_core::iter_batches_from(input.as_bytes(), 1).unwrap();
+    assert_eq!(batches.next().unwrap().unwrap().offsets, vec![0, 1]);
+    let error = batches.next().unwrap().unwrap_err();
+    assert_eq!(error.frame_index(), Some(1));
+    assert_eq!(error.line(), Some(4));
+    assert_eq!(error.column(), None);
+}

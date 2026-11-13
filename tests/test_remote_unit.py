@@ -8,6 +8,8 @@ import pytest
 import oxyz
 from oxyz import _remote
 
+VARYING = Path(__file__).parent / "data" / "varying_atom_counts.xyz"
+
 
 @pytest.mark.parametrize(
     ("path", "expected"),
@@ -519,3 +521,94 @@ def test_parse_storage_options_rejects_malformed():
     assert cli._parse_storage_options(["region=us-east-1"]) == {"region": "us-east-1"}
     with pytest.raises(ValueError, match="KEY=VALUE"):
         cli._parse_storage_options(["noequals"])
+
+
+@pytest.fixture
+def remote_xyz(monkeypatch):
+    def install(blob):
+        def open_source(path, *, compression, member, storage_options):
+            return _remote.RemoteSource(obj=iter([blob]), codec="plain", member=member)
+
+        monkeypatch.setattr(_remote, "open_source", open_source)
+        return "s3://bucket/frames.xyz"
+
+    return install
+
+
+class RemoteEnergy(oxyz.Record):
+    energy: oxyz.Meta[float] = oxyz.Meta()
+
+
+@pytest.mark.parametrize("index", [[], "1:1"])
+def test_empty_remote_record_batch_has_typed_field_shapes(remote_xyz, index):
+    url = remote_xyz(VARYING.read_bytes())
+    batch = oxyz.read_batch(url, index, record=oxyz.RecordBatch[RemoteEnergy])
+    assert (batch.n_frames, batch.total_atoms) == (0, 0)
+    assert batch.offsets.tolist() == [0]
+    assert batch.frame_indices.tolist() == []
+    assert batch[RemoteEnergy.energy].shape == (0,)
+    assert batch[RemoteEnergy.energy].dtype.name == "float64"
+
+
+def test_empty_remote_record_batch_still_parses_the_source(remote_xyz):
+    url = remote_xyz(b"not an atom count\n")
+    with pytest.raises(oxyz.ParseError) as caught:
+        oxyz.read_batch(url, [], record=oxyz.RecordBatch[RemoteEnergy])
+    assert (caught.value.frame_index, caught.value.line) == (0, 1)
+
+
+@pytest.mark.parametrize("reader", [oxyz.read, oxyz.iread])
+def test_remote_frame_gathers_preserve_order_and_duplicates(remote_xyz, reader):
+    url = remote_xyz(VARYING.read_bytes())
+    frames = list(reader(url, [2, 0, 2]))
+    assert [frame.n_atoms for frame in frames] == [2, 3, 2]
+    assert [frame.metadata["energy"] for frame in frames] == [-31.8, -76.3, -31.8]
+    assert [frame.columns["pos"].shape for frame in frames] == [(2, 3), (3, 3), (2, 3)]
+
+
+@pytest.mark.parametrize("reader", [oxyz.read, oxyz.iread])
+@pytest.mark.parametrize("index", [-1, 3])
+def test_remote_frame_gathers_reject_invalid_source_indices(remote_xyz, reader, index):
+    url = remote_xyz(VARYING.read_bytes())
+    with pytest.raises(IndexError, match=rf"{index}.*3 frames"):
+        list(reader(url, [0, index]))
+
+
+@pytest.mark.parametrize(("index", "energy"), [(-3, -76.3), (-1, -31.8)])
+def test_remote_streamed_negative_indices_count_from_the_end(remote_xyz, index, energy):
+    url = remote_xyz(VARYING.read_bytes())
+    (frame,) = oxyz.iread(url, index)
+    assert frame.metadata["energy"] == energy
+
+
+def test_remote_streamed_negative_index_before_the_file_raises(remote_xyz):
+    url = remote_xyz(VARYING.read_bytes())
+    with pytest.raises(IndexError, match=r"-4.*3 frames"):
+        list(oxyz.iread(url, -4))
+
+
+@pytest.mark.parametrize(
+    ("index", "indices", "counts", "energies"),
+    [
+        (":", [0, 1, 2], [3, 1, 2], [-76.3, -13.6, -31.8]),
+        ([2, 0, 2], [2, 0, 2], [2, 3, 2], [-31.8, -76.3, -31.8]),
+    ],
+    ids=["whole", "gathered"],
+)
+def test_remote_validate_batch_preserves_selected_source_indices(
+    remote_xyz, index, indices, counts, energies
+):
+    url = remote_xyz(VARYING.read_bytes())
+    spec = oxyz.SchemaSpec(metadata=(oxyz.MetadataRule("energy", oxyz.Kind.REAL),))
+    batch = oxyz.read_batch(url, index, schema=spec)
+    assert batch.frame_indices.tolist() == indices
+    assert batch.n_atoms.tolist() == counts
+    assert list(batch.metadata["energy"]) == energies
+
+
+def test_remote_validate_batch_errors_name_the_selected_file_frame(remote_xyz):
+    url = remote_xyz(VARYING.read_bytes())
+    spec = oxyz.SchemaSpec(frame=oxyz.FrameRule(n_atoms_min=2))
+    with pytest.raises(oxyz.SchemaError) as caught:
+        oxyz.read_batch(url, [2, 1], schema=spec)
+    assert (caught.value.frame_index, caught.value.name) == (1, "n_atoms")

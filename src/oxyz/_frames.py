@@ -760,30 +760,16 @@ def _read_all(
     return frames
 
 
-def _read_all_sliced(  # noqa: PLR0913  the read/schema/projection options are the contract
+def _read_all_sliced(
     path: str | Path,
     frames: slice,
     threads: int | None = None,
     *,
-    schema: SchemaSpec | str | Path | None = None,
-    conformance: Conformance = "required",
-    mode: Mode | None = None,
     compression: Compression = "infer",
     member: str | None = None,
     storage_options: _remote.StorageOptions | None = None,
 ) -> list[Frame]:
     """Read every frame, wrapping only those `frames` keeps."""
-    _require_schema_for_mode(schema, mode)
-    plan = spec = None
-    if schema is not None:
-        plan, spec = _projection(schema, mode)
-
-    if plan is not None:
-        assert spec is not None  # noqa: S101 — set alongside plan above
-        raw = _read_projected(path, plan, threads, compression, member, storage_options)
-        indices = range(len(raw))[frames]
-        return _keep_projected(raw[frames], conformance, spec, indices)
-
     if _remote.is_remote(path):
         src = _remote.open_source(
             path,
@@ -794,15 +780,7 @@ def _read_all_sliced(  # noqa: PLR0913  the read/schema/projection options are t
         data = _rust.read_frames_reader(src.obj, src.codec, src.member, threads)
     else:
         data = _rust.read_frames(str(path), threads, compression, member)
-    indices = range(len(data))[frames]
-    result = [_frame_from_data(frame) for frame in data[frames]]
-    if spec is not None:
-        from oxyz import _schema_match
-
-        compiled = _schema_match.compile_spec(spec)
-        for index, frame in zip(indices, result, strict=True):
-            _schema_match.enforce_frame(frame, compiled, conformance, index)
-    return result
+    return [_frame_from_data(frame) for frame in data[frames]]
 
 
 class IndexedFrames:

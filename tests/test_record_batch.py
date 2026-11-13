@@ -212,6 +212,29 @@ def test_subclass_of_a_declared_batch_inherits_its_record_and_fields():
     assert type(make_batch(Sub)[0]) is MaceSample
 
 
+def test_redeclaring_one_batch_field_keeps_inherited_fields():
+    class Sub(MaceBatch):
+        energy: Array
+
+    batch = make_batch(Sub, present={"stress": np.array([True, False])})
+    assert type(batch[1]) is MaceSample
+    assert (batch[1].n_atoms, batch[1].energy, batch[1].stress) == (3, -2.0, None)
+    assert batch[1].config_type == "b"
+    np.testing.assert_array_equal(
+        batch[1].positions, [[9, 10, 11], [12, 13, 14], [15, 16, 17]]
+    )
+    assert type(batch[1:]) is Sub
+    assert batch[1:].frame_indices.tolist() == [7]
+    assert batch[1:].present("stress").tolist() == [False]
+
+
+def test_a_redeclared_inherited_batch_field_must_still_have_its_batch_form():
+    with pytest.raises(TypeError, match=r"^Bad\.energy: .*float.*batches to"):
+
+        class Bad(MaceBatch):
+            energy: float
+
+
 def test_generic_form_derives_one_cached_subclass():
     derived = batch_class(RecordBatch[MaceSample])
     assert derived is batch_class(RecordBatch[MaceSample])
@@ -605,10 +628,18 @@ def test_equality_compares_type_layout_fields_and_masks():
     assert b != make_batch(MaceBatch, present={"stress": np.array([True, False])})
     assert b != make_batch(MaceBatch, frame_indices=np.array([0, 1]))
     assert b != make_batch(MaceBatch, config_type=["a", "c"])
+    assert b != make_batch(MaceBatch, offsets=np.array([0, 2, 6]))
     assert b != make_batch(batch_class(RecordBatch[MaceSample]))
     assert b.__eq__(1) is NotImplemented
     with pytest.raises(TypeError, match="unhashable"):
         hash(b)
+
+
+@pytest.mark.parametrize("other", [None, 1, {}, object()])
+def test_batch_equality_with_other_objects_is_false_in_both_directions(other):
+    batch = make_batch(MaceBatch)
+    assert batch != other
+    assert other != batch
 
 
 @pytest.mark.parametrize("target", [MaceBatch, RecordBatch[MaceSample]])
@@ -674,6 +705,31 @@ def test_repr_summarises_without_data():
     assert repr(make_batch(MaceBatch)[[]]).startswith(
         "MaceBatch(n_frames=0, total_atoms=0, positions=float64[0, 3]"
     )
+
+
+def test_repr_stays_one_line_without_dumping_field_values():
+    class Wide(Record):
+        f0: Meta[int] = Meta()
+        f1: Meta[int] = Meta()
+        f2: Meta[int] = Meta()
+        f3: Meta[int] = Meta()
+        f4: Meta[int] = Meta()
+        f5: Meta[int] = Meta()
+        f6: Meta[int] = Meta()
+        f7: Meta[int] = Meta()
+        f8: Meta[int] = Meta()
+        f9: Meta[int] = Meta()
+
+    target: Any = RecordBatch[Wide]
+    batch = target(
+        offsets=np.zeros(1001, dtype=np.int64),
+        frame_indices=np.arange(1000),
+        **{f"f{i}": np.full(1000, 987654321) for i in range(10)},
+    )
+    summary = repr(batch)
+    assert summary.startswith("WideBatch(")
+    assert "\n" not in summary
+    assert "987654321" not in summary
 
 
 def html_rows(markup: str) -> dict[str, list[str]]:
@@ -1074,6 +1130,121 @@ def test_from_batch_without_an_optional_key_is_filled_and_absent():
     filled = batch_class(RecordBatch[Filled]).from_batch(counted)
     assert (filled[0].count, filled[0].charge) == (4, 2)
     assert filled.present("count").tolist() == [True]
+
+
+def test_from_batch_fills_string_fields_with_independent_rows_and_absence_masks():
+    class Text(Record):
+        labels: Column[list[list[str]] | None] = Column(width=2, fill="unknown")
+        names: Meta[list[str]] = Meta(shape=(2,), fill="none")
+        title: Meta[str | None] = Meta(fill="missing")
+
+    plain = Batch(
+        offsets=np.array([0, 1, 3]),
+        frame_indices=np.array([4, 9]),
+        columns={},
+        metadata={},
+    )
+    batch = RecordBatch[Text].from_batch(plain)
+    assert batch[Text.labels] == [
+        ["unknown", "unknown"],
+        ["unknown", "unknown"],
+        ["unknown", "unknown"],
+    ]
+    assert batch[Text.names] == [["none", "none"], ["none", "none"]]
+    assert batch[Text.title] == ["missing", "missing"]
+    assert batch.present(Text.labels).tolist() == [False, False]
+    assert batch.present(Text.title).tolist() == [False, False]
+    assert [record.labels for record in batch] == [None, None]
+    assert [record.title for record in batch] == [None, None]
+    assert [record.names for record in batch] == [["none", "none"], ["none", "none"]]
+    batch[Text.labels][0][0] = "changed"
+    batch[Text.names][0][0] = "changed"
+    assert batch[Text.labels][1] == ["unknown", "unknown"]
+    assert batch[Text.names][1] == ["none", "none"]
+
+
+def test_from_batch_copies_nested_string_lists_from_the_source():
+    class Text(Record):
+        labels: Column[list[list[str]]] = Column(width=2)
+        names: Meta[list[str]] = Meta(shape=(2,))
+        title: Meta[str] = Meta()
+
+    labels = [["H", "hydrogen"], ["He", "helium"]]
+    names = [["train", "gas"], ["test", "gas"]]
+    titles = ["first", "second"]
+    plain = Batch(
+        offsets=np.array([0, 1, 2]),
+        frame_indices=np.array([2, 7]),
+        columns={"labels": labels},
+        metadata={"names": names, "title": titles},
+    )
+    batch = RecordBatch[Text].from_batch(plain)
+    labels[0][0] = "source"
+    names[0][0] = "source"
+    titles[0] = "source"
+    assert batch[Text.labels] == [["H", "hydrogen"], ["He", "helium"]]
+    assert batch[Text.names] == [["train", "gas"], ["test", "gas"]]
+    assert batch[Text.title] == ["first", "second"]
+    assert (batch[0].labels, batch[0].names, batch[0].title) == (
+        [["H", "hydrogen"]],
+        ["train", "gas"],
+        "first",
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "type_name"),
+    [(1.0, "float"), ((1.0,), "tuple"), ({"value": 1.0}, "dict"), (None, "NoneType")],
+)
+def test_from_batch_rejects_non_batched_metadata_with_key_context(value, type_name):
+    class Energy(Record):
+        energy: Meta[float] = Meta()
+
+    class EnergyBatch(RecordBatch[Energy]):
+        energy: Array
+
+    plain = Batch(
+        offsets=np.array([0, 0]),
+        frame_indices=np.array([7]),
+        columns={},
+        metadata={"energy": value},
+    )
+    with pytest.raises(
+        SchemaError,
+        match=rf"^EnergyBatch: metadata 'energy': expected R, found {type_name}$",
+    ) as error:
+        EnergyBatch.from_batch(plain)
+    assert (error.value.name, error.value.frame_index) == ("energy", None)
+
+
+@pytest.mark.parametrize(
+    ("layout", "error", "reason"),
+    [
+        ({"offsets": np.array([1, 2])}, ValueError, r"offsets: must start at 0"),
+        ({"offsets": np.array([0, 2, 1])}, ValueError, r"offsets: is decreasing"),
+        (
+            {"offsets": np.array([False, True])},
+            TypeError,
+            r"offsets: expected an integer array",
+        ),
+        (
+            {"frame_indices": np.array([0, 1])},
+            ValueError,
+            r"frame_indices: expected shape \(1,\), got \(2,\)",
+        ),
+    ],
+)
+def test_from_batch_checks_hand_built_layout_before_reading_fields(
+    layout, error, reason
+):
+    plain = Batch(
+        offsets=np.array([0, 1]),
+        frame_indices=np.array([7]),
+        columns={},
+        metadata={},
+    )
+    with pytest.raises(error, match=rf"^MaceBatch\.{reason}"):
+        MaceBatch.from_batch(dataclasses.replace(plain, **layout))
 
 
 def test_from_batch_without_a_required_key_names_it():

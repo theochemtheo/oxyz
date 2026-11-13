@@ -231,6 +231,7 @@ def test_read_batch_whole_file_empty_is_no_frames(tmp_path: Path) -> None:
         {"atoms_per_batch": 0},
         {"frames_per_batch": 2, "seed": 0},
         {"frames_per_batch": 2, "threads": 0},
+        {"frames_per_batch": 2, "max_scaler": 4},
         {"atoms_per_batch": 4, "memory_scales_with": "n_atoms"},
         {"memory_scales_with": "n_atoms", "max_scaler": 0},
         {"memory_scales_with": "n_atoms", "max_scaler": 4, "shuffle": True},
@@ -749,3 +750,65 @@ def test_validate_batch_selection_and_out_of_range(tmp_path):
     assert batch.frame_indices.tolist() == [1, 0, 1]
     with pytest.raises(IndexError, match="out of range"):
         oxyz.read_batch(ok, [5], schema=spec)
+
+
+@pytest.mark.parametrize("index", [-4, "-4"])
+def test_read_batch_rejects_a_negative_index_before_the_file(index):
+    with pytest.raises(IndexError, match=r"-4.*3 frames"):
+        oxyz.read_batch(VARYING, index)
+
+
+@pytest.mark.parametrize("index", [-1, [0], slice(None, None, -1)])
+def test_iread_rejects_archive_members_on_plain_files(index):
+    with pytest.raises(ValueError, match=r"member=.*archive"):
+        list(oxyz.iread(VARYING, index, member="inner.xyz"))
+
+
+def test_iread_batch_rejects_archive_members_on_plain_files():
+    with pytest.raises(ValueError, match=r"member=.*archive"):
+        oxyz.iread_batch(VARYING, frames_per_batch=2, member="inner.xyz")
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [[0.0, 1.0], [[0, 1]], ["0", "1"], np.array(1)],
+    ids=["floats", "two-dimensional", "strings", "zero-dimensional"],
+)
+def test_batch_gather_rejects_non_integer_or_non_vector_positions(selection):
+    batch = oxyz.read_batch(VARYING)
+    with pytest.raises(TypeError, match="1-D sequence of integers"):
+        batch[selection]
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [[], np.array([], dtype=np.intp), [False, False], slice(1, 1, -1)],
+    ids=["list", "array", "mask", "reverse-slice"],
+)
+def test_empty_batch_gathers_preserve_field_shapes(selection):
+    batch = oxyz.read_batch(VARYING, [2, 0])
+    empty = batch[selection]
+    assert (empty.n_frames, empty.total_atoms) == (0, 0)
+    assert_array_equal(empty.offsets, [0])
+    assert empty.frame_indices.shape == (0,)
+    assert list(empty.columns["species"]) == []
+    assert as_array(empty.columns["pos"]).shape == (0, 3)
+    assert as_array(empty.columns["forces"]).shape == (0, 3)
+    assert as_array(empty.metadata["energy"]).shape == (0,)
+    assert as_array(empty.metadata["Lattice"]).shape == (0, 9)
+
+
+@pytest.mark.parametrize("threads", [1, None])
+def test_validate_batches_preserve_values_and_source_indices(threads):
+    from oxyz import Kind, MetadataRule, SchemaSpec
+
+    spec = SchemaSpec(metadata=(MetadataRule("energy", Kind.REAL),))
+    batches = list(
+        oxyz.iread_batch(VARYING, frames_per_batch=1, schema=spec, threads=threads)
+    )
+    assert [b.frame_indices.tolist() for b in batches] == [[0], [1], [2]]
+    assert [b.offsets.tolist() for b in batches] == [[0, 3], [0, 1], [0, 2]]
+    assert_allclose(
+        [as_array(b.metadata["energy"])[0] for b in batches],
+        [-76.3, -13.6, -31.8],
+    )

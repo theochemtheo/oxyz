@@ -304,6 +304,23 @@ def test_local_alias_is_a_definition_error_naming_the_field():
         define_local()
 
 
+def test_an_unresolved_annotation_names_the_field_after_resolvable_fields():
+    with pytest.raises(TypeError, match=r"^Bad\.energy: .*Undefined"):
+        define("step: Meta[int] = Meta()\nenergy: Meta[Undefined] = Meta()")
+
+
+def test_an_unresolved_mixin_annotation_is_a_class_definition_error():
+    type Local = int
+
+    class UnresolvedMixin:
+        note: Local
+
+    with pytest.raises(TypeError, match=r"^Bad: .*Local"):
+
+        class Bad(UnresolvedMixin, Record):
+            energy: Meta[float] = Meta()
+
+
 DEFINITION_ERRORS = [
     ("unsupported", "energy: Meta[complex] = Meta()", "energy", "not a supported"),
     ("plain-annotation", "energy: float = Meta()", "energy", r"is not Meta\["),
@@ -393,6 +410,54 @@ def test_init_accepts_numpy_scalars_and_keeps_them():
 def test_dataclass_replace_is_checked():
     with pytest.raises(TypeError, match=r"^MaceSample\.energy: "):
         dataclasses.replace(make_mace(), energy="x")
+
+
+@pytest.mark.parametrize(
+    ("override", "error", "reason"),
+    [
+        ({"active": 1}, TypeError, "expected bool, got int"),
+        ({"active": "true"}, TypeError, "expected bool, got str"),
+        ({"species": ("H", "He")}, TypeError, "expected a list, got tuple"),
+        ({"species": ["H", 2]}, TypeError, "expected str, got int"),
+        ({"labels": ["H", "He"]}, TypeError, "expected a list, got str"),
+        ({"labels": [["H", "h"], ["He"]]}, ValueError, "expected 2 items, got 1"),
+        (
+            {"names": np.array(["train", "gas"])},
+            TypeError,
+            "expected a list, got ndarray",
+        ),
+    ],
+)
+def test_checked_bool_and_string_fields_report_the_field(override, error, reason):
+    class Labelled(Record):
+        active: Meta[bool] = Meta()
+        species: Column[list[str]] = Column()
+        labels: Column[list[list[str]]] = Column(width=2)
+        names: Meta[list[str]] = Meta(shape=(2,))
+
+    values: dict[str, Any] = {
+        "n_atoms": 2,
+        "active": True,
+        "species": ["H", "He"],
+        "labels": [["H", "h"], ["He", "he"]],
+        "names": ["train", "gas"],
+    }
+    (field,) = override
+    with pytest.raises(error, match=rf"^Labelled\.{field}: {reason}$"):
+        Labelled(**(values | override))
+
+
+@pytest.mark.parametrize("active", [True, np.True_])
+def test_checked_bool_and_string_values_are_kept_without_conversion(active):
+    class Labelled(Record):
+        active: Meta[bool] = Meta()
+        species: Column[list[str]] = Column()
+
+    species = ["H", "He"]
+    record = Labelled(n_atoms=2, active=active, species=species)
+    assert record.active is active
+    assert record.species is species
+    assert record.species == ["H", "He"]
 
 
 def test_trusted_skips_the_checks():
@@ -647,6 +712,23 @@ def test_from_frame_checks_the_atom_count(
     frame = Frame(n_atoms=n_atoms, columns={}, metadata={"step": 0, "energy": 1.0})
     with pytest.raises(error, match=rf"^Stepped\.n_atoms: .*{reason}"):
         Stepped.from_frame(frame)
+
+
+@pytest.mark.parametrize(
+    ("value", "type_name"),
+    [(None, "NoneType"), ((1.0,), "tuple"), ({"value": 1.0}, "dict")],
+)
+def test_from_frame_wraps_unsupported_metadata_types_with_key_context(value, type_name):
+    frame = Frame(n_atoms=0, columns={}, metadata={"step": 4, "energy": value})
+    with pytest.raises(
+        SchemaError,
+        match=(
+            r"^Stepped: metadata 'energy': "
+            rf"unsupported metadata value type: {type_name}$"
+        ),
+    ) as error:
+        Stepped.from_frame(frame)
+    assert (error.value.name, error.value.frame_index) == ("energy", None)
 
 
 def test_from_frame_copies_string_columns():

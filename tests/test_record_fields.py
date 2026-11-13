@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import types
-from typing import TYPE_CHECKING, Annotated, assert_type
+from typing import TYPE_CHECKING, Annotated, Any, assert_type
 
 import numpy as np
 import numpy.typing as npt
 import pytest
 
-from oxyz import Cell, Column, FieldSpec, Matrix3, Meta
+from oxyz import Cell, Column, FieldSpec, Matrix3, Meta, Record
 from oxyz._record_fields import FieldType, field_type, unwrap
 from oxyz._schema import Kind
 
@@ -170,6 +170,32 @@ UNSUPPORTED = "is not a supported field type"
 def test_field_type_rejects(annotation, spec, match):
     with pytest.raises(TypeError, match=match):
         field_type(annotation, spec)
+
+
+@pytest.mark.parametrize(
+    ("annotation", "specifier"),
+    [
+        pytest.param(Column[np.ndarray[Any, Any]], Column(), id="untyped-ndarray"),
+        pytest.param(Column[list[int]], Column(), id="integer-list-column"),
+        pytest.param(Column[list[list[int]]], Column(width=2), id="integer-list-rows"),
+        pytest.param(Meta[list[int]], Meta(shape=(2,)), id="integer-list-metadata"),
+    ],
+)
+def test_record_declarations_reject_unsupported_array_and_list_annotations(
+    annotation, specifier
+):
+    with pytest.raises(
+        TypeError, match=r"^Invalid\.values: .*not a supported field type"
+    ):
+        type(
+            "Invalid",
+            (Record,),
+            {
+                "__module__": __name__,
+                "__annotations__": {"values": annotation},
+                "values": specifier,
+            },
+        )
 
 
 def test_unwrap_strips_pep695_alias_and_annotated():

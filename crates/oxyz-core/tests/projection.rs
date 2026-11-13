@@ -1096,3 +1096,49 @@ fn a_column_major_entry_keeps_a_flat_value_as_written() {
     assert!(out.deviations.is_empty());
     assert_eq!(out.frame.metadata[0].1, flat);
 }
+
+#[test]
+fn column_major_projection_preserves_non_real_value_kinds() {
+    let cases = [
+        (
+            ColumnKind::Int,
+            Value::IntArray2D {
+                rows: 2,
+                cols: 3,
+                data: vec![1, 2, 3, 4, 5, 6],
+            },
+            Value::IntArray(vec![1, 4, 2, 5, 3, 6]),
+        ),
+        (
+            ColumnKind::Bool,
+            Value::BoolArray2D {
+                rows: 2,
+                cols: 3,
+                data: vec![true, false, false, false, true, true],
+            },
+            Value::BoolArray(vec![true, false, false, true, false, true]),
+        ),
+        (
+            ColumnKind::Str,
+            Value::StrArray2D {
+                rows: 2,
+                cols: 3,
+                data: Vec::from(["a", "b", "c", "d", "e", "f"].map(CompactString::from)),
+            },
+            Value::StrArray(Vec::from(
+                ["a", "d", "b", "e", "c", "f"].map(CompactString::from),
+            )),
+        ),
+    ];
+    for (kind, value, expected) in cases {
+        let mut entry = plan_entry_meta("m", kind, Some(6));
+        entry.column_major = true;
+        let plan = ProjectionPlan {
+            metadata: vec![entry],
+            ..Default::default()
+        };
+        let out = project_frame(&frame_meta(0, vec![("m".into(), value)]), &plan);
+        assert!(out.deviations.is_empty());
+        assert_eq!(out.frame.metadata, vec![("m".into(), expected)]);
+    }
+}
