@@ -73,6 +73,16 @@ class MaceBatch(RecordBatch[MaceSample]):
     config_type: list[str]
 
 
+class ReceiverNames(Record):
+    cls: Meta[str] = Meta()
+    self: Meta[str] = Meta()
+
+
+class ReceiverNamesBatch(RecordBatch[ReceiverNames]):
+    cls: list[str]
+    self: list[str]
+
+
 MACE_BATCH_BODY = """\
 positions: Array
 forces: Array
@@ -234,6 +244,40 @@ def test_init_keeps_arrays_as_given_and_instances_are_frozen():
     assert b.offsets is offsets
     with pytest.raises(dataclasses.FrozenInstanceError):
         b.energy = np.zeros(2)
+
+
+def test_receiver_named_fields_survive_frame_conversion():
+    frame = oxyz.Frame(n_atoms=0, columns={}, metadata={"cls": "a", "self": "b"})
+    record = ReceiverNames.from_frame(frame)
+    assert (record.cls, record.self) == ("a", "b")
+
+
+def test_receiver_named_fields_can_be_used_in_a_checked_batch():
+    batch = ReceiverNamesBatch(
+        offsets=np.array([0, 0]),
+        frame_indices=np.array([2]),
+        cls=["a"],
+        self=["b"],
+    )
+    assert (batch.cls, batch.self) == (["a"], ["b"])
+
+
+@pytest.mark.parametrize("index", [0, slice(None), [0]])
+def test_receiver_named_fields_survive_batch_indexing(index):
+    batch = ReceiverNamesBatch.from_batch(
+        Batch(
+            offsets=np.array([0, 0]),
+            frame_indices=np.array([2]),
+            columns={},
+            metadata={"cls": ["a"], "self": ["b"]},
+        )
+    )
+    selected = batch[index]
+    if isinstance(selected, ReceiverNames):
+        assert (selected.cls, selected.self) == ("a", "b")
+    else:
+        assert (selected.cls, selected.self) == (["a"], ["b"])
+        assert selected.frame_indices.tolist() == [2]
 
 
 def test_the_base_class_is_not_a_batch_of_anything():

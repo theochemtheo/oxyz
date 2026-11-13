@@ -22,6 +22,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   integer-valued `Lattice` no longer fails a project-mode schema; an integer
   above 2^53 loses precision in the conversion. Validate mode is unchanged.
 
+### Fixed
+
+- Record fields named `cls` or `self` work in conversions, batch construction
+  and indexing.
+
 ### Internal
 
 - ty floor raised to 0.0.100.

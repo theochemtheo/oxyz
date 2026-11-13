@@ -158,6 +158,7 @@ def _taking_present(init: Callable[..., None]) -> Callable[..., None]:
     @functools.wraps(init)
     def wrapped(
         self: RecordBatch[Any],
+        /,
         *,
         present: Mapping[str, npt.NDArray[np.bool_]] | None = None,
         **values: object,
@@ -317,7 +318,7 @@ class RecordBatch[R: Record](FrameLayout, metaclass=RecordBatchMeta):
 
     @classmethod
     def _trusted(
-        cls, *, present: Mapping[str, npt.NDArray[np.bool_]], **values: object
+        cls, /, *, present: Mapping[str, npt.NDArray[np.bool_]], **values: object
     ) -> Self:
         """Build a batch from values and masks already known to fit, unchecked.
 

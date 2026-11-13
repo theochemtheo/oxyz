@@ -530,7 +530,7 @@ class Record(metaclass=RecordMeta):
                 raise type(error)(f"{cls.__name__}.{name}: {error}") from None
 
     @classmethod
-    def _trusted(cls, **values: object) -> Self:
+    def _trusted(cls, /, **values: object) -> Self:
         """Build an instance from values already known to fit, unchecked."""
         record = object.__new__(cls)
         for name, value in values.items():
