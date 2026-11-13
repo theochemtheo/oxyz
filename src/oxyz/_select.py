@@ -322,7 +322,7 @@ def read_records(
         if record is None:
             raise IndexError(
                 f"frame {index} was dropped: it does not fit "
-                f"{binding.record.__name__} under conformance='warn'"
+                f"{binding.name} under conformance='warn'"
             )
         return record
     if isinstance(index, slice):

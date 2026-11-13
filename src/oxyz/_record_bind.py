@@ -5,17 +5,28 @@ from __future__ import annotations
 import dataclasses
 import functools
 import math
+import types
+import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast, final, get_origin
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    TypeAliasType,
+    Union,
+    cast,
+    final,
+    get_origin,
+)
 
 import numpy as np
 
 from oxyz._frames import Frame
 from oxyz._project import mismatched
-from oxyz._record import Record
+from oxyz._record import Record, spec_of
 from oxyz._record_batch import RecordBatch, batch_class
+from oxyz._record_union import members_of, union_plan
 from oxyz._schema import KIND_TO_LETTER, column_sig, metadata_sig
-from oxyz._schema_match import SchemaError
+from oxyz._schema_match import SchemaError, SchemaWarning
 from oxyz._schema_spec import SchemaSpec
 
 if TYPE_CHECKING:
@@ -27,6 +38,7 @@ if TYPE_CHECKING:
     from oxyz._batch import Batch
     from oxyz._record import FieldSpec, Fill
     from oxyz._record_fields import FieldType
+    from oxyz._record_union import Key, UnionPlan
     from oxyz._rust import DeviationData, ProjectionPlan
     from oxyz._schema_match import Conformance
 
@@ -36,29 +48,36 @@ type _Fields = tuple[tuple[str, FieldType, FieldSpec[Any]], ...]
 @final
 @dataclass(frozen=True, eq=False)
 class Binding:
-    """A record or batch class bound to a read: its plans, its spec and its casts.
+    """A record, union of records or batch class bound to a read.
 
-    `target` is the class a read builds: `record` for a frame read, a
-    `RecordBatch` class of `record` for a batch read.
+    It holds the read's plans, its spec and its casts. `target` is the
+    class a batch read builds, or the sole member of a frame read's union;
+    `record` is that sole member, `None` for a union of several. `fields`
+    are the union's merged fields, and `member_fields` each member's own.
     """
 
-    target: type
-    record: type[Record]
+    target: type | None
+    record: type[Record] | None
+    union: UnionPlan
+    name: str
     spec: SchemaSpec
     frame_plan: ProjectionPlan
     fields: _Fields
+    member_fields: tuple[_Fields, ...]
     reported: Mapping[str, int]
     optional: tuple[tuple[str, int], ...]
-    _build: Callable[..., Record] = dataclasses.field(repr=False, compare=False)
+    _builds: tuple[Callable[..., Record], ...] = dataclasses.field(
+        repr=False, compare=False
+    )
 
     @property
     def batch_plan(self) -> ProjectionPlan:
-        """The plan a batch read projects with: `X | None` fields filled, not omitted.
+        """The plan a batch read projects with: optional fields filled, not omitted.
 
-        Raises `SchemaError` for an `X | None` field of a kind other than
+        Raises `SchemaError` for an optional field of a kind other than
         REAL declared without a `fill`.
         """
-        return _plan(self.record, self.fields, promote=self.frame_plan[2], batch=True)
+        return _plan(self.fields, self.union, promote=self.frame_plan[2], batch=True)
 
     @functools.cached_property
     def _batched(self) -> tuple[tuple[str, FieldType, str], ...]:
@@ -67,16 +86,28 @@ class Binding:
             (name, field.batched(), _key(spec)) for name, field, spec in self.fields
         )
 
-    def caster(self, conformance: Conformance) -> Callable[[Frame, int], Record]:  # noqa: ARG002 — a single record's cast never fails
-        """Return the hook a frame read applies to each kept frame and its index."""
-        return self._build
+    def caster(self, conformance: Conformance) -> Callable[[Frame, int], Record | None]:
+        """Return the hook a frame read applies to each kept frame and its index.
+
+        For a union, the frame's matching keys pick the member. A frame no
+        member admits raises `SchemaError` under `"strict"` and
+        `"required"`; under `"warn"` it warns, and the hook returns `None`.
+        """
+        if len(self._builds) == 1:
+            return self._builds[0]
+        return _matcher(self, conformance)
 
     def cast_frame(self, frame: Frame, *, owned: bool) -> Record:
         """Build a record from a frame projected with `frame_plan`.
 
-        Unless `owned`, arrays come back read-only.
+        Unless `owned`, arrays come back read-only. Raises `SchemaError` if
+        no member of a union admits the frame.
         """
-        return self._build(frame, owned=owned)
+        if len(self._builds) == 1:
+            return self._builds[0](frame, owned=owned)
+        record = _matcher(self, "required")(frame, None, owned=owned)
+        assert record is not None  # noqa: S101 — "required" raises rather than drop
+        return record
 
     def cast_batch(
         self, batch: Batch, present: npt.NDArray[np.bool_], *, owned: bool
@@ -172,14 +203,16 @@ def bind(
 ) -> Binding:
     """Bind `target` for a read; `schema` describes the dataset.
 
-    `target` is a `Record` subclass for a frame read, or a `RecordBatch`
-    subclass or `RecordBatch[R]` for a batch read; `batch` says which the
-    reader takes, and `None` accepts either. `RecordBatch[R]` binds as the
-    class derived for it.
+    `target` is a `Record` subclass or a union of sibling ones for a frame
+    read, or a `RecordBatch` subclass or `RecordBatch[R]` for a batch read;
+    `batch` says which the reader takes, and `None` accepts either.
+    `RecordBatch[R]` binds as the class derived for it, and every spelling
+    of one union binds as its members in order.
 
-    Raises `TypeError` for any other `target`, naming the form to use, and
-    `SchemaError` where `schema` disagrees with one of the record's fields,
-    or its frame rule requires `Lattice` and no field reads that key.
+    Raises `TypeError` for any other `target`, naming the form to use, or
+    for a union `union_plan` rejects, and `SchemaError` where `schema`
+    disagrees with one of the fields, or its frame rule requires `Lattice`
+    and no field reads that key.
     """
     if _names_batch(target):
         generic = get_origin(target) is RecordBatch
@@ -194,7 +227,7 @@ def bind(
     elif batch:
         raise TypeError(_not_a_batch(target))
     else:
-        target = _record_class(target)
+        target = _members(target)
     if schema is not None and not isinstance(schema, SchemaSpec):
         schema = SchemaSpec.from_file(schema)
     if schema is not None and not _hashable(schema):
@@ -234,6 +267,13 @@ def _not_a_batch(target: object) -> str:
     )
 
 
+def _members(target: object) -> tuple[type[Record], ...]:
+    union = get_origin(target) in {Union, types.UnionType}
+    if union or isinstance(target, TypeAliasType):
+        return members_of(target)
+    return (_record_class(target),)
+
+
 def _record_class(target: object) -> type[Record]:
     if not (isinstance(target, type) and issubclass(target, Record)):
         raise TypeError(f"record= takes a Record subclass, got {target!r}")
@@ -246,32 +286,51 @@ def _record_class(target: object) -> type[Record]:
 
 
 @functools.lru_cache(maxsize=64)
-def _bind(target: type, schema: SchemaSpec | None) -> Binding:
-    record = cast("type[Record]", getattr(target, "__record__", target))
-    fields = record.__record_fields__
-    strict = record.__record_strict__
-    spec = record.spec()
+def _bind(
+    target: tuple[type[Record], ...] | type, schema: SchemaSpec | None
+) -> Binding:
+    if isinstance(target, tuple):
+        members, built = target, target[0] if len(target) == 1 else None
+    else:
+        members = (cast("type[RecordBatch[Any]]", target).__record__,)
+        built = target
+    union = union_plan(members)
+    fields, name, strict = union.fields, union.name, union.strict
+    spec = spec_of(fields, union)
     if schema is not None:
-        _check_agrees(record, fields, schema, strict=strict)
-        _check_lattice_read(record, fields, schema)
+        _check_agrees(name, fields, schema, strict=strict)
+        _check_lattice_read(name, fields, schema)
         if schema.frame is not None:
             spec = dataclasses.replace(spec, frame=schema.frame)
-    reported = _reported(fields)
+    reported = _reported(fields, union)
+    matching = frozenset(union.matching)
+    by_name = {entry[0]: entry for entry in fields}
+    member_fields = tuple(
+        tuple(by_name[field] for field in names) for names in union.member_fields
+    )
     return Binding(
-        target=target,
-        record=record,
+        target=built,
+        record=members[0] if len(members) == 1 else None,
+        union=union,
+        name=name,
         spec=spec,
-        frame_plan=_plan(record, fields, promote=not strict, batch=False),
+        frame_plan=_plan(fields, union, promote=not strict, batch=False),
         fields=fields,
+        member_fields=member_fields,
         reported=reported,
         optional=tuple(
-            (name, reported[name]) for name, field, _ in fields if field.optional
+            (field, reported[field])
+            for field, _, field_spec in fields
+            if (field_spec.axis, _key(field_spec)) in matching
         ),
-        _build=_builder(record, fields, strict=strict),
+        _builds=tuple(
+            _builder(member, own, strict=strict)
+            for member, own in zip(members, member_fields, strict=True)
+        ),
     )
 
 
-def _reported(fields: _Fields) -> dict[str, int]:
+def _reported(fields: _Fields, union: UnionPlan) -> dict[str, int]:
     """Each field with a column in the core's presence report, and that column.
 
     The report has a column per optional plan entry, columns then metadata.
@@ -280,7 +339,7 @@ def _reported(fields: _Fields) -> dict[str, int]:
         name
         for axis in ("column", "metadata")
         for name, field, spec in fields
-        if field.axis == axis and (field.optional or spec.fill is not None)
+        if field.axis == axis and (axis, _key(spec)) not in union.required
     ]
     return {name: column for column, name in enumerate(entries)}
 
@@ -291,10 +350,10 @@ def _key(spec: FieldSpec[Any]) -> str:
 
 
 def _check_agrees(
-    record: type[Record], fields: _Fields, schema: SchemaSpec, *, strict: bool
+    name: str, fields: _Fields, schema: SchemaSpec, *, strict: bool
 ) -> None:
     """Raise `SchemaError` where `schema`'s rule for a field's key disagrees with it."""
-    for name, field, spec in fields:
+    for field_name, field, spec in fields:
         key = _key(spec)
         if field.axis == "column":
             column = schema.rule_for(key, "column")
@@ -317,15 +376,13 @@ def _check_agrees(
             continue
         note = field.strict_note(kind) if agrees else ""
         raise SchemaError(
-            f"{record.__name__}.{name}: schema= gives {field.axis} {key!r} as "
+            f"{name}.{field_name}: schema= gives {field.axis} {key!r} as "
             f"{found}, the record reads {field.signature()}{note}",
             name=key,
         )
 
 
-def _check_lattice_read(
-    record: type[Record], fields: _Fields, schema: SchemaSpec
-) -> None:
+def _check_lattice_read(name: str, fields: _Fields, schema: SchemaSpec) -> None:
     """Raise `SchemaError` if `schema` requires `Lattice` and no field reads it."""
     if schema.frame is None or not schema.frame.lattice_required:
         return
@@ -334,19 +391,19 @@ def _check_lattice_read(
     ):
         return
     raise SchemaError(
-        f"{record.__name__}: schema= requires 'Lattice' in every frame, but no "
+        f"{name}: schema= requires 'Lattice' in every frame, but no "
         "field reads it; declare a Cell field",
         name="Lattice",
     )
 
 
 def _plan(
-    record: type[Record], fields: _Fields, *, promote: bool, batch: bool
+    fields: _Fields, union: UnionPlan, *, promote: bool, batch: bool
 ) -> ProjectionPlan:
     columns: list[tuple] = []
     metadata: list[tuple] = []
     for name, field, spec in fields:
-        required, fill = _presence(record, name, field, spec, batch=batch)
+        required, fill = _presence(union, name, field, spec, batch=batch)
         letter = KIND_TO_LETTER[field.kind]
         if field.axis == "column":
             columns.append((_key(spec), letter, field.width, required, fill))
@@ -359,23 +416,30 @@ def _plan(
 
 
 def _presence(
-    record: type[Record],
+    union: UnionPlan,
     name: str,
     field: FieldType,
     spec: FieldSpec[Any],
     *,
     batch: bool,
 ) -> tuple[bool, Fill | None]:
-    """Return the plan entry's `(required, fill)`; a required entry has no fill."""
-    if not field.optional:
-        return spec.fill is None, spec.fill
+    """Return the plan entry's `(required, fill)`; a required entry has no fill.
+
+    A matching key is left absent on a frame read, so that its presence
+    picks the member, and filled on a batch read.
+    """
+    key = (field.axis, _key(spec))
+    if key in union.required:
+        return True, None
+    if key in union.core_filled:
+        return False, spec.fill
     if not batch:
         return False, None
     fill = field.batch_fill(spec.fill)
     if fill is not None:
         return False, fill
     raise SchemaError(
-        f"{record.__name__}.{name}: {field.no_null()} to read it into a batch",
+        f"{union.name}.{name}: {field.no_null()} to read it into a batch",
         name=_key(spec),
     )
 
@@ -420,3 +484,46 @@ def _builder(
         return out
 
     return build
+
+
+def _matcher(
+    binding: Binding, conformance: Conformance
+) -> Callable[..., Record | None]:
+    """Return `match(frame, frame_index, *, owned=True)` for a union's binding.
+
+    It builds the member the frame's matching keys pick.
+    """
+    union, builds = binding.union, binding._builds  # noqa: SLF001 — the binding's own builders
+    probes = tuple((key, key[0] == "column") for key in union.matching)
+    member_for = union.member_for
+    warns = conformance == "warn"
+
+    def match(
+        frame: Frame, frame_index: int | None, *, owned: bool = True
+    ) -> Record | None:
+        columns, metadata = frame.columns, frame.metadata
+        signature = frozenset(
+            key
+            for key, is_column in probes
+            if key[1] in (columns if is_column else metadata)
+        )
+        member = member_for(signature)
+        if member is not None:
+            return builds[member](frame, owned=owned)
+        message = _unadmitted(union, signature, frame_index)
+        if not warns:
+            raise SchemaError(message, frame_index=frame_index)
+        warnings.warn(message, SchemaWarning, stacklevel=2)
+        return None
+
+    return match
+
+
+def _unadmitted(
+    union: UnionPlan, signature: frozenset[Key], frame_index: int | None
+) -> str:
+    keys = ", ".join(sorted(key for _, key in signature))
+    where = "" if frame_index is None else f"frame {frame_index}: "
+    return (
+        f"{where}no member of {union.name} admits keys {{{keys}}}; {union.describe()}"
+    )

@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ase import Atoms
+    from typing_extensions import TypeForm
 
     from oxyz._record import Record
     from oxyz._record_bind import Binding
@@ -165,7 +166,7 @@ def read[R: Record](
     path: str | Path,
     index: int,
     *,
-    record: type[R],
+    record: TypeForm[R],
     threads: int | None = ...,
     schema: SchemaSpec | str | Path | None = ...,
     conformance: Conformance = ...,
@@ -180,7 +181,7 @@ def read[R: Record](
     path: str | Path,
     index: str,
     *,
-    record: type[R],
+    record: TypeForm[R],
     threads: int | None = ...,
     schema: SchemaSpec | str | Path | None = ...,
     conformance: Conformance = ...,
@@ -195,7 +196,7 @@ def read[R: Record](
     path: str | Path,
     index: slice | Sequence[int] = ...,
     *,
-    record: type[R],
+    record: TypeForm[R],
     threads: int | None = ...,
     schema: SchemaSpec | str | Path | None = ...,
     conformance: Conformance = ...,
@@ -257,7 +258,7 @@ def read[R: Record](  # noqa: PLR0913  the index/schema/projection/source option
     path: str | Path,
     index: int | str | slice | Sequence[int] = ":",
     *,
-    record: type[R] | None = None,
+    record: TypeForm[R] | None = None,
     threads: int | None = None,
     schema: SchemaSpec | str | Path | None = None,
     conformance: Conformance = "required",
@@ -286,7 +287,11 @@ def read[R: Record](  # noqa: PLR0913  the index/schema/projection/source option
         A `Record` subclass to read each frame into instead of a `Frame`.
         Each frame is projected onto the record's fields, as `Record.spec`
         describes them, and its arrays are writable and belong to that
-        record alone. A record read checks only the frames `index`
+        record alone. A union of sibling records (`A | B`, or a `type`
+        alias of one) reads each frame into the one member whose fields
+        match the optional keys the frame carries; a frame no member
+        admits is an error, or dropped with a warning under
+        `conformance="warn"`. A record read checks only the frames `index`
         selects. A non-negative integer or a bounded forward slice stops
         reading after its last frame; any other `index` parses the whole
         file. Cannot be combined with `mode`. With `record`, `schema`
@@ -331,7 +336,8 @@ def read[R: Record](  # noqa: PLR0913  the index/schema/projection/source option
     -------
     Frame or list[Frame], or R or list[R] with `record=R`
         A single `Frame` for an integer `index`, otherwise a list. With
-        `record`, instances of it in place of frames.
+        `record`, instances of it, or of a union's members, in place of
+        frames.
 
     Raises
     ------
@@ -340,14 +346,15 @@ def read[R: Record](  # noqa: PLR0913  the index/schema/projection/source option
     oxyz.SchemaError
         With `record`, under `conformance="strict"` or `"required"`: a frame
         lacks a required field or has one of the wrong kind, with the frame
-        index and key. Before reading: `schema` disagrees with the record,
-        or its frame rule requires `Lattice` and no field reads it.
+        index and key, or no member of a union admits it. Before reading:
+        `schema` disagrees with the record, or its frame rule requires
+        `Lattice` and no field reads it.
     IndexError
         An integer `index` is out of range; with `record`, it names a frame
         dropped under `conformance="warn"`.
     TypeError
-        `record` is not a `Record` subclass; a `RecordBatch` class is for
-        `read_batch`.
+        `record` is not a `Record` subclass or a union of sibling ones that
+        tell each frame apart; a `RecordBatch` class is for `read_batch`.
     ValueError
         `mode` is given with `record`.
 
@@ -428,7 +435,7 @@ def iread[R: Record](
     path: str | Path,
     index: int | str | slice | Sequence[int] = ...,
     *,
-    record: type[R],
+    record: TypeForm[R],
     schema: SchemaSpec | str | Path | None = ...,
     conformance: Conformance = ...,
     compression: Compression = ...,
@@ -456,7 +463,7 @@ def iread[R: Record](  # noqa: PLR0913  the index/schema/projection/source optio
     path: str | Path,
     index: int | str | slice | Sequence[int] = ":",
     *,
-    record: type[R] | None = None,
+    record: TypeForm[R] | None = None,
     schema: SchemaSpec | str | Path | None = None,
     conformance: Conformance = "required",
     mode: Mode | None = None,
@@ -477,11 +484,12 @@ def iread[R: Record](  # noqa: PLR0913  the index/schema/projection/source optio
     index
         Selection grammar; see `read`.
     record
-        A `Record` subclass to yield instances of instead of frames: the
-        records `read` returns for the same arguments, with the same frames
-        dropped. A forward slice streams, and a non-negative integer reads
-        no further than its frame; a negative integer, a reverse slice or a
-        sequence reads the whole file first.
+        A `Record` subclass, or a union of sibling ones, to yield instances
+        of instead of frames: the records `read` returns for the same
+        arguments, with the same frames dropped. A forward slice streams,
+        and a non-negative integer reads no further than its frame; a
+        negative integer, a reverse slice or a sequence reads the whole file
+        first.
     schema
         A `SchemaSpec`, or a path to a schema file; see `read`.
     conformance
@@ -510,8 +518,8 @@ def iread[R: Record](  # noqa: PLR0913  the index/schema/projection/source optio
         With `record`, as for `read`. A disagreeing `schema` raises from
         this call, before any frame is read.
     TypeError
-        `record` is not a `Record` subclass; a `RecordBatch` class is for
-        `read_batch`.
+        `record` is not a `Record` subclass or a union of sibling ones that
+        tell each frame apart; a `RecordBatch` class is for `read_batch`.
     ValueError
         `mode` is given with `record`.
 
@@ -861,7 +869,8 @@ def _cast_projected(
 ) -> Iterator[Record | None]:
     """Apply projection policy to each frame and cast it; `None` where it dropped.
 
-    A field of the wrong kind drops the frame even where the field has a fill.
+    A field of the wrong kind drops the frame even where the field has a fill,
+    and the binding's cast drops a frame no member of a union admits.
     """
     from oxyz import _schema_match
     from oxyz._project import enforce_projection, mismatched

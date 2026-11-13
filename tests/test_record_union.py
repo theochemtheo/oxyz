@@ -1,19 +1,26 @@
 from __future__ import annotations
 
 import itertools
+import re
 import typing
+from collections import Counter
+from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
 import pytest
 
+import oxyz
 from oxyz import Cell, Column, Matrix3, Meta, Record
+from oxyz._record_bind import bind
 from oxyz._record_union import Key, members_of, union_plan
 
 if typing.TYPE_CHECKING:
     from collections.abc import Callable
 
 type Array = npt.NDArray[np.float64]
+
+MAD = Path(__file__).parent / "data" / "mad_r2scan_sample.extxyz"
 
 LATTICE: Key = ("metadata", "Lattice")
 STRESS: Key = ("metadata", "stress")
@@ -292,3 +299,150 @@ def test_the_plan_is_cached_and_hashable():
     plan = union_plan((Molecule, Crystal))
     assert union_plan((Molecule, Crystal)) is plan
     assert hash(plan) == hash(union_plan((Molecule, Crystal)))
+
+
+def member_of(frame: oxyz.Frame) -> type[Record]:
+    members = members_of(MadSample)
+    signature = frozenset(key for key in (LATTICE, STRESS) if key[1] in frame.metadata)
+    index = expected_member(members, signature)
+    assert index is not None
+    return members[index]
+
+
+def mad_file(path: Path, *tails: str) -> Path:
+    """Write one single-hydrogen MAD-shaped frame per comment-line tail to `path`."""
+    path.write_text(
+        "".join(
+            "1\nProperties=species:S:1:pos:R:3:forces:R:3 energy=-1.0 subset=x "
+            f"{tail}\nH 0.0 0.0 0.0 0.0 0.0 0.0\n"
+            for tail in tails
+        )
+    )
+    return path
+
+
+LATTICE_TAIL = 'Lattice="10 0 0 0 10 0 0 0 10"'
+STRESS_TAIL = 'stress="1 2 3 4 5 6 7 8 9"'
+
+
+def unadmitted(tmp_path: Path) -> Path:
+    """Three frames; frame 1 carries `stress` but no `Lattice`."""
+    return mad_file(tmp_path / "unadmitted.xyz", "", STRESS_TAIL, LATTICE_TAIL)
+
+
+def test_every_frame_becomes_the_member_its_keys_imply():
+    recs = oxyz.read(MAD, record=MadSample)
+    plain = oxyz.read(MAD)
+    assert [type(r) for r in recs] == [member_of(f) for f in plain]
+    assert Counter(type(r) for r in recs) == {Molecule: 49, Crystal: 126, Strained: 26}
+    strained = next(r for r in recs if type(r) is Strained)
+    molecule = next(r for r in recs if type(r) is Molecule)
+    assert strained.stress.shape == (3, 3)
+    assert not hasattr(molecule, "cell")
+
+
+def test_spellings_and_order_read_the_same():
+    base = oxyz.read(MAD, record=MadSample)
+    assert oxyz.read(MAD, record=Molecule | Crystal | Strained) == base
+    assert oxyz.read(MAD, record=typing.Union[Strained, Molecule, Crystal]) == base  # noqa: UP007 — the spelling under test
+
+
+def test_union_of_one_reads_as_the_record():
+    type Only = MadFrame
+    assert oxyz.read(MAD, record=Only) == oxyz.read(MAD, record=MadFrame)
+
+
+def test_iread_threads_and_index_parity():
+    base = oxyz.read(MAD, record=MadSample)
+    assert list(oxyz.iread(MAD, record=MadSample)) == base
+    assert oxyz.read(MAD, record=MadSample, threads=1) == base
+    assert oxyz.read(MAD, 60, record=MadSample) == base[60]
+    assert oxyz.read(MAD, "0:10:3", record=MadSample) == base[0:10:3]
+
+
+def test_unadmitted_frame_raises_with_index_and_signature(tmp_path: Path):
+    path = unadmitted(tmp_path)
+    with pytest.raises(oxyz.SchemaError, match="stress") as e:
+        oxyz.read(path, record=MadSample)
+    assert e.value.frame_index == 1
+    assert "Strained" in str(e.value)
+
+
+def test_unadmitted_frame_is_dropped_under_warn(tmp_path: Path):
+    path = unadmitted(tmp_path)
+    with pytest.warns(oxyz.SchemaWarning, match="frame 1"):
+        recs = oxyz.read(path, record=MadSample, conformance="warn")
+    assert [type(r) for r in recs] == [Molecule, Crystal]
+    with pytest.warns(oxyz.SchemaWarning):
+        assert list(oxyz.iread(path, record=MadSample, conformance="warn")) == recs
+    with (
+        pytest.warns(oxyz.SchemaWarning),
+        pytest.raises(IndexError, match=re.escape("Molecule | Crystal | Strained")),
+    ):
+        oxyz.read(path, 1, record=MadSample, conformance="warn")
+
+
+def test_wrong_kind_matching_key_fails_as_that_member(tmp_path: Path):
+    path = mad_file(tmp_path / "wrong.xyz", f"{LATTICE_TAIL} stress=abc")
+    with pytest.raises(oxyz.SchemaError, match="stress") as e:
+        oxyz.read(path, record=MadSample)
+    assert (e.value.frame_index, e.value.name) == (0, "stress")
+
+
+def test_missing_all_required_key_is_the_projection_error(tmp_path: Path):
+    path = tmp_path / "no_energy.xyz"
+    path.write_text(
+        "1\nProperties=species:S:1:pos:R:3:forces:R:3 subset=x\n"
+        "H 0.0 0.0 0.0 0.0 0.0 0.0\n"
+    )
+    with pytest.raises(oxyz.SchemaError, match="energy") as e:
+        oxyz.read(path, record=MadSample)
+    assert (e.value.frame_index, e.value.name) == (0, "energy")
+
+
+def test_a_fill_field_one_member_lacks_is_filled_on_a_frame_read():
+    class WithQ(MadFrame):
+        cell: Cell[Array] = Cell()
+        charge: Meta[float] = Meta(fill=0.0)
+
+    recs = oxyz.read(MAD, record=Molecule | WithQ)
+    assert Counter(type(r) for r in recs) == {Molecule: 49, WithQ: 152}
+    assert all(r.charge == 0.0 for r in recs if isinstance(r, WithQ))
+
+
+def test_binding_errors_happen_before_the_file_is_opened(tmp_path: Path):
+    class Maybe(MadFrame):
+        cell: Cell[Array | None] = Cell()
+
+    missing = tmp_path / "missing.xyz"
+    with pytest.raises(TypeError, match="Molecule and Maybe both admit"):
+        oxyz.read(missing, record=Molecule | Maybe)
+    with pytest.raises(TypeError, match="int is not a subclass of Record"):
+        oxyz.read(missing, record=Molecule | int)  # ty: ignore[no-matching-overload]
+
+
+def test_schema_check_runs_over_the_union_keys(tmp_path: Path):
+    schema = oxyz.SchemaSpec(metadata=(oxyz.MetadataRule("stress", oxyz.Kind.STR),))
+    with pytest.raises(oxyz.SchemaError, match="stress") as e:
+        oxyz.read(tmp_path / "missing.xyz", record=MadSample, schema=schema)
+    assert e.value.name == "stress"
+
+
+def test_binding_spec_is_the_merged_project_spec():
+    spec = bind(MadSample).spec
+    assert [r.name for r in spec.columns] == ["species", "pos", "forces"]
+    assert [r.key for r in spec.metadata] == ["energy", "subset", "Lattice", "stress"]
+    assert [r.required for r in spec.metadata] == [True, True, False, False]
+    lattice = spec.rule_for("Lattice", "metadata")
+    assert lattice is not None
+    assert lattice.required is False
+
+
+def test_bind_caches_one_binding_per_union():
+    assert (
+        bind(MadSample)
+        is bind(Molecule | Crystal | Strained)
+        is bind(typing.Union[Molecule, Crystal, Strained])  # noqa: UP007 — the spelling under test
+    )
+    assert bind(MadSample).record is None
+    assert bind(MadFrame).record is MadFrame
