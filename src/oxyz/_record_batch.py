@@ -289,8 +289,9 @@ class RecordBatch[R: Record](FrameLayout, metaclass=RecordBatchMeta):
       new batch, a copy.
     - `batch[key]`, with a field key such as `MaceSample.energy`, is the
       field's batch value, the same object as the attribute. The key must
-      be one of `R`'s keys, inherited fields' included; a key from another
-      record raises `KeyError`. `batch["energy"]` looks a field up by name.
+      be one of `R`'s keys, inherited fields' included, or with a union
+      any member's; a key from another record raises `KeyError`.
+      `batch["energy"]` looks a field up by name.
 
     `present(key)` gives the mask. Slices and gathers carry the masks with
     them, and so does `dataclasses.replace` unless it is given `present=`.
@@ -298,15 +299,21 @@ class RecordBatch[R: Record](FrameLayout, metaclass=RecordBatchMeta):
     `R` may be a union of sibling records, `RecordBatch[Molecule | Crystal]`
     or a `type` alias of one. The batch then holds the union's merged
     fields: a field some member lacks is filled, and masked, in that
-    member's frames. `members` is the tuple of member classes, in order,
-    and `tags` gives each frame's member as an index into it; `where(*ms)`
+    member's frames (NaN for a float field, else its `fill=`). `members`
+    is the tuple of member classes, in the order the union names them, and
+    `tags` gives each frame's member as an index into it; `where(*ms)`
     marks the frames whose member is one of `ms`. `batch[i]` is an instance
-    of `members[tags[i]]`, built from that member's fields alone. A batch of
-    one record has that record as its sole member and all-zero `tags`.
+    of `members[tags[i]]`, built from that member's fields alone. Members
+    that declare the same field separately, such as a `cell` on two of
+    them, have distinct keys that both reach the one batch field.
+    `RecordBatch[A | B]` and `RecordBatch[B | A]` are distinct batch types,
+    whose `members` and `tags` follow the order written. A batch of one
+    record has that record as its sole member and all-zero `tags`.
 
     `oxyz.read_batch(path, record=MaceBatch)` and `oxyz.iread_batch` read a
-    file into batches, `from_batch` builds one from an `oxyz.Batch`, and
-    `spec` gives the `SchemaSpec` that describes the record's fields.
+    file into batches, `from_batch` builds one of a single record from an
+    `oxyz.Batch`, and `spec` gives the `SchemaSpec` that describes the
+    record's fields.
 
     Batches are frozen and slotted. They compare equal when they are of the
     same class and hold equal layout arrays, fields, masks and tags, NaN
@@ -342,8 +349,9 @@ class RecordBatch[R: Record](FrameLayout, metaclass=RecordBatchMeta):
         At class definition, naming the field: a missing or extra field, an
         annotation that is not the field's batch form, or a default. Also an
         unparameterised subclass, or a type argument that is not a `Record`
-        subclass. From `__init__`, naming the field: a wrong type or dtype,
-        or a mask for a field that carries none.
+        subclass or a union of sibling ones. From `__init__`, naming the
+        field: a wrong type or dtype, or a mask for a field that carries
+        none.
     ValueError
         From `__init__`, naming the field: offsets that do not start at 0
         or that decrease, a wrong row count, width or shape, or a tag that
@@ -609,11 +617,11 @@ class RecordBatch[R: Record](FrameLayout, metaclass=RecordBatchMeta):
     def present(self, key: FieldSpec[Any] | str) -> npt.NDArray[np.bool_]:
         """Return which frames carried a field, a bool array of length `n_frames`.
 
-        `key` is a field key or name. A field that is not `X | None` is
-        present in every frame. The array is read-only: the batch's rows
-        follow the mask, so to change it, pass `present=` to
-        `dataclasses.replace`. A key or name that is not one of the
-        record's fields is `KeyError`.
+        `key` is a field key or name. A field is present in every frame
+        unless it is `X | None` or, in a union, some member lacks it. The
+        array is read-only: the batch's rows follow the mask, so to change
+        it, pass `present=` to `dataclasses.replace`. A key or name that is
+        not one of the record's fields is `KeyError`.
         """
         mask = self._present.get(self._field(key))
         if mask is None:
@@ -628,9 +636,9 @@ class RecordBatch[R: Record](FrameLayout, metaclass=RecordBatchMeta):
     def where(self, *members: type[Record]) -> npt.NDArray[np.bool_]:
         """Return which frames are an instance of one of `members`, a bool array.
 
-        A frame matches its own member class only, not a base of it; no
-        argument matches no frame. A class that is not one of the batch's
-        `members` is `TypeError`.
+        A frame matches its own member class only. No argument matches no
+        frame. A class that is not one of the batch's `members`, a base
+        class they share included, is `TypeError`.
         """
         own = self.members
         for member in members:

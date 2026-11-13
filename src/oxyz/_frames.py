@@ -284,13 +284,14 @@ def read[R: Record](  # noqa: PLR0913  the index/schema/projection/source option
         single `Frame`; a slice or slice-string (`"1:10:2"`) or a sequence of
         non-negative ints selects a subset, in order (repeats allowed).
     record
-        A `Record` subclass to read each frame into instead of a `Frame`.
+        A `Record` subclass, or a union of sibling ones (`A | B`, or a
+        `type` alias of one), to read each frame into instead of a `Frame`.
         Each frame is projected onto the record's fields, as `Record.spec`
         describes them, and its arrays are writable and belong to that
-        record alone. A union of sibling records (`A | B`, or a `type`
-        alias of one) reads each frame into the one member whose fields
-        match the optional keys the frame carries; a frame no member
-        admits is an error, or dropped with a warning under
+        record alone. With a union, each frame becomes the one member that
+        admits it: of the keys not every member requires, the member
+        declares each one the frame carries and requires none it lacks. A
+        frame no member admits is an error, or dropped with a warning under
         `conformance="warn"`. A record read checks only the frames `index`
         selects. A non-negative integer or a bounded forward slice stops
         reading after its last frame; any other `index` parses the whole
@@ -354,7 +355,8 @@ def read[R: Record](  # noqa: PLR0913  the index/schema/projection/source option
         dropped under `conformance="warn"`.
     TypeError
         `record` is not a `Record` subclass or a union of sibling ones that
-        tell each frame apart; a `RecordBatch` class is for `read_batch`.
+        agree on their shared keys and tell each frame apart; a
+        `RecordBatch` class is for `read_batch`.
     ValueError
         `mode` is given with `record`.
 
@@ -519,7 +521,8 @@ def iread[R: Record](  # noqa: PLR0913  the index/schema/projection/source optio
         this call, before any frame is read.
     TypeError
         `record` is not a `Record` subclass or a union of sibling ones that
-        tell each frame apart; a `RecordBatch` class is for `read_batch`.
+        agree on their shared keys and tell each frame apart; a
+        `RecordBatch` class is for `read_batch`.
     ValueError
         `mode` is given with `record`.
 
