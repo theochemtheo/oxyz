@@ -21,7 +21,7 @@ from typing import (
 import numpy as np
 
 from oxyz._frames import Frame
-from oxyz._project import mismatched
+from oxyz._project import enforce_projection, mismatched
 from oxyz._record import Record, spec_of
 from oxyz._record_batch import RecordBatch, batch_class
 from oxyz._record_union import members_of, union_plan
@@ -159,21 +159,34 @@ class Binding:
         `SchemaError` under `"strict"` and `"required"`, and under `"warn"`
         warns and is dropped.
         """
-        if conformance == "warn":
-            keep = np.array(
-                [
-                    not mismatched(deviations)
-                    for index, deviations in reports
-                    if index in survived
-                ],
-                dtype=np.bool_,
-            )
-        else:
-            keep = np.ones(batch.n_frames, dtype=np.bool_)
-        if len(self._builds) == 1:
+        warns = conformance == "warn"
+        single = len(self._builds) == 1
+        keep = np.ones(batch.n_frames, dtype=np.bool_)
+        if single:
             tags = np.zeros(batch.n_frames, dtype=np.intp)
         else:
-            tags = self._member_tags(batch, presence, keep, warns=conformance == "warn")
+            tags = self._member_tags(presence)
+        position = 0
+        for index, deviations in reports:
+            carried = index in survived
+            keep_frame = enforce_projection(
+                deviations,
+                conformance,
+                index,
+                dropped=not carried or (warns and mismatched(deviations)),
+            )
+            if not carried:
+                continue
+            if keep_frame and not single and tags[position] < 0:
+                signature = frozenset(
+                    key
+                    for key in self.union.matching
+                    if presence[position, self.reported[self.union.names[key]]]
+                )
+                _reject(self.union, signature, index, warns=warns)
+                keep_frame = False
+            keep[position] = keep_frame
+            position += 1
         if keep.all():
             return batch, presence, tags
         if not keep.any():
@@ -181,19 +194,8 @@ class Binding:
         picks = np.flatnonzero(keep)
         return batch[picks], presence[picks], tags[picks]
 
-    def _member_tags(
-        self,
-        batch: Batch,
-        presence: npt.NDArray[np.bool_],
-        keep: npt.NDArray[np.bool_],
-        *,
-        warns: bool,
-    ) -> npt.NDArray[np.intp]:
-        """Return each frame's member, from its matching keys' presence.
-
-        A kept frame no member admits is reported, in batch order, and
-        under `warns` is cleared from `keep`.
-        """
+    def _member_tags(self, presence: npt.NDArray[np.bool_]) -> npt.NDArray[np.intp]:
+        """Return each frame's member from presence, or -1 when no member admits it."""
         union = self.union
         matching = union.matching
         columns = [self.reported[union.names[key]] for key in matching]
@@ -206,13 +208,7 @@ class Binding:
             for row in rows
         ]
         found = [union.member_for(signature) for signature in signatures]
-        admitted = np.array([member is not None for member in found], dtype=np.bool_)
-        unadmitted = np.flatnonzero(keep & ~admitted[inverse])
-        for position in unadmitted:
-            signature = signatures[inverse[position]]
-            _reject(union, signature, int(batch.frame_indices[position]), warns=warns)
-        keep[unadmitted] = False
-        members = np.array([0 if m is None else m for m in found], dtype=np.intp)
+        members = np.array([-1 if m is None else m for m in found], dtype=np.intp)
         return members[inverse]
 
     def empty_batch(self) -> RecordBatch[Any]:
