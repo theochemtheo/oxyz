@@ -37,3 +37,6 @@ nav = [
     ] },
   ] },
 ]
+
+[project.theme]
+features = ["content.code.copy"]

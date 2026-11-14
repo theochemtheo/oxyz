@@ -25,7 +25,7 @@ show the native outputs; `record=` changes the output type as described below.
 
 <!-- skip: next "API signature notation uses undefined path and non-executable return annotations" -->
 
-```python
+```python {.no-copy title="Reader signatures — not runnable Python"}
 read(path, index=":", *, record=None, threads=None, schema=None,
      conformance="required", mode=None, compression="infer", member=None,
      storage_options=None) -> Frame | list[Frame]
@@ -112,7 +112,7 @@ are signature notation, not runnable Python:
 
 <!-- skip: next "writer signature notation requires undefined path/obj and is not executable Python" -->
 
-```python
+```python {.no-copy title="Writer signatures — not runnable Python"}
 write(path, obj, *, append=False, compression="infer", level=None,
       threads=None) -> None
 Writer(path, *, append=False, compression="infer", level=None, batch=None)

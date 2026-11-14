@@ -17,10 +17,13 @@ trailing blank lines are tolerated, a leading blank line yields no frames, and a
 blank line between frames hides the remaining frames. A non-blank invalid count
 or a truncated frame is an error, not an end marker.
 
-The header consists of whitespace-separated `key=value` pairs. Do not put spaces
-around `=`. Arbitrary free-text comments and standalone flags are not supported.
-`Properties` is required: there is no implicit `species:S:1:pos:R:3` fallback for
-ordinary XYZ. The `.xyz` extension does not change this requirement.
+!!! warning "Properties is required, even for .xyz"
+
+    The header consists of whitespace-separated `key=value` pairs. Do not put
+    spaces around `=`. Arbitrary free-text comments and standalone flags are not
+    supported. `Properties` is required: there is no implicit
+    `species:S:1:pos:R:3` fallback for ordinary XYZ. The `.xyz` extension does not
+    change this requirement.
 
 ## Properties and atom values
 
@@ -121,7 +124,7 @@ or [converters](compatibility.md), not the grammar.
 This example distinguishes scalar quoting, explicit string-array elements and
 rectangular array shape without an optional converter.
 
-```python
+```python title="Check metadata kinds and array shapes"
 from pathlib import Path
 
 import numpy as np

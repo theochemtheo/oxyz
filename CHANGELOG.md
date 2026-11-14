@@ -19,7 +19,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   field is left out of the frame instead of filled. Its type is exported as
   `oxyz.Absent`.
 - Executable documentation examples, core workflow and contributor guides, and a
-  local site preview.
+  local site preview with callouts, copyable code and installation tabs.
 
 ### Changed
 

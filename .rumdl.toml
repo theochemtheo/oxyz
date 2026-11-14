@@ -10,5 +10,8 @@ exclude = [
 respect-gitignore = true
 flavor = "gfm"
 
+[per-file-flavor]
+"docs/**/*.md" = "mkdocs"
+
 [MD013]
 code-blocks = false  # Exclude code blocks from line length check

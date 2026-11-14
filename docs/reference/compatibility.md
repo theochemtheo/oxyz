@@ -8,12 +8,14 @@ and [API reference](api.md).
 
 ## What lossless means
 
-Native columns retain their names, kinds, widths and values; metadata retains its
-inferred values and dimensions. `REF_energy` is not renamed to `energy`, `force`
-is not silently made `forces`, and species labels are not resolved to elements
-by the parser. `Lattice` stays flat; stress and virial are not converted or
-reinterpreted. Lossless does not mean preservation of whitespace, quote spelling,
-numeric spelling or byte-for-byte file layout.
+!!! note "Lossless does not mean byte-for-byte"
+
+    Native columns retain their names, kinds, widths and values; metadata retains
+    its inferred values and dimensions. `REF_energy` is not renamed to `energy`,
+    `force` is not silently made `forces`, and species labels are not resolved to
+    elements by the parser. `Lattice` stays flat; stress and virial are not
+    converted or reinterpreted. Lossless does not mean preservation of whitespace,
+    quote spelling, numeric spelling or byte-for-byte file layout.
 
 Accessors such as `frame.cell`, `frame.pbc` and `frame.numbers` provide interpreted
 views without changing those stored fields. For example, absent `Lattice` means
@@ -128,7 +130,7 @@ not a claim of compatibility with every ASE version or every input dialect.
 This non-orthogonal example verifies the native representation separately from
 ASE's matrix interpretation.
 
-```python
+```python title="Check the ASE cell and stress interpretation"
 from pathlib import Path
 
 import oxyz

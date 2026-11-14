@@ -8,14 +8,26 @@ converter is needed.
 
 oxyz requires Python 3.12 or newer. The base package depends on NumPy and PyYAML:
 
-```sh
-pip install oxyz
-```
+=== "Package"
+
+    ```sh title="Install the base package"
+    pip install oxyz
+    ```
+
+=== "Source checkout"
+
+    From a cloned checkout:
+
+    ```sh title="Prepare the full development environment"
+    uv sync --extra ase
+    uv run python -c "import oxyz"
+    ```
+
+    Follow [development setup](development/index.md) and use `uv run` for Python
+    so Rust edits rebuild the extension.
 
 Optional extras are `ase`, `metatomic`, `torch-sim` and `s3`. Install only the
-integrations you use, for example `pip install "oxyz[ase]"`. For a source
-checkout, follow [development setup](development/index.md) and run Python through
-`uv run` so Rust edits rebuild the extension.
+integrations you use, for example `pip install "oxyz[ase]"`.
 
 ## Create and read a trajectory
 
@@ -23,7 +35,7 @@ The first line of each frame is its atom count. The comment line declares
 per-atom columns and frame metadata; the following lines contain the atom rows.
 This file contains water followed by a hydrogen molecule:
 
-```python
+```python title="Create and inspect molecules.extxyz" linenums="1" hl_lines="15-17 19-21"
 from pathlib import Path
 
 import numpy as np
@@ -60,7 +72,7 @@ lookup and equality.
 
 Short values can be inspected directly:
 
-```python
+```python {.no-copy title="Inspect values in the Python console"}
 >>> water.n_atoms
 3
 >>> water["energy"]
@@ -74,7 +86,7 @@ Short values can be inspected directly:
 Structural scanning reads frame boundaries and declared counts. Schema inference
 parses the values and reports the observed fields and their consistency:
 
-```python
+```python title="Inspect structure and observed schema"
 index = oxyz.scan(path)
 assert index.n_frames == 2
 assert index.total_atoms == 5
@@ -83,13 +95,15 @@ assert schema.n_frames == 2
 assert schema.is_consistent
 ```
 
-A scan is not content validation, and reading a selected prefix does not validate
-later frames. See [storage and streaming](concepts/storage-and-streaming.md) for
-the cost and guarantees of each operation.
+!!! note "A scan is not validation"
+
+    A scan is not content validation, and reading a selected prefix does not
+    validate later frames. See [storage and streaming](concepts/storage-and-streaming.md)
+    for the cost and guarantees of each operation.
 
 ## Write and check the round trip
 
-```python
+```python title="Verify this trajectory's round trip" hl_lines="4"
 output = Path("molecules-copy.extxyz")
 oxyz.write(output, frames)
 restored = oxyz.read(output)
@@ -98,12 +112,14 @@ assert restored[0].metadata["energy"] == -7.25
 np.testing.assert_array_equal(restored[1].columns["pos"], [[0, 0, 0], [0, 0, 0.75]])
 ```
 
-Equality compares represented values, not original file bytes or formatting.
-This example verifies its own round trip; it is not a guarantee for every
-possible parsed value. The encoder may change whitespace, quoting and field
-order, and has [string-quoting limitations](guides/writing.md#what-a-round-trip-preserves).
-The writing guide also covers incremental output, codecs and append/stdout
-restrictions.
+!!! warning "Verify before replacing source data"
+
+    Equality compares represented values, not original file bytes or formatting.
+    This example verifies its own round trip; it is not a guarantee for every
+    possible parsed value. The encoder may change whitespace, quoting and field
+    order, and has [string-quoting limitations](guides/writing.md#what-a-round-trip-preserves).
+    The writing guide also covers incremental output, codecs and append/stdout
+    restrictions.
 
 ## Choose the next step
 

@@ -15,7 +15,7 @@ This local trajectory has two, one and three atoms, with compatible columns
 and metadata throughout. Its first energy is an integer in the file; batching
 promotes the integer/real mixture to floating point.
 
-```python
+```python title="Inspect atom-major arrays and frame provenance" linenums="1" hl_lines="19-23"
 from pathlib import Path
 
 import numpy as np
@@ -57,7 +57,7 @@ each access; retain it locally when reusing it in a calculation.
 A selection can reorder or repeat source frames. It does not renumber their
 provenance:
 
-```python
+```python title="Reorder and repeat source frames"
 import numpy as np
 import oxyz
 
@@ -83,10 +83,12 @@ Give `iread_batch` exactly one of these strategies:
 | `atoms_per_batch=N` | Greedily add whole frames in file order, or shuffled order, until the next would exceed `N` atoms |
 | `memory_scales_with=...`, `max_scaler=S` | Pack balanced bins using an estimated per-frame weight with budget `S` |
 
-A frame is never split. A frame over the atom or weight budget is emitted in
-a batch of its own, so these budgets are not strict upper bounds on allocation.
+!!! warning "Budgets do not split frames"
 
-```python
+    A frame is never split. A frame over the atom or weight budget is emitted in
+    a batch of its own, so these budgets are not strict upper bounds on allocation.
+
+```python title="Compare frame-count, atom-budget and balanced packing"
 import numpy as np
 import oxyz
 
@@ -109,13 +111,15 @@ assert [part.frame_indices.tolist() for part in bins] == [[2], [0, 1]]
 np.testing.assert_array_equal(bins[1]["pos"][:, 0], [0.25, 0.75, 1.5])
 ```
 
-Balanced packing uses best-fit-decreasing weights, so it may reorder frames even
-without shuffling. `"n_atoms"` weighs each frame by atom count.
-`"n_atoms_x_density"` weighs it by `n_atoms**2 / volume`, a proxy for
-neighbour-graph memory. Missing, non-positive or non-finite volumes fall back to
-atom count. This is an estimate, not a measurement of a model's memory use;
-`max_scaler` is a weight budget, not bytes. Balanced packing cannot be combined
-with `shuffle`.
+!!! note "Balanced packing can change frame order"
+
+    Balanced packing uses best-fit-decreasing weights, so it may reorder frames
+    even without shuffling. `"n_atoms"` weighs each frame by atom count.
+    `"n_atoms_x_density"` weighs it by `n_atoms**2 / volume`, a proxy for
+    neighbour-graph memory. Missing, non-positive or non-finite volumes fall back
+    to atom count. This is an estimate, not a measurement of a model's memory use;
+    `max_scaler` is a weight budget, not bytes. Balanced packing cannot be combined
+    with `shuffle`.
 
 ## Reproducible NumPy consumption
 
@@ -127,7 +131,7 @@ same composition regardless of `threads`; `threads=1` parses serially and
 This is the NumPy part of a training-style loop: positions are atom-major,
 energies are frame-major, and provenance remains available after shuffling.
 
-```python
+```python title="Consume seeded batches while retaining provenance"
 import numpy as np
 import oxyz
 
@@ -162,7 +166,7 @@ integer/real mixtures promote to real values. Varying atom counts are compatible
 Missing or additional keys, incompatible kinds and differing widths are not.
 Individual frames can each be valid extxyz while being incompatible in one batch.
 
-```python
+```python title="Detect incompatible metadata within a batch"
 from pathlib import Path
 
 import oxyz
@@ -184,12 +188,14 @@ assert "energy" not in singletons[1].metadata
 assert singletons[1][0]["pos"].tolist() == [[6.0, 0.0, 0.0]]
 ```
 
-Compatibility is enforced within each batch, not as a whole-file schema audit.
-Changing batch boundaries can therefore expose a mismatch. A declared `schema`
-validates frames before concatenation; validation alone does not make
-incompatible frames compatible. Explicit `mode="project"` reshapes them to the
-schema. The [API reference](../reference/api.md) lists these options and typed
-record batching.
+!!! tip "Validation is not projection"
+
+    Compatibility is enforced within each batch, not as a whole-file schema audit.
+    Changing batch boundaries can therefore expose a mismatch. A declared `schema`
+    validates frames before concatenation; validation alone does not make
+    incompatible frames compatible. Explicit `mode="project"` reshapes them to the
+    schema. The [API reference](../reference/api.md) lists these options and typed
+    record batching.
 
 ## Memory and source constraints
 

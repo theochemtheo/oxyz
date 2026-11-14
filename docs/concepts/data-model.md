@@ -47,7 +47,7 @@ stored data is missing or cannot be interpreted. A species token may be a
 force-field label rather than a chemical symbol, for example; storing it does
 not require that it can be converted to an atomic number.
 
-```python
+```python title="Compare stored values with derived geometry"
 import numpy as np
 import oxyz
 
@@ -80,7 +80,7 @@ A frame deliberately has no `len` and is not iterable. Use `frame.n_atoms`, not
 `len(batch)` is `n_frames`, `list(batch)` gives frames, and `batch.keys()` gives
 names. Neither container is a `collections.abc.Mapping`.
 
-```python
+```python title="Resolve names across columns and metadata"
 import numpy as np
 import oxyz
 
@@ -112,10 +112,12 @@ file key. A key belonging to an unrelated record is rejected.
 
 ## Frozen bindings, mutable contents
 
-All four container families are frozen dataclasses: assigning a replacement to
-an instance field is prohibited. This is shallow freezing, not deep immutability.
-`Frame` and `Batch` dictionaries, lists and writable arrays can still be edited.
-Those edits affect any object sharing the same storage.
+!!! note "Frozen does not mean deeply immutable"
+
+    All four container families are frozen dataclasses: assigning a replacement
+    to an instance field is prohibited. This is shallow freezing, not deep
+    immutability. `Frame` and `Batch` dictionaries, lists and writable arrays can
+    still be edited. Those edits affect any object sharing the same storage.
 
 Records distinguish construction from conversion:
 
@@ -127,12 +129,14 @@ Records distinguish construction from conversion:
 | `read`/`iread` with `record=R` | Record arrays are writable and independently owned |
 | `read_batch`/`iread_batch` with a record batch class | Batch arrays are writable and independently owned |
 
-Read-only views prevent writes *through that view*. They do not prevent another
-owner from changing shared storage. Take `.copy()` of an array when an
-independent snapshot is required. Conversions that change kind or representation
-may allocate rather than share memory.
+!!! warning "Read-only views still share storage"
 
-```python
+    Read-only views prevent writes *through that view*. They do not prevent
+    another owner from changing shared storage. Take `.copy()` of an array when
+    an independent snapshot is required. Conversions that change kind or
+    representation may allocate rather than share memory.
+
+```python title="Observe record ownership and shallow freezing"
 from dataclasses import FrozenInstanceError
 
 import numpy as np
@@ -190,7 +194,7 @@ array storage, not identity of the frame or its dictionaries.
 The following hand-built batch isolates these memory relationships from file
 reading and batching strategy:
 
-```python
+```python title="Distinguish contiguous views from gathered copies"
 import numpy as np
 import oxyz
 
@@ -234,7 +238,7 @@ NaN compares equal to NaN in corresponding positions. These mutable-value
 containers are unhashable: do not use them as dictionary keys or set members.
 Value equality does not imply shared storage or object identity.
 
-```python
+```python title="Compare stored values, including NaN"
 import numpy as np
 import oxyz
 

@@ -6,20 +6,22 @@ little I/O, a short scan, or bounded memory.
 
 ## Structural scan versus schema inference
 
-`scan` reads count lines and skips the declared number of atom rows. Its
-`FrameIndex` contains byte offsets and declared atom counts, not parsed columns.
-It detects structural failures such as invalid counts and truncated frames,
-but does not validate numeric atom values or infer column types. A false atom
-count can shift the apparent boundary and cause an error in a later frame.
-`scan(with_volume=True)` additionally reads comment lines for cell volumes;
-without that option, `volumes` is `None`.
+!!! warning "Scanning does not validate atom values"
+
+    `scan` reads count lines and skips the declared number of atom rows. Its
+    `FrameIndex` contains byte offsets and declared atom counts, not parsed columns.
+    It detects structural failures such as invalid counts and truncated frames,
+    but does not validate numeric atom values or infer column types. A false atom
+    count can shift the apparent boundary and cause an error in a later frame.
+    `scan(with_volume=True)` additionally reads comment lines for cell volumes;
+    without that option, `volumes` is `None`.
 
 `infer_schema` parses every frame and folds the observed column kinds/widths,
 metadata kinds/shapes, presence counts and consistency into a `Schema`. It
 retains per-frame atom counts, but not all parsed frame values. It is the
 whole-file parse to use when a successful partial read is insufficient.
 
-```python
+```python title="Separate structural inspection from value parsing" hl_lines="10-13 18-21"
 from pathlib import Path
 
 import oxyz

@@ -33,6 +33,37 @@ def test_wrong_markdown_output_reports_source(project):
     result.stdout.fnmatch_lines(["*Expected:*", "*5*", "*Got:*", "*4*"])
 
 
+@pytest.mark.parametrize("source", [">>> 2 + 2\n5", "assert 2 + 2 == 5"])
+@pytest.mark.parametrize(
+    "fence",
+    [
+        'python title="Addition" linenums="1" hl_lines="1"',
+        'python {.no-copy title="Addition"}',
+    ],
+)
+@pytest.mark.parametrize(
+    ("container", "prefix", "expected_line"),
+    [
+        ("", "", 2),
+        ('!!! example "Checked example"', "    ", 4),
+        ('=== "Python"', "    ", 4),
+    ],
+)
+def test_decorated_python_fences_report_source(
+    project, source, fence, container, prefix, expected_line
+):
+    header = f"{container}\n\n" if container else ""
+    block = "\n".join(
+        prefix + row for row in [f"```{fence}", *source.splitlines(), "```"]
+    )
+    _page(project, "docs/decorated.md", header + block + "\n")
+    result = project.runpytest_subprocess("docs/decorated.md", "-q")
+    result.assert_outcomes(failed=1)
+    result.stdout.fnmatch_lines([f"*decorated.md:{expected_line}*"])
+    if source.startswith(">>>"):
+        result.stdout.fnmatch_lines(["*Expected:*", "*5*", "*Got:*", "*4*"])
+
+
 def test_markdown_blocks_share_only_document_state(project):
     _page(
         project,
@@ -133,14 +164,18 @@ def test_document_workdir_is_isolated_and_restored(project):
     assert not (project.path / "failure.xyz").exists()
 
 
-def test_reasoned_skip_is_reported(project):
+@pytest.mark.parametrize(
+    "fence",
+    ["python", 'python title="Schematic"', 'python {.no-copy title="Schematic"}'],
+)
+def test_reasoned_skip_is_reported(project, fence):
     _page(
         project,
         "docs/schematic.md",
-        """
+        f"""
         <!-- skip: next "requires private remote credentials" -->
 
-        ```python
+        ```{fence}
         >>> undefined_remote_client.fetch()
         unavailable output
         ```

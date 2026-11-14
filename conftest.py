@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from doctest import ELLIPSIS, NORMALIZE_WHITESPACE
 from functools import cache
 from pathlib import Path
@@ -12,6 +13,8 @@ import pytest
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
+
+    from sybil.typing import Evaluator
 
 _ROOT = Path(__file__).resolve().parent
 _FLAGS = NORMALIZE_WHITESPACE | ELLIPSIS
@@ -39,11 +42,39 @@ def _document_collectors() -> tuple[
 ]:
     from sybil import Sybil
     from sybil.document import PythonDocStringDocument
+    from sybil.parsers.abstract import AbstractCodeBlockParser
     from sybil.parsers.markdown import PythonCodeBlockParser, SkipParser
+    from sybil.parsers.markdown.lexers import (
+        DirectiveInHTMLCommentLexer,
+        RawFencedCodeBlockLexer,
+    )
     from sybil.parsers.rest import DocTestParser
 
+    class _PresentationCodeBlockParser(AbstractCodeBlockParser):
+        def __init__(self, language: str, evaluator: Evaluator) -> None:
+            """Keep display metadata separate from the executable language token."""
+            lexer = RawFencedCodeBlockLexer(
+                info_pattern=re.compile(
+                    rf"(?P<arguments>{re.escape(language)})(?=[ \t]|\n)[^\n]*$\n",
+                    re.MULTILINE,
+                )
+            )
+            super().__init__(
+                [
+                    lexer,
+                    DirectiveInHTMLCommentLexer(
+                        directive=r"(invisible-)?code(-block)?", arguments=".+"
+                    ),
+                ],
+                language,
+                evaluator,
+            )
+
+    class _PresentationPythonParser(PythonCodeBlockParser):
+        codeblock_parser_class = _PresentationCodeBlockParser
+
     markdown = Sybil(
-        parsers=[PythonCodeBlockParser(doctest_optionflags=_FLAGS), SkipParser()],
+        parsers=[_PresentationPythonParser(doctest_optionflags=_FLAGS), SkipParser()],
         pattern="*.md",
         fixtures=["_doc_workdir"],
     )

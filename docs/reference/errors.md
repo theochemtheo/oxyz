@@ -35,7 +35,7 @@ A short atom row has no single offending token, so its column is `None`.
 A malformed numeric token can have an exact column. This example puts the
 error in a second frame to distinguish file line numbers from frame-local ones.
 
-```python
+```python title="Locate malformed input using structured attributes"
 from pathlib import Path
 
 import oxyz
@@ -75,12 +75,14 @@ archive failures carry `ParseError` attributes.
 
 ## Parser errors stop iteration
 
-A streaming reader yields preceding valid frames, raises its parse error once,
-then terminates. It does not attempt to find a plausible next count line and
-resume. This is sometimes called a fused iterator: subsequent requests remain
-exhausted.
+!!! warning "A parse error ends the stream"
 
-```python
+    A streaming reader yields preceding valid frames, raises its parse error
+    once, then terminates. It does not attempt to find a plausible next count
+    line and resume. This is sometimes called a fused iterator: subsequent
+    requests remain exhausted.
+
+```python title="Report a parse error once, then remain exhausted"
 import oxyz
 
 stream = oxyz.iread(bad_value)
@@ -110,7 +112,7 @@ parse a prefix, scan structure or materialise the whole file.
 for conversion of a standalone frame. Schema failures do not have parser
 line/column attributes. A syntactically valid file can still violate a schema.
 
-```python
+```python title="Identify a missing required schema field"
 from pathlib import Path
 
 import oxyz
@@ -155,9 +157,11 @@ target representation, not necessarily malformed extxyz syntax. Consult
 
 ## Contract sources
 
-[Python error tests](https://github.com/theochemtheo/oxyz/blob/main/tests/test_errors.py)
-cover the hierarchy and token/short-row locations;
-[reader tests](https://github.com/theochemtheo/oxyz/blob/main/tests/test_extxyz.py)
-cover file-absolute context and fused iteration;
-[Rust error-context tests](https://github.com/theochemtheo/oxyz/blob/main/crates/oxyz-core/tests/error_context.rs)
-cover token, metadata, scan and serial/parallel locations.
+??? note "Show implementation and test references"
+
+    [Python error tests](https://github.com/theochemtheo/oxyz/blob/main/tests/test_errors.py)
+    cover the hierarchy and token/short-row locations;
+    [reader tests](https://github.com/theochemtheo/oxyz/blob/main/tests/test_extxyz.py)
+    cover file-absolute context and fused iteration;
+    [Rust error-context tests](https://github.com/theochemtheo/oxyz/blob/main/crates/oxyz-core/tests/error_context.rs)
+    cover token, metadata, scan and serial/parallel locations.

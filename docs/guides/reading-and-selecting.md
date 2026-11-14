@@ -11,7 +11,7 @@ This small trajectory has distinct species, coordinates and energies so that
 selection order is observable. Numeric columns are NumPy arrays; string columns
 are lists.
 
-```python
+```python title="Inspect a local trajectory"
 from pathlib import Path
 
 import numpy as np
@@ -48,7 +48,7 @@ The default `":"` selects all frames. Slice stops are exclusive; omitted
 bounds and negative bounds have Python slice semantics. Explicit index
 sequences accept non-negative indices and preserve order and repetition.
 
-```python
+```python title="Select frames and preserve request order" linenums="1" hl_lines="3-6 14-17"
 import oxyz
 
 first = oxyz.read(trajectory, 0)
@@ -69,12 +69,16 @@ assert picked[0] is not picked[2]
 ```
 
 An out-of-range integer raises `IndexError`; a slice is clipped to the available
-frames. A zero slice step is invalid. The indexed plain-file path used above
-returns separate frames for repeated indices. Eager fallback paths for
-compressed/remote sources or `schema=` can reuse the same mutable `Frame` for
-each occurrence of an index. Do not assume repeated results are independent:
+frames. A zero slice step is invalid.
 
-```python
+!!! warning "Repeated indices may share a frame"
+
+    The indexed plain-file path used above returns separate frames for repeated
+    indices. Eager fallback paths for compressed/remote sources or `schema=` can
+    reuse the same mutable `Frame` for each occurrence of an index. Do not assume
+    repeated results are independent.
+
+```python title="Observe aliasing on the compressed fallback" hl_lines="7-9"
 import gzip
 
 compressed = Path("selection.extxyz.gz")
@@ -93,7 +97,7 @@ slices stream through the required prefix; skipped prefix frames are parsed too.
 The file stays open until the iterator is dropped. Do not retain every yielded
 frame if bounded memory is the objective.
 
-```python
+```python title="Consume and exhaust a frame iterator"
 import oxyz
 
 stream = oxyz.iread(trajectory, "1:3")
@@ -113,14 +117,17 @@ and frame/atom budgets, see [batching and streaming](batching-and-streaming.md).
 
 ## Know what a partial read validates
 
-Without `schema=` or `record=`, a non-negative integer or bounded forward slice
-parses only the required prefix. Malformed later frames can go unnoticed.
-`oxyz.ase.read` has the same tested early-stop behaviour for `index=0` and
-`index="0:2"`; this does not mean every ASE-style selector stops early.
+!!! warning "Partial reads do not validate the tail"
+
+    Without `schema=` or `record=`, a non-negative integer or bounded forward slice
+    parses only the required prefix. Malformed later frames can go unnoticed.
+    `oxyz.ase.read` has the same tested early-stop behaviour for `index=0` and
+    `index="0:2"`; this does not mean every ASE-style selector stops early.
+
 Native `read` defaults to all frames, whereas `oxyz.ase.read` defaults to the
 last frame. Do not confuse `oxyz.ase` with the separate `ase.io` implementation.
 
-```python
+```python title="Distinguish prefix reads from whole-file parsing"
 from pathlib import Path
 
 import oxyz

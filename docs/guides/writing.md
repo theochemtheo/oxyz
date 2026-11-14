@@ -10,11 +10,15 @@ Use `write` for data already in memory. It materialises the input iterable;
 parallel serialisation also holds encoded frame text before output. It is not
 the bounded-memory way to consume an unbounded generator.
 
-Use `Writer` as a context manager when producing frames incrementally. Call
-`writer.write(frame)` for each frame in a loop: passing an iterable to a single
-`Writer.write` call materialises it as a list before encoding. Thus
-`writer.write(oxyz.iread(path))` retains the trajectory, and an unbounded iterable
-never reaches encoding. `batch=n` does not bound that input materialisation.
+Use `Writer` as a context manager when producing frames incrementally.
+
+!!! warning "Iterable input is materialised"
+
+    Call `writer.write(frame)` for each frame in a loop. Passing an iterable to
+    a single `Writer.write` call materialises it as a list before encoding.
+    Thus `writer.write(oxyz.iread(path))` retains the trajectory, and an unbounded
+    iterable never reaches encoding. `batch=n` does not bound that input
+    materialisation.
 
 Close the writer before reading the completed file. With the default
 `batch=None`, individual frames are encoded as they arrive. `batch=n` buffers up
@@ -25,7 +29,7 @@ output as well.
 
 This example writes two distinct energy values with an incremental writer:
 
-```python
+```python title="Write individual frames incrementally" linenums="1" hl_lines="16-18"
 from pathlib import Path
 
 import numpy as np
@@ -55,7 +59,7 @@ A native `Batch` is also an iterable of frames, so both writer entry points
 accept it. This convenience materialises its frame views for each call; use
 individual-frame calls when consuming a streaming input:
 
-```python
+```python title="Write a native Batch through either entry point"
 native_batch = oxyz.read_batch("helium.extxyz")
 oxyz.write("batch-output.extxyz", native_batch)
 assert oxyz.read("batch-output.extxyz") == frames
@@ -88,7 +92,7 @@ codec has an encoder:
 Do not infer the output codec from existing file contents. `level` controls the
 supported deflate-based codecs, not numeric precision.
 
-```python
+```python title="Choose gzip by suffix or explicit override"
 oxyz.write("helium.extxyz.gz", frames, level=6)
 assert oxyz.read("helium.extxyz.gz") == frames
 
@@ -103,7 +107,7 @@ Plain and gzip files support appending. Keep the same schema when the resulting
 trajectory is intended for a native batch; individual frame reads can otherwise
 accept differing schemas.
 
-```python
+```python title="Append to plain and gzip streams"
 oxyz.write("continued.extxyz", frames[0])
 oxyz.write("continued.extxyz", frames[1], append=True)
 assert oxyz.read("continued.extxyz") == frames
@@ -116,7 +120,7 @@ assert oxyz.read("continued.extxyz.gz") == frames
 Archive append and zstd writing raise rather than silently rewriting an archive
 or choosing another codec:
 
-```python
+```python title="Check unsupported archive append and zstd output"
 for destination, options in [
     ("unsupported.zip", {"append": True}),
     ("unsupported.tar", {"append": True}),
@@ -134,15 +138,17 @@ for destination, options in [
 
 ## Write to stdout
 
-`oxyz.write("-", frames)` writes plain extxyz to stdout; `compression="gzip"`
-can produce a gzip stream instead. Do not mix logs into that stream. Appending
-to stdout is rejected. ZIP, tar and gzip-compressed tar require a file path:
-attempting archive output to stdout raises `OSError`.
+!!! warning "Stdout supports streams, not archives"
+
+    `oxyz.write("-", frames)` writes plain extxyz to stdout; `compression="gzip"`
+    can produce a gzip stream instead. Do not mix logs into that stream.
+    Appending to stdout is rejected. ZIP, tar and gzip-compressed tar require a
+    file path: attempting archive output to stdout raises `OSError`.
 
 To verify a complete stdout round trip without printing file contents into the
 guide, capture a local child process:
 
-```python
+```python title="Capture stdout and check its restrictions"
 import subprocess
 import sys
 
@@ -183,12 +189,14 @@ The encoder uses shortest-round-trippable real values. It writes columns in
 values rather than original formatting. The examples above verify their own
 round trips; they do not establish that every parsed value is writable losslessly.
 
-The current encoder has string-quoting limitations. For example, input metadata
-`note="x,y"` parses as one string, but writing it can omit the necessary quotes
-and produce `note=x,y`, which fails to parse. Do not assume arbitrary string
-metadata round-trips. Re-read output and compare before replacing source data.
-See the [data model](../concepts/data-model.md) for equality and the
-[format reference](../reference/extxyz.md) for represented kinds and values.
+!!! warning "String quoting can prevent a round trip"
+
+    The current encoder has string-quoting limitations. For example, input metadata
+    `note="x,y"` parses as one string, but writing it can omit the necessary quotes
+    and produce `note=x,y`, which fails to parse. Do not assume arbitrary string
+    metadata round-trips. Re-read output and compare before replacing source data.
+    See the [data model](../concepts/data-model.md) for equality and the
+    [format reference](../reference/extxyz.md) for represented kinds and values.
 
 An invalid input object raises `TypeError`; missing required columns, invalid
 options and unsupported codecs are rejected. I/O failures raise `OSError`.

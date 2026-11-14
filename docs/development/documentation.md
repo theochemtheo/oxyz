@@ -10,7 +10,7 @@ rendered site. Do not link to private notes or publish scratch material.
 
 From the checkout root, with the full development environment:
 
-```sh
+```sh title="Check documentation from the checkout"
 uv sync --extra ase
 uv run pytest docs src/oxyz
 uv run pytest -q tests/test_doc_examples.py
@@ -31,11 +31,12 @@ all imports and input setup explicitly, without hidden fixtures or bindings.
 
 ## Write a complete example
 
-Use a plain `python` fence for workflows. Assert the values that matter rather
-than merely showing that a call returns. This example creates its input and
-checks a read/write round trip without depending on the checkout directory:
+Use a `python` fence for workflows; add a short title that tells the reader what
+the block does. Assert the values that matter rather than merely showing that
+a call returns. This example creates its input and checks a read/write round trip
+without depending on the checkout directory:
 
-```python
+```python title="Verify a small extxyz round trip" linenums="1" hl_lines="7-11 13-17"
 from pathlib import Path
 
 import oxyz
@@ -58,7 +59,7 @@ assert restored.metadata["energy"] == -1.5
 Use a doctest-style `python` fence when displayed output helps the reader.
 Expected output is checked, not just executed:
 
-```python
+```python {.no-copy title="Expected Python console output"}
 >>> restored.n_atoms
 1
 >>> restored.metadata["energy"]
@@ -72,6 +73,37 @@ There is no global numeric tolerance: for rounded floating-point calculations,
 use `numpy.testing.assert_allclose` with explicit `rtol` and `atol` appropriate
 to the example. Use assertions for array shapes, selected values and identities.
 
+## Native presentation
+
+Public docs use Zensical's bundled authoring features. Some directives render
+less naturally on GitHub; README remains portable Markdown.
+
+- Add titles with a fence header such as
+  `python title="Inspect a trajectory"`. Use `linenums="1"` and `hl_lines="4-6"`
+  selectively when they help explain a longer workflow, not on every short block.
+- Code copy buttons are enabled globally. Console transcripts and non-executable
+  signature notation use a header such as
+  `python {.no-copy title="Signature notation"}` to suppress copying.
+  `.no-copy` affects the interface, not test execution.
+- Use `!!! note`, `!!! tip` and `!!! warning` with an optional quoted title and
+  a blank line before four-space-indented prose. Move an important fact into the
+  block instead of repeating it outside. Critical limitations remain visible;
+  reserve `??? note` collapsible blocks for secondary references.
+- Group genuine alternatives with `=== "Package"` and `=== "Source checkout"`,
+  indenting each tab's content by four spaces. Keep the core walkthrough linear.
+  A tab's visibility never makes Python execution conditional: every collected
+  example runs in source order, sharing the page namespace.
+- Keep imports and input setup visible. Presentation metadata and indented
+  callout/tab fences are checked by the same Sybil Python/doctest evaluators;
+  wrong values and failed assertions still report the original document line.
+
+The renderer and Sybil must agree on the chosen fence syntax. After changing
+authoring conventions, run the runner regressions as well as affected pages;
+successful execution of the remaining blocks is not proof that none were lost.
+
+Markdown lint uses the `mkdocs` flavour for `docs/**/*.md` so it understands
+these directives; other Markdown, including README, retains the GFM rules.
+
 ## Schematic and optional examples
 
 Runnable examples must not require network access, credentials or large external
@@ -79,7 +111,7 @@ corpora. A genuine schematic example may use a named-reason Sybil skip comment:
 
 <!-- skip: next "schematic URL requires private remote credentials and data" -->
 
-```python
+```python {.no-copy title="Remote URL syntax — schematic"}
 frames = oxyz.read("s3://private-bucket/trajectory.extxyz")
 ```
 
@@ -102,7 +134,7 @@ smoke command. Do not claim shell-fence coverage.
 Install the separate, pinned docs group only when rendering the site. From the
 checkout root:
 
-```sh
+```sh title="Build and preview locally"
 uv run --group docs zensical build --clean
 uv run --group docs zensical serve --dev-addr 127.0.0.1:8000
 ```
