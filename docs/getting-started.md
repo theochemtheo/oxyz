@@ -1,0 +1,114 @@
+# Getting started
+
+Read an extxyz file into native frames, inspect its values, then write it back.
+This walkthrough creates all its input locally; no dataset download or optional
+converter is needed.
+
+## Install
+
+oxyz requires Python 3.12 or newer. The base package depends on NumPy and PyYAML:
+
+```sh
+pip install oxyz
+```
+
+Optional extras are `ase`, `metatomic`, `torch-sim` and `s3`. Install only the
+integrations you use, for example `pip install "oxyz[ase]"`. For a source
+checkout, follow [development setup](development/index.md) and run Python through
+`uv run` so Rust edits rebuild the extension.
+
+## Create and read a trajectory
+
+The first line of each frame is its atom count. The comment line declares
+per-atom columns and frame metadata; the following lines contain the atom rows.
+This file contains water followed by a hydrogen molecule:
+
+```python
+from pathlib import Path
+
+import numpy as np
+
+import oxyz
+
+path = Path("molecules.extxyz")
+path.write_text(
+    "3\nProperties=species:S:1:pos:R:3 energy=-7.25\n"
+    "O 0 0 0\nH 0.75 0 0.5\nH -0.75 0 0.5\n"
+    "2\nProperties=species:S:1:pos:R:3 energy=-1.0\n"
+    "H 0 0 0\nH 0 0 0.75\n"
+)
+
+frames = oxyz.read(path)
+assert isinstance(frames, list)
+assert [frame.n_atoms for frame in frames] == [3, 2]
+
+water = oxyz.read(path, 0)
+assert isinstance(water, oxyz.Frame)
+assert water.columns["species"] == ["O", "H", "H"]
+np.testing.assert_array_equal(
+    water.columns["pos"], [[0.0, 0.0, 0.0], [0.75, 0.0, 0.5], [-0.75, 0.0, 0.5]]
+)
+assert water.metadata["energy"] == -7.25
+```
+
+`read(path)` defaults to every frame. An integer selects one `Frame`; a slice,
+slice string or index sequence selects a list. Numeric columns are NumPy arrays,
+while string columns such as `species` are lists. File names are preserved:
+`pos` does not become `positions`, and metadata remains separate from columns.
+The [data model](concepts/data-model.md) explains normalised convenience views,
+lookup and equality.
+
+Short values can be inspected directly:
+
+```python
+>>> water.n_atoms
+3
+>>> water["energy"]
+-7.25
+>>> np.asarray(water["pos"]).shape
+(3, 3)
+```
+
+## Inspect the file before choosing a workflow
+
+Structural scanning reads frame boundaries and declared counts. Schema inference
+parses the values and reports the observed fields and their consistency:
+
+```python
+index = oxyz.scan(path)
+assert index.n_frames == 2
+assert index.total_atoms == 5
+schema = oxyz.infer_schema(path)
+assert schema.n_frames == 2
+assert schema.is_consistent
+```
+
+A scan is not content validation, and reading a selected prefix does not validate
+later frames. See [storage and streaming](concepts/storage-and-streaming.md) for
+the cost and guarantees of each operation.
+
+## Write and check the round trip
+
+```python
+output = Path("molecules-copy.extxyz")
+oxyz.write(output, frames)
+restored = oxyz.read(output)
+assert restored == frames
+assert restored[0].metadata["energy"] == -7.25
+np.testing.assert_array_equal(restored[1].columns["pos"], [[0, 0, 0], [0, 0, 0.75]])
+```
+
+Equality compares represented values, not original file bytes or formatting.
+The encoder may change whitespace, quoting and field order while preserving
+the data. [Writing](guides/writing.md) covers incremental output, codecs and
+append/stdout restrictions.
+
+## Choose the next step
+
+- [Read and select](guides/reading-and-selecting.md) for subsets, repeated
+  indices and frame iteration.
+- [Batch and stream](guides/batching-and-streaming.md) for concatenated arrays,
+  training batches and memory strategies.
+- [API reference](reference/api.md) for public objects and their full docstrings.
+- [Format reference](reference/extxyz.md), [compatibility](reference/compatibility.md)
+  and [errors](reference/errors.md) for syntax, interpretation and failure rules.

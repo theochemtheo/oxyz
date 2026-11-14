@@ -6,6 +6,22 @@ dev_addr = "127.0.0.1:8000"
 exclude_docs = "/superpowers/"
 nav = [
   { "Home" = "index.md" },
+  { "Getting started" = "getting-started.md" },
+  { "Guides" = [
+    { "Reading and selecting" = "guides/reading-and-selecting.md" },
+    { "Batching and streaming" = "guides/batching-and-streaming.md" },
+    { "Writing" = "guides/writing.md" },
+  ] },
+  { "Concepts" = [
+    { "Data model" = "concepts/data-model.md" },
+    { "Storage and streaming" = "concepts/storage-and-streaming.md" },
+  ] },
+  { "Reference" = [
+    { "API" = "reference/api.md" },
+    { "Extended XYZ" = "reference/extxyz.md" },
+    { "Compatibility" = "reference/compatibility.md" },
+    { "Errors" = "reference/errors.md" },
+  ] },
   { "Development" = [
     { "Overview" = "development/index.md" },
     { "Architecture" = "development/architecture.md" },

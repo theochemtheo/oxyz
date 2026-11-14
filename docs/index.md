@@ -7,11 +7,26 @@ torch-sim objects.
 
 ## Using oxyz
 
+Start with [getting started](getting-started.md): create a local trajectory,
+inspect its actual values and verify a write/read round trip. Then choose a
+guide for the task:
+
+- [Reading and selecting](guides/reading-and-selecting.md): return shapes,
+  slices, repeated indices and iteration.
+- [Batching and streaming](guides/batching-and-streaming.md): array layout,
+  provenance, batch budgets and schema compatibility.
+- [Writing](guides/writing.md): incremental output, codecs, append and stdout.
+
+For the contracts behind those workflows, see the [data model](concepts/data-model.md)
+and [storage and streaming](concepts/storage-and-streaming.md). The
+[API reference](reference/api.md) routes public names to their source docstrings;
+[format](reference/extxyz.md), [compatibility](reference/compatibility.md) and
+[errors](reference/errors.md) describe syntax and failure boundaries.
+
 The [repository README](https://github.com/theochemtheo/oxyz/blob/main/README.md)
-covers installation, reading, batches, schemas, typed records, writing and the
-command-line interface. The
-[examples directory](https://github.com/theochemtheo/oxyz/tree/main/examples)
-contains self-contained scripts with small local datasets.
+also covers schemas, typed records, optional targets and the CLI. Runnable
+[example scripts](https://github.com/theochemtheo/oxyz/tree/main/examples)
+use small bundled datasets.
 
 Choose native frames when you need the file's own names and values, batches
 for concatenated arrays, or records for declared typed fields. Converter

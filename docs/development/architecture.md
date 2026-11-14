@@ -27,6 +27,20 @@ exhaustive list of all coverage.
 | Optional output targets | [`ase.py`](https://github.com/theochemtheo/oxyz/blob/main/src/oxyz/ase.py), [`metatomic.py`](https://github.com/theochemtheo/oxyz/blob/main/src/oxyz/metatomic.py), [`torch_sim.py`](https://github.com/theochemtheo/oxyz/blob/main/src/oxyz/torch_sim.py), shared [`_convert.py`](https://github.com/theochemtheo/oxyz/blob/main/src/oxyz/_convert.py) and [`_torch.py`](https://github.com/theochemtheo/oxyz/blob/main/src/oxyz/_torch.py) | [`test_ase.py`](https://github.com/theochemtheo/oxyz/blob/main/tests/test_ase.py), [`test_metatomic.py`](https://github.com/theochemtheo/oxyz/blob/main/tests/test_metatomic.py), [`test_torch_sim.py`](https://github.com/theochemtheo/oxyz/blob/main/tests/test_torch_sim.py), [`test_optional_deps.py`](https://github.com/theochemtheo/oxyz/blob/main/tests/test_optional_deps.py) |
 | CLI, exports and public documentation | [`_cli.py`](https://github.com/theochemtheo/oxyz/blob/main/src/oxyz/_cli.py), [`__init__.py`](https://github.com/theochemtheo/oxyz/blob/main/src/oxyz/__init__.py), [`conftest.py`](https://github.com/theochemtheo/oxyz/blob/main/conftest.py) | [`test_cli.py`](https://github.com/theochemtheo/oxyz/blob/main/tests/test_cli.py), [`test_import.py`](https://github.com/theochemtheo/oxyz/blob/main/tests/test_import.py), [`test_public_docstrings.py`](https://github.com/theochemtheo/oxyz/blob/main/tests/test_public_docstrings.py), [`test_doc_examples.py`](https://github.com/theochemtheo/oxyz/blob/main/tests/test_doc_examples.py) |
 
+## Public contract map
+
+Keep the user-facing contract beside its implementation owner when changing
+behaviour. These pages cover completed workflows; the source/test map above
+identifies the authoritative files and regression suites.
+
+| Contract | Public documentation | Owning layer |
+| --- | --- | --- |
+| Frame selection and partial reads | [Reading](../guides/reading-and-selecting.md), [storage](../concepts/storage-and-streaming.md) | Python reader/selection policy; Rust parsing and structural indexing |
+| Concatenation, provenance and batch strategy | [Batching](../guides/batching-and-streaming.md), [data model](../concepts/data-model.md) | Rust batch assembly; Python batch planning and sequence views |
+| Encoding, codecs and append restrictions | [Writing](../guides/writing.md) | Rust encoding; Python writer input marshalling |
+| Stored values and interpretation | [Format](../reference/extxyz.md), [compatibility](../reference/compatibility.md) | Rust grammar/model; Python accessors and optional converters |
+| Public names and failure context | [API](../reference/api.md), [errors](../reference/errors.md) | Root exports and inline types/stubs; owning layer's structured exceptions |
+
 ## Boundary contracts
 
 The native frame preserves names, kinds and values rather than applying ASE
