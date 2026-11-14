@@ -60,7 +60,11 @@ s3 = ["obstore>=0.11"]
 [dependency-groups]
 # Benchmark dependencies are pinned in benchmarks/run.py (PEP 723).
 # `test` and `s3-test` stand apart from `dev` so CI tiers can omit the extras.
-test = ["pytest>=9.0.3", "pytest-cov>=6"]
+test = [
+    "pytest>=9.0.3",
+    "pytest-cov>=6",
+    "sybil[pytest]>=10.1,<11",
+]
 # obstore comes from the `s3` extra, as a user would install it.
 s3-test = ["boto3>=1.35", "moto[s3,server]>=5"]
 dev = [
@@ -159,10 +163,9 @@ convention = "numpy"
 exclude-scripts = true
 
 [tool.pytest.ini_options]
-# The doctests need every optional target installed; the CI tiers skip them.
-testpaths = ["tests", "src/oxyz"]
-addopts = "--doctest-modules"
-doctest_optionflags = ["NORMALIZE_WHITESPACE", "ELLIPSIS"]
+# Documentation examples need all optional targets; wheel tiers collect tests only.
+testpaths = ["tests", "src/oxyz", "docs"]
+addopts = "-p no:doctest"
 
 [tool.coverage.run]
 source = ["oxyz"]
@@ -187,4 +190,3 @@ manifest-path = "crates/oxyz-py/Cargo.toml"
 module-name = "oxyz._rust"
 python-source = "src"
 features = ["extension-module"]
-exclude = ["src/oxyz/conftest.py"]

@@ -18,6 +18,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Schema rules take `absent: omit`: under project mode an absent optional
   field is left out of the frame instead of filled. Its type is exported as
   `oxyz.Absent`.
+- Executable documentation examples and a contributor documentation authoring guide.
 
 ### Changed
 

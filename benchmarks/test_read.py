@@ -15,9 +15,9 @@ import importlib.util
 from pathlib import Path
 
 import pytest
+from benchmarks.conftest import MAD_N_FRAMES
 
 import oxyz
-from conftest import MAD_N_FRAMES
 
 needs_ase = pytest.mark.skipif(
     importlib.util.find_spec("ase") is None, reason="ase not installed"

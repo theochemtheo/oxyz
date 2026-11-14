@@ -1756,6 +1756,7 @@ dev = [
     { name = "ruff" },
     { name = "rumdl" },
     { name = "seaborn" },
+    { name = "sybil", extra = ["pytest"] },
     { name = "torch", version = "2.14.1", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
     { name = "torch", version = "2.14.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
     { name = "torch-sim-atomistic" },
@@ -1769,6 +1770,7 @@ s3-test = [
 test = [
     { name = "pytest" },
     { name = "pytest-cov" },
+    { name = "sybil", extra = ["pytest"] },
 ]
 
 [package.metadata]
@@ -1800,6 +1802,7 @@ dev = [
     { name = "ruff", specifier = ">=0.16.0" },
     { name = "rumdl", specifier = ">=0.2.45" },
     { name = "seaborn", specifier = ">=0.13.2" },
+    { name = "sybil", extras = ["pytest"], specifier = ">=10.1,<11" },
     { name = "torch", specifier = ">=2", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torch-sim-atomistic" },
     { name = "ty", specifier = ">=0.0.100" },
@@ -1812,6 +1815,7 @@ s3-test = [
 test = [
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-cov", specifier = ">=6" },
+    { name = "sybil", extras = ["pytest"], specifier = ">=10.1,<11" },
 ]
 
 [[package]]
@@ -2667,6 +2671,20 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
+]
+
+[[package]]
+name = "sybil"
+version = "10.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/1c/03/50135b55ba14509654b2f624eaf7e318d654182ebe9f712fb74e98e418d0/sybil-10.1.0.tar.gz", hash = "sha256:062249c8886a0ab19e45d1c3afd5631ec806e7a95cf5153c96560f5e47756cbd", size = 82376, upload-time = "2026-06-13T09:40:44.584Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f2/fe/4094754188b52f8333ba24b377192918936597769a574a9dd8446f69e1f1/sybil-10.1.0-py3-none-any.whl", hash = "sha256:b3015f7e0ca3fe197ae67117c440710b62ea500078d4414ebd0ab804d12c9897", size = 40930, upload-time = "2026-06-13T09:40:43.139Z" },
+]
+
+[package.optional-dependencies]
+pytest = [
+    { name = "pytest" },
 ]
 
 [[package]]

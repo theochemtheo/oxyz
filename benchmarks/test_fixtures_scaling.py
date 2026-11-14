@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import numpy as np
+from benchmarks import conftest
 
-import conftest
 import oxyz
 
 

@@ -156,8 +156,8 @@ jobs:
           SYNC_ARGS: ${{ matrix.sync }}
       # --no-deps: the wheel must not pull in extras this tier omits.
       - run: uv pip install --no-deps dist/*.whl
-      # --no-sync keeps the installed wheel; the empty addopts skip the doctests.
-      - run: uv run --no-sync pytest tests -o addopts=""
+      # --no-sync keeps the installed wheel; explicit paths exclude docs examples.
+      - run: uv run --no-sync pytest tests
         env:
           OXYZ_TEST_TIER: ${{ matrix.tier }}
 
