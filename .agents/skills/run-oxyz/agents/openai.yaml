@@ -1,0 +1,3 @@
+interface:
+  display_name: "Run oxyz"
+  short_description: "Build, test and tour oxyz or preview its documentation"

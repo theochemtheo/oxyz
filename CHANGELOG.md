@@ -21,6 +21,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Executable documentation examples covering README and user/contributor guides,
   including schemas, typed records, compressed/remote sources, converters and
   command-line workflows, with a local site preview.
+- Portable repository skills for API selection, development and execution, with
+  a local smoke tour covering typed records, union batches and optional converters.
 
 ### Changed
 

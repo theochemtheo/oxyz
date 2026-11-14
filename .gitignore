@@ -39,7 +39,8 @@ target/
 .DS_Store
 
 # agents
-.claude
+/.claude/*
+!/.claude/skills
 .codex
 
 # local planning notes and design specs, never committed
