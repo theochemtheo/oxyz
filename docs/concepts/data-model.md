@@ -27,7 +27,10 @@ also express matrix interpretation. Optional record fields may be `None` for an
 individual frame. A `RecordBatch` holds dense filled values and presence masks
 rather than `None`; selecting a row restores `None` where appropriate. A union
 batch additionally carries member tags so indexing restores the matching record
-class. See the [API reference](../reference/api.md) for the public declarations.
+class. Follow [typed records](../guides/typed-records.md) for declarations and
+[mixed datasets](../guides/mixed-datasets.md) for unions and member selection.
+The [schema concepts](schemas.md) distinguish observed and declared structure.
+Public names are indexed in the [API reference](../reference/api.md).
 
 ## Stored values and derived accessors
 
@@ -109,6 +112,26 @@ Records do not acquire this two-dictionary lookup interface. Use the declared
 attribute on a record. On a record batch, `batch[R.field]` is the typed field-key
 form and `batch["field"]` uses the *declared field name*, not necessarily the
 file key. A key belonging to an unrelated record is rejected.
+
+## Missingness and dense storage
+
+`Batch` needs compatible columns and metadata across its frames. It carries no
+presence masks: filling through a project-mode schema changes values without
+retaining which frames originally lacked them.
+
+`RecordBatch` instead records a per-frame presence mask for optional fields and
+fields not declared by every union member. The dense value alone is insufficient:
+a filled zero and an observed zero can have the same numeric value and different
+`present(...)` results. Column masks have one entry per frame, not per atom.
+Fields declared non-optional by every member are reported present everywhere,
+even when a fill supplied their values; this is not general source-key provenance.
+
+Converting a plain batch with `RecordBatch[R].from_batch(...)` cannot recover
+presence already lost through projection. An optional key in that input is
+present in every frame or absent from every frame. Union batches reject
+`from_batch`: read them directly with `read_batch(record=RecordBatch[A | B])`
+to retain member identities. See [mixed datasets](../guides/mixed-datasets.md)
+for checked values, masks, tags and source indices.
 
 ## Frozen bindings, mutable contents
 

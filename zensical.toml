@@ -15,9 +15,13 @@ nav = [
     { "Reading and selecting" = "guides/reading-and-selecting.md" },
     { "Batching and streaming" = "guides/batching-and-streaming.md" },
     { "Writing" = "guides/writing.md" },
+    { "Schemas and projection" = "guides/schemas-and-projection.md" },
+    { "Typed records" = "guides/typed-records.md" },
+    { "Mixed datasets" = "guides/mixed-datasets.md" },
   ] },
   { "Concepts" = [
     { "Data model" = "concepts/data-model.md" },
+    { "Schemas" = "concepts/schemas.md" },
     { "Storage and streaming" = "concepts/storage-and-streaming.md" },
   ] },
   { "Reference" = [

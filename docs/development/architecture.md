@@ -37,6 +37,9 @@ identifies the authoritative files and regression suites.
 | --- | --- | --- |
 | Frame selection and partial reads | [Reading](../guides/reading-and-selecting.md), [storage](../concepts/storage-and-streaming.md) | Python reader/selection policy; Rust parsing and structural indexing |
 | Concatenation, provenance and batch strategy | [Batching](../guides/batching-and-streaming.md), [data model](../concepts/data-model.md) | Rust batch assembly; Python batch planning and sequence views |
+| Observations, validation and projection | [Schemas guide](../guides/schemas-and-projection.md), [schema concepts](../concepts/schemas.md) | Rust signature fold/projection; Python rules, matching and policy |
+| Typed fields and schema binding | [Typed records](../guides/typed-records.md) | Python declarations, field validation and record binding |
+| Union identity and missingness | [Mixed datasets](../guides/mixed-datasets.md), [data model](../concepts/data-model.md#missingness-and-dense-storage) | Python union matching and record-batch reconstruction; native presence reporting |
 | Encoding, codecs and append restrictions | [Writing](../guides/writing.md) | Rust encoding; Python writer input marshalling |
 | Stored values and interpretation | [Format](../reference/extxyz.md), [compatibility](../reference/compatibility.md) | Rust grammar/model; Python accessors and optional converters |
 | Public names and failure context | [API](../reference/api.md), [errors](../reference/errors.md) | Root exports and inline types/stubs; owning layer's structured exceptions |
@@ -59,6 +62,35 @@ Records bind declarations to the same reader/projection path. Optional values
 on individual records differ from filled dense batch storage; presence masks and
 union tags preserve the distinction. See
 [typed records and unions](decisions/typed-records-and-unions.md).
+
+## Schema and record change routing
+
+- Observed variants and promotion summaries: Rust `schema.rs`, Python
+  `_schema.py`; start with `test_schema.py` and `schema_inference.rs`.
+- Spec parsing, literal/glob/regex precedence and serialisation:
+  `_schema_spec.py`; `test_schema_spec.py`.
+- Inference-to-spec emission: `_schema_emit.py`; `test_schema_emit.py`.
+- Structured violations and conformance policy: `_schema_match.py`;
+  `test_schema_match.py`. `_project.py` compiles projection and freezes
+  patterns; `test_project.py` and `test_schema_read.py` cover integration.
+  Rust `project.rs` owns value projection and presence reporting, with
+  `projection.rs` covering its core behaviour.
+- Field declarations and runtime shape/dtype checks: `_record.py` and
+  `_record_fields.py`; `test_record.py` and `test_record_fields.py`.
+  `test_record_typing.py` separately checks consumer types with ty.
+- Agreement between `record=` and `schema=`, projection plans and owned/view
+  conversion: `_record_bind.py`; `test_record.py` and `test_record_batch.py`.
+- Sibling-union compatibility, signature matching and ambiguity:
+  `_record_union.py`; `test_record_union.py`.
+- Dense fields, presence, tags and row reconstruction: `_record_batch.py`;
+  `test_record_batch.py` and `test_record_union.py`.
+- Reader selection, warning/drop handling and original source indices:
+  `_frames.py`, `_batch.py` and `_select.py`; schema-read, record and union tests
+  above exercise these entry points.
+
+Do not route missingness through the plain batch builder: a `Batch` has no
+presence mask. Do not infer union identity from filled values: tags and masks
+must survive slicing and gathering, including after warning-mode frame drops.
 
 ## Export and verification obligations
 

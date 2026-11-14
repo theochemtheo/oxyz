@@ -16,15 +16,21 @@ guide for the task:
 - [Batching and streaming](guides/batching-and-streaming.md): array layout,
   provenance, batch budgets and schema compatibility.
 - [Writing](guides/writing.md): incremental output, codecs, append and stdout.
+- [Schemas and projection](guides/schemas-and-projection.md): infer a contract,
+  validate input, fill fields and freeze patterns.
+- [Typed records](guides/typed-records.md): declare application fields and read
+  typed records or dense record batches.
+- [Mixed datasets](guides/mixed-datasets.md): choose projection or record unions,
+  then select by member and distinguish missing values from real zeros.
 
-For the contracts behind those workflows, see the [data model](concepts/data-model.md)
-and [storage and streaming](concepts/storage-and-streaming.md). The
+For the contracts behind those workflows, see the [data model](concepts/data-model.md),
+[schemas](concepts/schemas.md) and [storage and streaming](concepts/storage-and-streaming.md). The
 [API reference](reference/api.md) routes public names to their source docstrings;
 [format](reference/extxyz.md), [compatibility](reference/compatibility.md) and
 [errors](reference/errors.md) describe syntax and failure boundaries.
 
 The [repository README](https://github.com/theochemtheo/oxyz/blob/main/README.md)
-also covers schemas, typed records, optional targets and the CLI. Runnable
+also covers optional targets and the CLI. Runnable
 [example scripts](https://github.com/theochemtheo/oxyz/tree/main/examples)
 use small bundled datasets.
 

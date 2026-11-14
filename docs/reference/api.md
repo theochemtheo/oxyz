@@ -15,8 +15,10 @@ not a generated dump of private helpers.
 | One concatenated batch | [`read_batch`](https://github.com/theochemtheo/oxyz/blob/main/src/oxyz/_batch.py) | [Batching](../guides/batching-and-streaming.md) |
 | A sequence of batches | [`iread_batch`](https://github.com/theochemtheo/oxyz/blob/main/src/oxyz/_batch.py) | [Batching](../guides/batching-and-streaming.md) |
 | Frame offsets/counts without a full parse | [`scan`](https://github.com/theochemtheo/oxyz/blob/main/src/oxyz/_scan.py) | [Storage and streaming](../concepts/storage-and-streaming.md) |
-| Observed fields, variants and consistency | [`infer_schema`](https://github.com/theochemtheo/oxyz/blob/main/src/oxyz/_schema.py) | [Storage and streaming](../concepts/storage-and-streaming.md) |
+| Observed fields, variants and consistency | [`infer_schema`](https://github.com/theochemtheo/oxyz/blob/main/src/oxyz/_schema.py) | [Schemas and projection](../guides/schemas-and-projection.md) |
 | Encode objects or stream output | [`write`, `Writer`](https://github.com/theochemtheo/oxyz/blob/main/src/oxyz/_write.py) | [Writing](../guides/writing.md) |
+| Named typed fields or typed batches | `read`/`iread(record=R)`, `read_batch`/`iread_batch(record=RecordBatch[R])` | [Typed records](../guides/typed-records.md) |
+| Mixed record types and presence | `record=A | B`, `RecordBatch[A | B]` | [Mixed datasets](../guides/mixed-datasets.md) |
 
 ### Reader call shapes
 
@@ -60,8 +62,10 @@ infer_schema(path, *, compression="infer", member=None,
   `conformance="warn"`; source frame indices remain the provenance.
 - `record=R` on frame readers returns instances of the `Record` subclass `R`
   or members of a sibling-record union. Batch readers require `RecordBatch[R]`
-  or a declared batch subclass. `record` cannot be combined with `mode`.
-  See [data model](../concepts/data-model.md) and the linked record docstrings.
+  or a declared batch subclass. `record` cannot be combined with `mode`, even
+  `mode="project"`. With `record`, `schema` checks agreement for declared fields
+  and supplies frame constraints; rules for unrelated keys are not applied.
+  See [typed records](../guides/typed-records.md) for binding restrictions.
 - `iread_batch` requires exactly one batching strategy: `frames_per_batch`,
   `atoms_per_batch`, or `memory_scales_with` plus `max_scaler`. These are budgets,
   not a promise to split an oversized frame. Source seekability restricts which
@@ -98,11 +102,29 @@ are not a declared dataset contract.
 | [`Column`, `Meta`, `Cell`, `Matrix3`, `FieldSpec`](https://github.com/theochemtheo/oxyz/blob/main/src/oxyz/_record.py) | Record field declarations, file-key binding and normalised cell/matrix fields |
 | [`RecordBatch`](https://github.com/theochemtheo/oxyz/blob/main/src/oxyz/_record_batch.py) | Dense typed fields, `present`, union `members`/`tags`/`where`, sequence and gather operations |
 
+Start with [schemas and projection](../guides/schemas-and-projection.md) or
+[typed records](../guides/typed-records.md); [schema concepts](../concepts/schemas.md)
+explain validation, projection and presence. For heterogeneous input, follow
+[mixed datasets](../guides/mixed-datasets.md).
+
+| Operation or member | Contract |
+| --- | --- |
+| `Schema.to_spec()` | Convert observations into editable rules, not a guarantee about future input |
+| `SchemaSpec.freeze(sample)` | Expand patterns to observed literal keys; projection requires literal rules |
+| `R.spec()` / `RecordBatch[R].spec()` | Project-mode schema; plain reads with it do not preserve record missingness or union identity |
+| `R.from_frame(frame)` | Bind one frame; unchanged arrays become read-only views |
+| `RecordBatch[R].from_batch(batch)` | Single-record conversion; cannot recover per-frame presence from an ordinary batch |
+| `batch[R.field]` / `batch["field"]` | Dense batch-form value; strings are declared field names, not file keys |
+| `batch.present(key)` | Read-only per-frame mask for an optional or member-specific field; other fields are present everywhere |
+| `batch.members` / `batch.tags` | Member classes in declaration order; read-only integer tags index that tuple |
+| `batch.where(A, B)` | Boolean mask selecting exact union members, not subclasses or shared bases |
+
 The [schema decision](../development/decisions/schemas-and-projection.md) and
 [record decision](../development/decisions/typed-records-and-unions.md) explain
-these boundaries. Use source docstrings for the detailed declaration rules;
-optional values in individual records are not the same storage form as filled
-arrays plus presence masks in a batch.
+these boundaries. Runtime shape/dtype checking is stronger than static typing:
+generic batches use field keys for typed lookup, while declared batch subclasses
+also expose typed attributes. See the [typing limits](../guides/typed-records.md#typing-limits)
+before relying on constructor checks from an editor.
 
 ## Writing
 
