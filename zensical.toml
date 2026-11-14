@@ -48,7 +48,6 @@ language = "en"
 features = [
   "content.code.copy",
   "content.tabs.link",
-  "navigation.sections",
   "navigation.footer",
   "navigation.top",
   "search.highlight",

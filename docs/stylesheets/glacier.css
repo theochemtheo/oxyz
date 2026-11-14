@@ -244,7 +244,7 @@
 }
 
 .md-nav__title,
-.md-nav__item--section > .md-nav__link {
+.md-nav__item--nested > .md-nav__link {
   font-family: var(--md-code-font), monospace;
   font-size: .64rem;
   letter-spacing: .06em;
