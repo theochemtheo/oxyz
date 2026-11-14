@@ -168,7 +168,8 @@ live beside their files in `docs/fonts/`. `font = false` disables Google Fonts.
 
 Keep code titles, number gutters, highlighted lines and copy controls usable when
 changing the stylesheet. Console transcripts and signatures retain `.no-copy`.
-Code is inset on desktop, with the inset removed below 40em. Check both palettes
-and narrow screens using actual guides, not just a typography specimen.
+Code blocks align with surrounding content and tabs at every screen size.
+Check both palettes and narrow screens using actual guides, not just a
+typography specimen.
 
 Sidebar groups are collapsible; the current page's group starts open.

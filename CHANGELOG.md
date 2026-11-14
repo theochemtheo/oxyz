@@ -26,6 +26,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Documentation uses Ledger / Glacier styling with dark/light palettes,
   self-hosted Atkinson Hyperlegible and Iosevka fonts, a repository header link
   and collapsible sidebar groups.
+- Code blocks align with surrounding documentation content and tabs.
 - Projection promotes an integer value to float for a REAL rule, so an
   integer-valued `Lattice` no longer fails a project-mode schema; an integer
   above 2^53 loses precision in the conversion. Validate mode is unchanged.

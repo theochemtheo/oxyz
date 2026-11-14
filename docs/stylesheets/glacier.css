@@ -188,7 +188,7 @@
 }
 
 .md-typeset .highlight,
-.md-typeset > pre { margin-left: 1.5rem; margin-right: 0; }
+.md-typeset > pre { margin-left: 0; margin-right: 0; }
 
 .md-typeset pre > code {
   background: var(--md-code-bg-color);
@@ -280,9 +280,4 @@
   .md-content__inner { padding: .8rem .2rem; }
   .md-typeset h2 { padding-left: 2.1rem; }
   .md-typeset h2::before { left: 0; right: auto; font-size: 1.4rem; }
-}
-
-@media (max-width: 40em) {
-  .md-typeset .highlight,
-  .md-typeset > pre { margin-left: 0; }
 }
