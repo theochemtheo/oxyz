@@ -1,0 +1,3 @@
+interface:
+  display_name: "oxyz schemas"
+  short_description: "Schema inference, validation, projection and freeze"

@@ -32,3 +32,14 @@ For implementation work, use [develop-oxyz](../develop-oxyz/SKILL.md) and the
 [owner/test map](../../../docs/development/architecture.md); for build/test/tour
 mechanics, use [run-oxyz](../run-oxyz/SKILL.md). Durable rationale lives in the
 [accepted decisions](../../../docs/development/decisions/index.md).
+
+## Focused implementation routing
+
+Load only the specialization relevant to the task; usage guides above remain
+the public contract.
+
+| Task or symptom | Skill |
+| --- | --- |
+| Grammar, malformed-frame line context, lossless writing, indexing/prefix reads, serial/parallel parity | [oxyz-core](../oxyz-core/SKILL.md) |
+| Inference, validation, projection, omitted optional fields, patterns and freeze | [oxyz-schema](../oxyz-schema/SKILL.md) |
+| Record declarations/binding, sibling unions, absent batch fields, masks/tags, selections and typing | [oxyz-records](../oxyz-records/SKILL.md) |
