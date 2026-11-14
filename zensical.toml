@@ -1,0 +1,23 @@
+[project]
+site_name = "oxyz"
+docs_dir = "docs"
+site_dir = "site"
+dev_addr = "127.0.0.1:8000"
+exclude_docs = "/superpowers/"
+nav = [
+  { "Home" = "index.md" },
+  { "Development" = [
+    { "Overview" = "development/index.md" },
+    { "Architecture" = "development/architecture.md" },
+    { "Testing" = "development/testing.md" },
+    { "Performance" = "development/performance.md" },
+    { "Writing documentation" = "development/documentation.md" },
+    { "Accepted decisions" = [
+      { "Overview" = "development/decisions/index.md" },
+      { "Lossless core and layering" = "development/decisions/lossless-core-and-layering.md" },
+      { "Schemas and projection" = "development/decisions/schemas-and-projection.md" },
+      { "Typed records and unions" = "development/decisions/typed-records-and-unions.md" },
+      { "Optional output targets" = "development/decisions/optional-output-targets.md" },
+    ] },
+  ] },
+]

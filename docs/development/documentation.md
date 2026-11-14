@@ -96,3 +96,33 @@ skips to the collector.
 Shell fences (`sh`, `bash`) document commands but are not executed by Sybil.
 Exercise CLI behaviour through the existing CLI tests and an explicit local
 smoke command. Do not claim shell-fence coverage.
+
+## Preview and review
+
+Install the separate, pinned docs group only when rendering the site. From the
+checkout root:
+
+```sh
+uv run --group docs zensical build --clean
+uv run --group docs zensical serve --dev-addr 127.0.0.1:8000
+```
+
+Open <http://127.0.0.1:8000/>. If the port is occupied, choose another loopback
+port and record the actual URL; do not stop another process or bind the preview
+to the network. `zensical.toml` owns navigation and builds only public pages;
+`docs/superpowers/` is excluded from the build. Generated `site/` output and
+the renderer cache are not source and must not be committed.
+
+For each content review, run the affected examples and a clean build, then open
+the actual pages in a browser. Check navigation, internal links, code/doctest
+rendering, tables and narrow-screen overflow. A successful build is not visual
+proof. Include the live URL, specific pages and any intentionally schematic
+examples when requesting review. Record explicit approval of the reviewed
+revision before proceeding past a required review checkpoint; passing checks
+or silence are not approval. Changed content needs renewed review.
+
+This is a local preview, not website deployment. README is outside `docs_dir`
+and is not rendered by this preview; review it separately as Markdown.
+Publication, theme customisation, versioning and generated API documentation
+are separate work. See [development](index.md) for setup and
+[testing](testing.md) for source/wheel verification boundaries.

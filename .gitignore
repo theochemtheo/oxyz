@@ -22,6 +22,10 @@ htmlcov/
 coverage/
 *.profraw
 
+# Local documentation preview output
+/site/
+/.cache/
+
 # Rust
 target/
 

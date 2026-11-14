@@ -85,6 +85,9 @@ dev = [
     { include-group = "test" },
     { include-group = "s3-test" },
 ]
+docs = [
+    "zensical==0.1.1",
+]
 
 [tool.uv]
 # Keep in step with `version:` on every setup-uv step.
