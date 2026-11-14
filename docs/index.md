@@ -22,6 +22,11 @@ guide for the task:
   typed records or dense record batches.
 - [Mixed datasets](guides/mixed-datasets.md): choose projection or record unions,
   then select by member and distinguish missing values from real zeros.
+- [Compressed and remote sources](guides/compressed-and-remote.md): codecs,
+  archive members, object storage and HuggingFace.
+- [Converters](guides/converters.md): ASE, metatomic and torch-sim workflows
+  with explicit scientific conventions.
+- [Command line](guides/command-line.md): inspect, check and freeze schemas.
 
 For the contracts behind those workflows, see the [data model](concepts/data-model.md),
 [schemas](concepts/schemas.md) and [storage and streaming](concepts/storage-and-streaming.md). The
@@ -30,7 +35,7 @@ For the contracts behind those workflows, see the [data model](concepts/data-mod
 [errors](reference/errors.md) describe syntax and failure boundaries.
 
 The [repository README](https://github.com/theochemtheo/oxyz/blob/main/README.md)
-also covers optional targets and the CLI. Runnable
+is a short installation and usage entry point. Runnable
 [example scripts](https://github.com/theochemtheo/oxyz/tree/main/examples)
 use small bundled datasets.
 

@@ -5,921 +5,140 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/downloads/)
 [![SPEC 0](https://img.shields.io/badge/SPEC-0-green?labelColor=%23004811&color=%235CB05C)](https://scientific-python.org/specs/spec-0000/)
 
-Fast, schema-aware [extxyz](https://github.com/libAtoms/extxyz) reading for
-atomistic machine learning. A Rust parser behind a small, typed Python API:
-numpy arrays out, `ase.Atoms` on request, and a one-pass schema report that
-tells you whether a training file is what you think it is.
+Fast, schema-aware [extxyz](https://github.com/libAtoms/extxyz) reading and writing
+for atomistic simulation and machine learning. A Rust parser behind a typed
+Python API, with NumPy arrays as the native numeric output.
 
-```python
-import oxyz
+- **Array-native frames and batches:** stored file keys, atom-major concatenation,
+  source frame indices and streaming batch budgets.
+- **Observed and declared schemas:** inspect field/type drift, validate a contract,
+  or project selected fields with explicit fills.
+- **Typed records and unions:** named fields, dense batches, presence masks and
+  concrete member types for heterogeneous datasets.
+- **Optional scientific targets:** ASE, metatomic and torch-sim converters; local
+  compressed files and remote object-storage/Hub reads.
+- **Measured performance:** serial/parallel and reference-reader comparisons,
+  with workloads and environment recorded in the [benchmark results](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/RESULTS.md).
 
-frames = oxyz.read("train.extxyz")          # all cores, one pass
-frames[0]["pos"]                            # float64 ndarray, shape (n_atoms, 3)
-frames[0]["energy"]                         # float: columns and metadata alike
-
-schema = oxyz.infer_schema("train.extxyz")
-schema.is_consistent                        # False: now you know before training
-print(schema)                               # which keys drift, and in how many frames
-```
-
-`oxyz` exists for the gap between "extxyz is the lingua franca of atomistic
-ML datasets" and "every Python extxyz reader is slow enough to matter".
-Reading a dataset into numpy is 17–27× faster than `ase.io.read` on the
-benchmarks below; reading it into `ase.Atoms` objects is 3.1–6.2× faster.
-The same single pass can also tell you the dataset's schema: which columns
-and metadata keys appear, with what types and shapes, and how consistently.
-That is the part of dataset ingestion that usually goes unchecked.
-
-For datasets with known fields, [typed records](#typed-records) give named,
-statically typed attributes instead of dictionary lookups — think
-Pydantic/SQLAlchemy.
-
-## Quickstart
+## Install
 
 ```sh
-pip install oxyz            # minimal deps; add extras as needed, e.g. oxyz[ase]
+pip install oxyz
+pip install "oxyz[ase]"
+pip install "oxyz[metatomic]"
+pip install "oxyz[torch-sim]"
+pip install "oxyz[s3]"
 ```
 
-oxyz follows [Semantic Versioning](https://semver.org): within a major version
-no release removes or incompatibly changes a public name (the names exported
-from `oxyz` and its documented submodules, and the `oxyz` command-line verbs
-and options), though new ones may be added.
+The base runtime requires Python ≥3.12, NumPy ≥2 and PyYAML ≥6. Extras add
+`ase.Atoms`, `metatomic.torch.System`, `torch_sim.SimState`, or remote reads
+(including HuggingFace) respectively; optional libraries are imported when used.
+Wheels cover Linux, macOS and Windows. The support window follows
+[SPEC 0](https://scientific-python.org/specs/spec-0000/).
 
-Runnable, self-contained versions of each use below live in
-[`examples/`](examples/).
+Installing also provides `oxyz scan`, `oxyz check` and `oxyz freeze`.
+`uvx oxyz scan PATH` runs the released CLI without a persistent installation.
+For checkout setup and uv-driven Rust rebuilds, see
+[development](https://github.com/theochemtheo/oxyz/blob/main/docs/development/index.md).
 
-### Install
+## Read, inspect and write
 
-```sh
-pip install oxyz                # minimal dependencies
-pip install "oxyz[ase]"         # adds ase.Atoms conversion
-pip install "oxyz[metatomic]"   # adds metatomic.torch.System reading
-pip install "oxyz[torch-sim]"   # adds torch_sim.SimState reading
-pip install "oxyz[s3]"          # adds reading from S3-compatible URLs
-```
-
-Runtime dependencies are kept to a minimum; the extras above are pulled in
-lazily, only when their target is used.
-
-Wheels cover CPython ≥3.12 on Linux (x86_64, aarch64), macOS (arm64,
-x86_64), and Windows (x64).
-
-oxyz follows [SPEC 0](https://scientific-python.org/specs/spec-0000/) for its
-support window: Python versions are dropped three years after release, so the
-current minimum is 3.12.
-
-Installing puts an `oxyz` command on the path; `oxyz scan train.extxyz`
-summarises a file without writing any Python. It also runs without
-installing, via `uvx oxyz scan train.extxyz`.
-
-## What you get beyond ASE
-
-**Array-native frames.** A `Frame` is a frozen dataclass holding the file's
-columns as numpy arrays and its comment-line metadata as typed Python
-values, with no per-atom Python objects or calculator indirection. Names and
-values are kept exactly as written: `force` and `forces` stay distinct,
-nothing is reordered, and `Lattice` remains the flat 9-value array from the
-file. Normalisation is opt-in: `frame.positions`, `frame.numbers`,
-`frame.symbols`, `frame.cell`, and `frame.pbc` are derived views computed on
-access — `frame.cell` is the 3x3 cell in ASE's row-vector convention while
-`frame.metadata["Lattice"]` still holds the flat 9-value array. Nothing is
-cached and nothing the frame stores is rewritten. `frame["pos"]` looks a
-name up in either dict (as do `in`, `get`, and `keys`), and raises rather than
-guess when a name is both a column and a metadata key; `Batch`, `Schema` and
-`SchemaSpec` do the same.
-
-**Batches in the PyG layout.** `Batch` concatenates frames atom-major,
-CSR-style: every per-atom column is one dense array of `total_atoms` rows,
-frame `i` occupying rows `offsets[i]:offsets[i+1]`; per-frame metadata
-stacks into arrays of `n_frames` rows. `batch.ptr` and `batch.batch` carry
-their PyTorch Geometric names, and `torch.from_numpy(batch.columns["pos"])`
-is zero-copy, so the path into a training loop is short. A batch is also a
-sequence of its frames: `batch[i]` is a `Frame` whose arrays are views onto the
-batch, `batch[a:b]` a batch of views, and an index list or boolean mask gathers
-a copy, as numpy's basic and advanced indexing do.
+This example creates its input in a temporary directory and verifies the values
+after writing. It needs no downloaded dataset or optional library.
 
 ```python
-for batch in oxyz.iread_batch("bulk.extxyz", atoms_per_batch=4096,
-                               shuffle=True, seed=0):
-    batch.columns["forces"]        # (total_atoms, 3)
-    batch.metadata["energy"]       # (n_frames,)
-    batch.frame_indices            # which file frames these are
-    batch[0]["pos"]                # the first frame's rows, a view
-    batch[batch["energy"] < -6.0]  # a new batch of the matching frames
-```
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
-`iread_batch` packs by frame count or by a total-atom budget, in file
-order or seeded-shuffled. Batch composition depends only on the file, the
-knobs, and the seed, never on `threads`.
-
-**Schema inference.** `infer_schema` folds the whole file into a `Schema`:
-per-column and per-metadata-key observed variants (kind, width or shape,
-and how many frames used each), presence counts, a strict `is_consistent`,
-and per-entry `unified`, the single type an Int/Real drift can be
-promoted to, or `None` when the conflict is genuine. The classic failure
-it catches: a generator script that writes isolated-atom frames with
-integer forces and no `Lattice` into an otherwise uniform bulk dataset.
-The same pass keeps the per-frame atom counts, so a `Schema` also reports
-the atom-count distribution (`mean_atoms`, `median_atoms`, `std_atoms`,
-alongside the min/max above) without a second read of the file.
-
-```text
->>> print(oxyz.infer_schema("train.extxyz"))
-1000 frames, 63841 atoms (min 1, max 96)
-
-per-atom columns:
-  species: S:1 (1000/1000 frames)
-  pos: R:3 (1000/1000 frames)
-  forces: I:3 (5/1000 frames), R:3 (995/1000 frames) (unifies to R:3)
-
-metadata:
-  energy: Real (1000/1000 frames)
-  Lattice: RealArray[9] (995/1000 frames)
-```
-
-**Structural scanning.** `oxyz.scan` reads only the frame skeleton (byte
-offsets and declared atom counts) without parsing any contents. It is the
-cheap first question to ask of an unfamiliar file (5 ms for a 22 MiB file
-below) and the machinery behind random access, shuffled batching, and
-lazy negative indexing. The same statistics, alongside the inferred
-schema, are a terminal away with `oxyz scan` (see [Command line](#command-line)).
-
-**Parallelism is a knob.** Readers take `threads`: `None`
-parses on every core, `1` is the exact serial streaming path. Results and
-errors are identical either way; parity tests hold the parallel path to
-the serial path's behaviour.
-
-## In place of ASE
-
-`oxyz.ase.read` and `oxyz.ase.iread` are drop-ins for `ase.io.read` /
-`ase.io.iread` on extxyz files, taking the same index grammar as
-`oxyz.read` (see [API](#api)):
-
-```python
-import oxyz.ase
-
-atoms = oxyz.ase.read("train.extxyz")             # last frame, like ase.io.read
-images = oxyz.ase.read("train.extxyz", ":")       # every frame
-for atoms in oxyz.ase.iread("train.extxyz", "::10"):
-    ...
-```
-
-The conversion reuses `ase.io.extxyz`'s own routing tables and
-`set_calc_and_arrays`, so key handling (which results go to the
-calculator, which to `arrays`) agrees with ASE by construction; golden
-tests hold the two readers equal on the test corpus apart from the
-divergences below. Reads are lazy:
-`read(path, 3)` parses four frames and stops, and negative or reverse
-selections resolve through a structural scan and seek rather than a full
-parse: `read(path)` on a long trajectory does not parse the whole file
-to return the last frame.
-
-## Divergences from ASE
-
-`oxyz.ase.read` matches `ase.io.read` field for field on the test corpus
-except for the cases below: two deliberate, two that follow from
-honouring the extxyz grammar and oxyz's typed model where ASE's parser
-does not. These four are settled design choices under the 1.0 contract:
-each is the behaviour oxyz intends to keep.
-
-**Deliberate**, an error or an acceptance, never a silently different
-value:
-
-- **Voigt stress:** 6-component `stress` is accepted and routed to the
-  calculator; ASE's comment parser rejects the file.
-- **Non-symbol species:** a species that is not a chemical symbol raises
-  an error; ASE builds a nonsense `Atoms`.
-
-**Grammar and typing**, a different value, no error:
-
-- **New-style string arrays:** `tags=["a","b"]` is typed as `list[str]`;
-  ASE keeps the one raw string `'"a","b"'`.
-- **Single-quoted values:** the grammar makes `"` the only quote
-  character, so `label='hello'` keeps its quotes and `note=it's` keeps its
-  apostrophe; ASE strips the single quotes (and reads `it's` as `its`).
-
-## Reading against a schema
-
-Assert what a file should contain and have it checked as you read:
-
-```python
 import oxyz
 
-frames = oxyz.read("train.extxyz", schema="schema.yaml")   # conformance="required"
+with TemporaryDirectory() as directory:
+    source = Path(directory) / "sample.extxyz"
+    source.write_text(
+        "1\nProperties=species:S:1:pos:R:3 energy=-1.5\nH 0.25 0 0\n"
+        "1\nProperties=species:S:1:pos:R:3 energy=-2.5\nHe 1.25 0 0\n"
+    )
+    frames = oxyz.read(source)
+    assert [frame.n_atoms for frame in frames] == [1, 1]
+    assert frames[0].columns["species"] == ["H"]
+    assert frames[0].positions.tolist() == [[0.25, 0.0, 0.0]]
+
+    batch = oxyz.read_batch(source)
+    assert batch.ptr.tolist() == [0, 1, 2]
+    assert batch.frame_indices.tolist() == [0, 1]
+    assert batch.metadata["energy"].tolist() == [-1.5, -2.5]
+    assert oxyz.infer_schema(source).is_consistent
+
+    output = Path(directory) / "roundtrip.extxyz.gz"
+    oxyz.write(output, frames)
+    restored = oxyz.read(output)
+    assert restored == frames
+    assert restored[1].positions.tolist() == [[1.25, 0.0, 0.0]]
+    assert restored[1].metadata["energy"] == -2.5
 ```
 
-A schema names expected columns, metadata, and structural facts, using the
-extxyz kind letters (`R`/`I`/`L`/`S`):
-
-```yaml
-columns:
-  species: {kind: S}
-  pos: {kind: R, width: 3}
-  "descriptor_*": {kind: R, count: 5}
-metadata:
-  energy: {kind: R}
-```
-
-`conformance` is `"strict"` (missing, extra, or mismatched entries all raise),
-`"required"` (the default: required entries enforced, extras allowed), or
-`"warn"` (deviations become silenceable warnings). `oxyz check file.extxyz
---schema schema.yaml` reports every violation at once; `oxyz scan --emit-schema
-schema.yaml file.extxyz` writes a starting schema from a file you trust.
-
-### Projecting to a fixed shape
-
-A schema validates by default. Add `mode: project` (or pass `mode="project"` at
-the call site) and it instead *reshapes* each frame to exactly the fields it
-declares: undeclared columns and metadata dropped, absent optionals filled,
-and an integer value for a REAL rule promoted to float. That makes a
-mixed-schema file, where an optional property is present only in
-some frames, readable as one batch:
-
-```python
-frames = oxyz.read("mixed.extxyz", schema=spec)        # spec.mode == "project"
-batch = oxyz.read_batch("mixed.extxyz", schema=spec)   # now batchable
-```
-
-Projection works across the frame readers, the batch readers, and the
-`oxyz.ase`/`oxyz.metatomic`/`oxyz.torch_sim` targets, all through the same
-`schema=`/`mode=`/`conformance=` arguments. An absent REAL column fills `NaN`;
-INT, BOOL, and STR have no natural null, so an optional one needs an explicit
-`fill` value. An optional rule with `absent: omit` leaves an absent entry out
-of the frame instead of filling it, so frames that differ in that entry read
-one by one but do not batch. Pattern rules (`descriptor_*`) cannot describe a
-fixed shape, so `SchemaSpec.freeze(sample)` expands them against a
-representative file into literal rules: required where a column appears in
-every frame, optional where it appears in only some. `oxyz freeze` and
-`oxyz scan --emit-schema --project` write a frozen, project-ready schema.
-Validate mode is unchanged.
-
-## Typed records
-
-Use a `Record` when your code expects known fields and should access them as
-statically typed attributes. A `Frame` keeps arbitrary file fields; a record
-keeps just the fields you declare, projecting and checking them as it reads.
-
-The declaration style combines Pydantic's annotated, validated models with
-SQLAlchemy's typed field declarations. Like SQLAlchemy's `Mapped[T]`,
-`Meta[T]` gives a value on an instance and a typed field key on the class:
-`sample.energy` is a `float`, while `Sample.energy` selects the batch's energy
-array.
-
-```python
-import numpy as np
-import numpy.typing as npt
-import oxyz
-from oxyz import Column, Meta, Record, RecordBatch
-
-type Array = npt.NDArray[np.float64]
-
-
-class Sample(Record):
-    positions: Column[Array] = Column("pos", width=3)
-    energy: Meta[float] = Meta()
-
-
-samples = oxyz.read("mixed.extxyz", record=Sample)  # list[Sample]
-samples[0].positions                               # NDArray[float64]
-samples[0].energy                                  # float
-```
-
-Field names are independent of file keys: `positions` reads `pos`, while a
-specifier without a key defaults to the field name. `Column` reads a per-atom
-column and `Meta` a comment-line entry. The annotation wraps the value type;
-`Column(width=3)` and `Meta(shape=(6,))` give an array's width or shape.
-Scalars use `float`, `int`, `bool` or `str`; arrays use float64, int64 or bool
-numpy dtypes, and string arrays use lists.
-
-`Cell` reads `Lattice` as a 3x3 cell in ASE's row-vector convention. `Matrix3`
-reads other 3x3 entries such as `stress` or `virial`: flat values use Fortran
-order, and a nested 3x3 is read as written. Reusable field declarations can
-put the specifier in `Annotated` instead of the default value.
-
-By default, float fields accept integer values and promote them. Use
-`class Sample(Record, strict=True)` to require the declared kinds exactly.
-
-### Optional fields and batches
-
-Add `| None` to allow a field to be absent:
-
-```python
-class TrainingSample(Sample):
-    forces: Column[Array | None] = Column(width=3)
-
-
-samples = oxyz.read("mixed.extxyz", record=TrainingSample)
-samples[2].forces  # None
-```
-
-| Declaration | Absent from a frame | In a batch, where absent |
-|---|---|---|
-| `X` | `SchemaError` naming the frame and key | the same |
-| `X` with `fill=v` | `v` | `v` |
-| `X \| None` | `None` | NaN for floats; other kinds need `fill=` |
-
-A `RecordBatch[TrainingSample]` gives typed access by field key. Per-atom
-fields are concatenated, scalar metadata becomes an array, and array metadata
-gains a leading frame axis, as in `Batch`.
-
-```python
-batch = oxyz.read_batch("mixed.extxyz", record=RecordBatch[TrainingSample])
-batch[TrainingSample.energy]          # NDArray[float64], shape (3,)
-batch[TrainingSample.forces]          # NDArray[float64], NaN where absent
-batch.present(TrainingSample.forces)  # array([True, True, False])
-batch[2].forces                       # None
-```
-
-Batches hold filled arrays, not `None`; the presence mask distinguishes an
-absent field from a NaN in the file. Indexing follows `Batch`: an integer
-gives a record, a slice gives views, and a step, list or mask gathers a copy.
-Under `conformance="warn"`, frames missing required fields or carrying
-wrong-kind fields are dropped with a warning. Indices still refer to file frames.
-
-For typed batch attributes as well, declare each field's batched type:
-
-```python
-class SampleBatch(RecordBatch[TrainingSample]):
-    positions: Array
-    energy: Array
-    forces: Array
-
-
-typed = oxyz.read_batch("mixed.extxyz", record=SampleBatch)
-typed.energy  # NDArray[float64]
-```
-
-### Mixed datasets
-
-Some datasets hold more than one kind of frame. MAD-1.5 has molecules with no
-`Lattice`, crystals, and strained crystals that also carry `stress`. Declare
-a record for each kind and read the file into their union: each frame
-becomes the member whose keys it carries.
-
-```python
-import numpy as np
-import numpy.typing as npt
-import oxyz
-from oxyz import Cell, Column, Matrix3, Meta, Record, RecordBatch
-
-type Array = npt.NDArray[np.float64]
-
-
-class MadFrame(Record):  # shared fields; not itself a member
-    species: Column[list[str]] = Column()
-    positions: Column[Array] = Column("pos", width=3)
-    forces: Column[Array] = Column(width=3)
-    energy: Meta[float] = Meta()
-    subset: Meta[str] = Meta()
-
-
-class Molecule(MadFrame):
-    pass
-
-
-class Crystal(MadFrame):
-    cell: Cell[Array] = Cell()
-
-
-class Strained(MadFrame):
-    cell: Cell[Array] = Cell()
-    stress: Matrix3[Array] = Matrix3()
-
-
-type MadSample = Molecule | Crystal | Strained
-
-samples = oxyz.read("mad.xyz", record=MadSample)  # list[Molecule | Crystal | Strained]
-match samples[0]:
-    case Strained(stress=stress): ...
-    case Crystal(): ...
-    case Molecule(): ...
-
-batch = oxyz.read_batch("mad.xyz", record=RecordBatch[MadSample])
-batch[Strained.stress]  # NDArray[float64], (n_frames, 3, 3); NaN where not a Strained
-batch[MadFrame.energy]  # NDArray[float64], (n_frames,)
-batch.where(Strained)   # bool, (n_frames,)
-batch[0]                # Molecule
-```
-
-Here no member field is `X | None`, so molecules get no zero cell, and a
-`Strained` never holds a NaN the file did not contain.
-
-Members must be siblings: no member may subclass another. To a type checker, a
-union of a class and its subclass is the base class alone: were `Crystal` a
-subclass of `Molecule`, a read of `Molecule | Crystal` would be typed
-`list[Molecule]`, and a `match` could not narrow it. Share fields through a
-base class that is not itself a member, as `MadFrame` is, or by reusing
-`Annotated` field declarations. Members that declare the same key must give it
-the same field name, the same type, `| None` included, and the same `fill=`,
-and members must agree on `strict`. A union that breaks these rules raises
-`TypeError` before the file is opened.
-
-A frame's member is decided by which keys it carries, not by their values.
-The deciding keys are those some member can do without, here `Lattice` and
-`stress`. A member admits a frame that carries every deciding key the member
-requires and none that the member does not declare: a frame with neither is
-a `Molecule`, with `Lattice` alone a `Crystal`, and with both a `Strained`.
-The order of the members does not matter, because two members that could
-admit the same frame raise `TypeError` naming both. `Cell()` tells crystals
-from molecules because it requires `Lattice`; a `Crystal` declared with
-`Cell(fill=0.0)` or `Cell[Array | None]` would also admit a frame without
-one, and collide with `Molecule`.
-
-A frame no member admits, such as one with `stress` and no `Lattice`, raises
-`SchemaError` giving its frame index, the keys it carries and what each
-member admits; under `conformance="warn"` it is dropped with a warning. A
-frame that matches can still fail as that member, on a missing shared field
-or a value of the wrong kind.
-
-`RecordBatch[MadSample]` holds every member's fields, each as one array over
-all frames. Where a frame's member lacks a field, the field holds its `fill=`,
-or NaN for a float field declared without one; a field of any other kind must
-declare a `fill=`. `present` is false there. `members` is the tuple of member
-classes in the order the union names them, and `tags` gives each frame's
-member as an index into `members`. `where()` marks the frames whose member is
-one of those given; a class that is not a member, such as the base `MadFrame`,
-raises `TypeError`. `batch[i]` equals `oxyz.read(path, i, record=MadSample)`,
-and `batch[batch.where(Strained)]` gathers the strained frames, still typed as
-the union.
-
-### Existing data and schemas
-
-`Sample.from_frame(frame)` and `SampleBatch.from_batch(batch)` check data you
-already hold and return records with read-only arrays. `from_batch` takes a
-single record's batch class, since a plain `Batch` cannot say which member of
-a union each frame is. Records read from a file own writable arrays. Records
-are frozen and slotted; constructing one by hand checks its field types,
-shapes and row counts, keeping arrays as given.
-
-`Sample.spec()` gives a project-mode `SchemaSpec` describing the fields.
-Passing `schema=` alongside `record=` applies the schema's frame rule and
-checks that its field types agree; the record determines the projection.
-
-See [`examples/typed_records.py`](examples/typed_records.py) for a runnable
-version using the supplied [`mixed.extxyz`](examples/data/mixed.extxyz).
-
-## PyTorch targets
-
-Two more converters land extxyz directly into a training-adjacent PyTorch
-type, skipping the ASE round trip; each needs its own extra.
-
-### metatomic
-
-`oxyz.metatomic.read` and `iread` read extxyz straight into
-`metatomic.torch.System`s, reproducing
-`metatomic.torch.systems_to_torch(ase.io.read(...))` without the ASE
-round-trip: species map to atomic numbers through oxyz's own element
-table, and the cell follows the same Fortran-order `Lattice` reshape and
-pbc-masked zeroing. Needs `pip install "oxyz[metatomic]"`.
-
-```python
-import torch
-import oxyz.metatomic
-
-systems = oxyz.metatomic.read("train.extxyz", dtype=torch.float64)   # list[System]
-for system in oxyz.metatomic.iread("train.extxyz"):                  # streaming, bounded memory
-    ...
-```
-
-`read`/`iread` take the same index grammar as `oxyz.read` (see
-[API](#api)), plus `dtype`/`device`/`positions_requires_grad`/`cell_requires_grad`
-matching `systems_to_torch` (`dtype=None` follows `torch.get_default_dtype()`).
-
-For pipelines that also need targets, `SystemSource` parses a file once and
-serves both the structures and array-native target extraction:
-
-```python
-source = oxyz.metatomic.SystemSource("train.extxyz")
-systems = source.systems(dtype=torch.float64)
-energy = source.per_config("energy", dtype=torch.float64)         # (n_frames, ...)
-forces, offsets = source.per_atom("forces", dtype=torch.float64)  # (total_atoms, 3) + offsets
-```
-
-These are the pieces a downstream reader would build on, for example a
-metatrain `readers/oxyz.py`, where `SystemSource.systems()` backs
-`read_systems` and `per_config`/`per_atom` back the energy/forces/stress
-readers, with the gradient-sign, volume, and `TensorMap` conventions
-staying on the metatrain side. oxyz depends only on torch and
-metatomic-torch, never on metatrain or metatensor; that integration is
-left to metatrain deliberately.
-
-### torch_sim
-
-`oxyz.torch_sim` reads extxyz into `torch_sim.SimState`, reproducing
-`torch_sim.io.atoms_to_state(ase.io.read(...))`, and takes the same index
-grammar as `oxyz.read` (see [API](#api)). `SimState` is natively
-batched (one state holds many systems with their atoms concatenated), so
-the reader maps onto oxyz's batched parse rather than the per-frame path:
-`read` returns a *single* batched state, `iread` streams the file as a
-sequence of batched states. Needs `pip install "oxyz[torch-sim]"`.
-
-```python
-import torch
-import oxyz.torch_sim
-
-state = oxyz.torch_sim.read("train.extxyz")              # one batched SimState
-substate = oxyz.torch_sim.read("train.extxyz", "0:64")   # a slice, still one state
-```
-
-With a model and a GPU, hand the whole-file state to `torch_sim`'s
-`BinningAutoBatcher`, which sizes memory-aware batches by probing the model:
-
-```python
-from torch_sim.autobatching import BinningAutoBatcher
-
-batcher = BinningAutoBatcher(model, memory_scales_with="n_atoms_x_density")
-batcher.load_states(oxyz.torch_sim.read("train.extxyz"))
-```
-
-For files too large to materialise, `iread` streams batches itself, with the
-same binning knobs as `oxyz.iread_batch` (`frames_per_batch` /
-`atoms_per_batch` / `memory_scales_with` + `max_scaler`):
-
-```python
-for batch in oxyz.torch_sim.iread("huge.extxyz", memory_scales_with="n_atoms_x_density",
-                                  max_scaler=50_000):
-    ...
-```
-
-Cells follow `torch_sim`'s column-vector convention (ASE's cell transposed),
-every system shares one pbc (frames that disagree are an error), and masses
-come from a `masses` column or, failing that, the ASE-parity atomic-weight
-table. `dtype=None` infers from the data (float64), matching `atoms_to_state`;
-pass `torch.float32` for ML use. `SimStateSource` parses once and serves the
-state plus array-native `per_config` / `per_atom` extraction.
-
-## Command line
-
-Installing oxyz provides an `oxyz` command for inspecting files from the
-shell; `uvx oxyz` runs it without installing anything.
-
-```sh
-oxyz scan train.extxyz
-```
-
-`scan` prints per-frame atom-count statistics followed by the inferred
-schema, rendered as pasteable schema syntax you can drop into a `.yaml` and
-read back with `schema=`. Unlike the `oxyz.scan` primitive, which parses
-nothing, the command reads the whole file to infer the schema; `--no-schema`
-drops back to the cheap structural pass and reports only the statistics.
-`--emit-schema PATH` writes the schema to a `.yaml`/`.json` file instead of
-printing it, and `--json` emits a single `{"stats": ..., "schema": ...}`
-object for piping into other tools.
-
-```text
-$ oxyz scan train.extxyz
-frames:      3
-atoms total: 6
-atoms/frame: min 1  max 3  mean 2.00  median 2.00  std 0.82
-
-# schema — paste into a .yaml and read with read(..., schema=...)
-columns:
-  species: {kind: S}
-  pos: {kind: R, width: 3}
-  forces: {kind: R, width: 3}
-metadata:
-  Lattice: {kind: R, shape: [9]}
-  energy: {kind: R}
-```
-
-## Performance
-
-Timings below are means over repeated rounds (each case gets a
-one-second budget over at least five rounds) on an
-Apple M3 Pro under CPython 3.13; the exception is the MAD-1.5 rows, timed
-over a single round, which
-[benchmarks/run.py](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/run.py)
-reproduces only where the dataset is present. Full tables with standard
-deviations, the environment, and the fixture definitions are in
-[benchmarks/RESULTS.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/RESULTS.md).
-
-Read time as the file scales, over two independent size axes and over
-thread count. The dataset family is a corpus-shaped file of many small
-frames (frame count swept); the system family is a few large frames
-(atoms per frame swept):
-
-![Read time and speedup vs dataset size](benchmarks/figures/scaling_dataset.svg)
-
-![Read time and speedup vs system size](benchmarks/figures/scaling_system.svg)
-
-![Parsing throughput vs thread count](benchmarks/figures/scaling_threads.svg)
-
-Whole-file reads to numpy, against [cextxyz], the libAtoms C parser, via its
-`read_dicts` interface. The last row is the full MAD-1.5
-([doi:10.24435/materialscloud:ak-4p](https://doi.org/10.24435/materialscloud:ak-4p))
-r²SCAN training set (303.5 MiB, 180,184 frames of real, chemically diverse
-structures); the rest are generated fixtures:
-
-| workload | `oxyz.read(threads=12)` | `oxyz.read(threads=1)` | `extxyz.read_dicts` |
-| --- | ---: | ---: | ---: |
-| 2,000 small frames | **8.97 ms** | 17.2 ms | 233 ms |
-| 4 × 100,000 atoms | **24.6 ms** | 52.3 ms | 92.3 ms |
-| 2,000 frames, heavy metadata | **13.3 ms** | 26.5 ms | 426 ms |
-| MAD-1.5, 180,184 frames | **1.18 s** | 1.69 s | 22.2 s |
-
-Whole-file reads to `ase.Atoms`, against the [ase-extxyz] plugin (the same C
-parser behind ASE's IO) and ASE's own reader:
-
-| workload | `oxyz.ase.read(threads=12)` | `oxyz.ase.read(threads=1)` | `ase.io.read(format="cextxyz")` | `ase.io.read(format="extxyz")` |
-| --- | ---: | ---: | ---: | ---: |
-| 2,000 small frames | **64.8 ms** | 73.3 ms | 121 ms | 204 ms |
-| 4 × 100,000 atoms | **68.8 ms** | 93.3 ms | 90.1 ms | 423 ms |
-| 2,000 frames, heavy metadata | **80.0 ms** | 95.8 ms | 308 ms | 355 ms |
-| MAD-1.5, 180,184 frames | **7.67 s** | 8.68 s | 12.5 s | 25.7 s |
-
-Beyond whole-file reads: on selective reads (every 20th frame of the
-small-frames file) `oxyz.read_batch` takes 1.6 ms against 22 ms for ASE;
-on peak memory, streaming `iread` through the small-frames file
-grows RSS by 12 MiB where `ase.io.iread` grows it by 56 MiB
-([benchmarks/MEMORY.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/MEMORY.md)).
-Reading the full MAD-1.5 set needs the dataset itself, so those rows are
-reproducible only with the file in place; the recipe is in
-[benchmarks/RESULTS.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/RESULTS.md).
-The one place a text parser is predictably slower is against binary stores
-(LMDB, SQLite, mmap-backed formats); see
-[benchmarks/RESULTS.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/RESULTS.md)
-for those comparisons.
-
-[cextxyz]: https://github.com/libAtoms/extxyz
-[ase-extxyz]: https://pypi.org/project/ase-extxyz/
-
-## Writing
-
-`oxyz.write` is the inverse of the readers: it takes a `Frame`, an `ase.Atoms`,
-or an iterable mixing them, and writes extxyz, choosing the codec from the path
-extension (overridable with `compression=`):
-
-```python
-oxyz.write("out.extxyz", frames)         # a Frame or list of Frames
-oxyz.write("out.extxyz.gz", atoms)       # an ase.Atoms, gzipped by extension
-oxyz.write("-", frames)                  # "-" writes to stdout
-
-with oxyz.Writer("traj.extxyz") as w:    # incremental, streams one frame at a time
-    for frame in produce():
-        w.write(frame)
-```
-
-Reals are written shortest-round-trippable, so `read` then `write` reproduces
-every `f64` bit for bit; the output is compact rather than column-aligned.
-Columns are written `species`, `pos`, then the rest; the comment line is
-`Lattice`, `pbc`, `Properties`, then the remaining metadata. A frame without
-both a `species` and a `pos` column is rejected.
-
-As with the readers, `threads` is a knob: `oxyz.write` serialises across cores
-by default and the output bytes are identical at any thread count (only
-serialisation parallelises; the output stream stays serial). `Writer` streams
-frame-by-frame, so peak memory is bounded by the largest frame rather than the
-file; `Writer(path, batch=n)` keeps the incremental form but
-serialises `n` frames at a time in parallel, trading one batch of memory for
-throughput.
-
-The writable codecs are plain, `.gz`, `.zip`, `.tar`, and `.tar.gz`; `level`
-(`0..=9`) tunes the deflate-based ones. `append=True` adds to an existing file
-for the formats that allow a concatenated stream (plain, gzip) and is rejected
-for the archive codecs and for stdout. Writing `.zst` or `.tar.zst` is not yet
-supported.
-
-## Compressed files
-
-Any reader takes a compressed path and decodes it while streaming, so
-`read("run.xyz.gz")` just works and stays parallel without
-decompressing to a temporary file:
-
-```python
-oxyz.read("run.xyz.gz")                    # .gz, .tar.gz, .tar.zst, .zip, .zst, .tar
-oxyz.read("runs.zip", member="run2.xyz")   # pick one archive entry
-oxyz.read("runs.zip", member="*")          # read every extxyz entry, in order
-oxyz.read("run.bin", compression="gzip")   # force a codec by hand
-```
-
-The codec is inferred from the extension (then the magic bytes), or set with
-`compression=`
-(`"none"`/`"gzip"`/`"zstd"`/`"zip"`/`"tar"`/`"tar.gz"`/`"tar.zst"`).
-An archive holding more than one extxyz file needs `member=`;
-otherwise it errors and previews what it holds. `member="*"` joins the entries
-into one stream, so a parse error gives a position in that stream rather than
-an entry name; a blank count line ends its entry, not the stream. A compressed
-stream cannot be seeked, so two kinds of random access are constrained:
-`iread_batch` with
-`shuffle`/`atoms_per_batch`/`memory_scales_with`, and reverse or negative ASE
-indices. These either read the whole file into memory (the ASE index path,
-as ASE itself does) or raise pointing at the limitation; decompress the
-file first if you need them.
-
-## Reading from object storage
-
-`read`, `iread`, `scan`, `infer_schema`, the batch readers, and the output
-targets (`oxyz.ase`, `oxyz.metatomic`, `oxyz.torch_sim` readers and their
-`SystemSource`/`SimStateSource`) accept S3-compatible URLs when the `s3` extra
-is installed (see [Install](#install)):
-
-```python
-frames = oxyz.read("s3://bucket/train.extxyz.gz")
-```
-
-Credentials and endpoint come from `AWS_*` environment variables by default;
-pass `storage_options=` to point at a non-AWS store (MinIO, R2, Ceph):
-
-```python
-oxyz.read(
-    "s3://bucket/train.extxyz",
-    storage_options={"endpoint": "https://minio.example", "region": "us-east-1"},
-)
-```
-
-`gs://` and `az://` are routed through the same obstore mechanism; they are
-supported in principle but are not covered by oxyz's own integration tests, so
-treat them as best-effort. Compression (`.gz`, `.zst`, `.tar.gz`, `.tar.zst`,
-`.tar`, `.zip`) and archive `member=` selection apply as for local files. As with
-compressed local files, a remote stream cannot seek, so random-access batch
-strategies (`shuffle`, `atoms_per_batch`, `memory_scales_with`) need a local
-copy; see [Compressed files](#compressed-files).
-
-### HuggingFace Hub
-
-Files in Hub repos are read with the same entry points, via `hf://`:
-
-```python
-frames = oxyz.read("hf://datasets/owner/repo/data/train.extxyz")
-```
-
-The path is `hf://[datasets|spaces|models/]owner/repo[@revision]/path`, matching
-the `hf://` convention used elsewhere in the ecosystem. Without a repo-kind
-prefix the repo is taken to be a model; without `@revision` the default branch
-is used. A URL copied from the browser works too — the `blob` page is rewritten
-to the raw-bytes endpoint, so both of these read the same file:
-
-```python
-oxyz.read("https://huggingface.co/datasets/owner/repo/blob/main/train.extxyz")
-oxyz.read("hf://datasets/owner/repo/train.extxyz")
-```
-
-Only `huggingface.co` and `hf.co` URLs are claimed; oxyz does not read arbitrary
-`http(s)` URLs. Gated and private repos need a token, taken from `HF_TOKEN` (or
-`HUGGING_FACE_HUB_TOKEN`), or passed explicitly, which wins over the
-environment:
-
-```python
-oxyz.read(
-    "hf://datasets/owner/private/train.extxyz",
-    storage_options={"default_headers": {"authorization": "Bearer hf_..."}},
-)
-```
-
-Hub Storage Buckets are a separate product with an S3-compatible API, so they
-need no `hf://` handling: read them as any other S3 store, by pointing
-`storage_options` at `https://s3.hf.co/<namespace>` with S3 credentials
-generated from a Hub token.
-
-## API
-
-```python
-oxyz.read(path, index=":", *, threads=None)  -> Frame | list[Frame]  # int index: one Frame
-oxyz.iread(path, index=":")                   -> Iterator[Frame]   # streaming, bounded memory
-oxyz.read_batch(path, index=":", *, threads=None) -> Batch    # ":" (default): whole file
-oxyz.iread_batch(path, *, frames_per_batch=None, atoms_per_batch=None,
-                  shuffle=False, seed=None, threads=None) -> Iterator[Batch]
-oxyz.scan(path)                              -> FrameIndex
-oxyz.infer_schema(path)                      -> Schema
-
-# read/iread select with index: an int (one Frame), a slice or slice string like
-# "1:10:2", or a sequence of non-negative ints (a list, in order). The default
-# ":" reads every frame.
-#
-# Every reader above also takes compression="infer" and member=None; the frame
-# and batch readers additionally take schema=None, conformance="required", and
-# mode=None (None/"validate"/"project", overriding the schema's own mode).
-#
-# They also take record=None. A Record subclass R makes read/iread return R in
-# place of Frame; a RecordBatch[R] or declared subclass makes read_batch and
-# iread_batch return it in place of Batch. record= cannot be combined with mode=.
-# A union of sibling records, A | B, may stand in for R: each frame becomes the
-# member whose keys it carries, and RecordBatch[A | B] holds every member's fields.
-
-oxyz.write(path, obj, *, append=False, compression="infer", level=None, threads=None) -> None
-oxyz.Writer(path, *, append=False, compression="infer", level=None, batch=None)   # incremental, a context manager
-```
-
-The output-target converters (`oxyz.ase`, `oxyz.metatomic`, `oxyz.torch_sim`)
-share the reader index grammar; their signatures are in the sections above.
-
-`Frame`, `Batch`, `FrameIndex`, `Violation`, `Schema` and its parts
-(`ColumnSchema`, `MetadataSchema`, the variant records, the `Kind` enum), and
-the `SchemaSpec` rule types (`ColumnRule`, `MetadataRule`, `FrameRule`) are
-frozen dataclasses. `Record`, `RecordBatch`, the specifiers `Column`, `Meta`,
-`Cell` and `Matrix3`, and their base `FieldSpec` declare typed records. Every
-error oxyz raises subclasses `oxyz.OxyzError` (a `ValueError`): `ParseError`,
-`SchemaError`, `FieldError`, and the converters' errors. The keyword/value
-types `Compression`, `Conformance`, `Mode`, `Absent`, `MemoryScaling`, and
-`Writable` are exported aliases. Everything ships with type stubs.
-
-Everything outside that promise may change in any release: any
-underscore-prefixed name, the `oxyz._rust` extension module, and any
-behaviour the documentation does not state.
-
-The command line mirrors a subset:
-
-```text
-oxyz scan   <path> [--no-schema] [--emit-schema PATH [--project]] [--json]
-                   [--compression C] [--member M | --all-members]
-                   [--storage-option K=V]
-oxyz check  <path> --schema S [--conformance strict|required|warn] [--json]
-                   [--compression C] [--member M | --all-members]
-                   [--storage-option K=V]
-oxyz freeze <path> --schema IN --out OUT
-                   [--compression C] [--member M | --all-members]
-                   [--storage-option K=V]
-```
-
-## The fine print
-
-Contracts worth knowing before relying on them:
-
-- **Mixed-schema files read per-frame, but do not batch:** `read` and
-  `iread` handle files whose frames disagree (the MACE
-  isolated-atom-plus-bulk pattern) without complaint; each `Frame` stands
-  alone. `Batch` assembly requires every gathered frame to share a schema;
-  `infer_schema` tells you in advance whether a file qualifies. To batch such
-  a file, project it to a fixed shape (`mode="project"`), or read it into a
-  `RecordBatch`, of one record or a union of records, which fills an absent
-  field and records in `present` which frames carried it.
-- **Duplicate metadata keys collapse:** `Frame.metadata` is a dict; if a
-  comment line repeats a key, the last occurrence wins.
-- **`Batch.batch` is computed per access** (`np.repeat` over the atom
-  counts); hoist it out of a hot loop.
-- **`Frame` and `Batch` compare by value and are unhashable:** `==` matches
-  atom counts and every stored value (NaN equal to NaN, key order ignored),
-  so a written-then-read frame equals the one it came from; their `repr`
-  summarises each entry's dtype and shape rather than printing the data.
-- **Notebooks render tables:** in Jupyter, `Frame`, `Batch`, `Schema`,
-  `SchemaSpec` and `FrameIndex` display as plain HTML tables, one row per
-  field. Values are previewed within fixed bounds — the first 3 rows of an
-  array, arrays in full up to 12 elements, cells cut at 80 characters, floats
-  to 4 decimal places regardless of numpy's print options — so a 100k-atom
-  frame renders as small a page as a 2-atom one.
-- **Errors carry frame context:** malformed input raises
-  `oxyz.ParseError` with the frame index and the offending line or value in
-  the message, and the same location on the exception as attributes
-  (`frame_index`, `line`, `column`, each `None` where the parser cannot
-  pin it down), so you can find the bad frame without parsing the message.
-  Every error oxyz raises subclasses `oxyz.OxyzError` (itself a `ValueError`),
-  so `except oxyz.OxyzError` catches the package's errors while
-  `except ValueError` still works. Out-of-range frame requests raise
-  `IndexError`; I/O problems raise `OSError`. After a parse error, streaming
-  iterators stop rather than guess at a resynchronisation point.
-- **Partial reads only promise the prefix:** `read_batch` and indexed
-  reads inspect the file no further than the last requested frame; damage
-  past that point goes unreported. Whole-file validation is
-  `infer_schema`'s job.
-
-## Supported extxyz
-
-The parser accepts and preserves; it does not interpret. Accepted: the
-count line; a comment line of `key=value` pairs with bare or
-double-quoted values, `[1, 2.0, 3]`-style or quoted whitespace-separated
-arrays, `T`/`TRUE`/`True`/`true` booleans (a bare `1` stays an integer in
-metadata, but is a boolean in an `L`-kind atom column, following the
-spec); a `Properties` descriptor with `S`/`R`/`I`/`L` columns of any name
-and width; any species strings. Metadata values are typed by shape, and
-anything that fits no narrower type falls back to a string rather than
-rejecting the file. Compressed inputs (`.gz`, `.tar.gz`, `.tar.zst`, `.zip`,
-`.zst`, `.tar`) are decoded transparently; see [Compressed files](#compressed-files).
-Writing the same forms (bar `.zst` and `.tar.zst`) is covered in
-[Writing](#writing). Not supported: comment lines that are not key=value
-metadata, single-quoted values, and writing zstd output (`.zst`, `.tar.zst`).
-
-## How it is put together
-
-Three layers, with the boundary chosen so that each is testable on its
-own:
-
-- **`crates/oxyz-core`**, the Rust core: parser, the columnar lossless
-  `Frame` model, the structural scanner and byte-offset index, batch
-  assembly, and the schema fold. No Python anywhere in the crate; it
-  builds and tests standalone. Errors are structured (`thiserror`) and
-  wrapped with the frame they occurred in.
-- **`crates/oxyz-py`**, the PyO3 binding, a cdylib named `oxyz._rust`.
-  Parsing runs with the interpreter detached (the GIL released), so
-  threads parse in parallel; conversion to numpy happens once at the
-  boundary, column buffers passing across as whole arrays rather than
-  element-wise. Built as a single abi3 wheel per platform covering
-  CPython ≥3.12.
-- **`src/oxyz`**, thin typed Python: frozen dataclasses over the
-  binding's dicts, batch planning (the pure-Python part of
-  `iread_batch`), and the index grammar (shared by the conversion layers
-  via `oxyz._select`). The conversion layers stay last-moment and
-  optional: ASE knowledge lives in `oxyz.ase`, torch/metatomic knowledge in
-  `oxyz.metatomic`, each importing its extra lazily; the core depends on
-  neither.
-
-Testing follows the shape of the promises: Rust unit and corpus tests for
-the parser; parity tests holding parallel reads byte-identical to serial,
-including which error wins when several frames are bad; golden tests
-holding `oxyz.ase.read` equal to `ase.io.read` and `oxyz.metatomic.read`
-equal to `systems_to_torch(ase.io.read(...))` frame-by-frame; and
-malformed-file tests asserting the frame index in the error message, not
-just that an error occurred.
+`read(path, 0)` returns one frame; the default returns a list. Use `iread` for
+frame iteration and `iread_batch` for bounded batches. Plain batches require
+compatible fields; projection or typed record batches handle optional data
+under explicit contracts. Writing has codec and value-representation limits:
+check the [writing guide](https://github.com/theochemtheo/oxyz/blob/main/docs/guides/writing.md)
+before replacing source data.
+
+## Documentation
+
+Public Markdown lives in the repository; there is no published website URL.
+The local site preview is documented in the contributor guide.
+
+| Task | Guide |
+| --- | --- |
+| First read/inspect/write workflow | [Getting started](https://github.com/theochemtheo/oxyz/blob/main/docs/getting-started.md) |
+| Index grammar, partial reads and iteration | [Reading and selecting](https://github.com/theochemtheo/oxyz/blob/main/docs/guides/reading-and-selecting.md) |
+| Dense layout, budgets and provenance | [Batching and streaming](https://github.com/theochemtheo/oxyz/blob/main/docs/guides/batching-and-streaming.md) |
+| Encoding, incremental output and restrictions | [Writing](https://github.com/theochemtheo/oxyz/blob/main/docs/guides/writing.md) |
+| Infer, validate, project, omit and freeze | [Schemas and projection](https://github.com/theochemtheo/oxyz/blob/main/docs/guides/schemas-and-projection.md) |
+| Field declarations, binding and typing limits | [Typed records](https://github.com/theochemtheo/oxyz/blob/main/docs/guides/typed-records.md) |
+| Optional fields, unions, presence and tags | [Mixed datasets](https://github.com/theochemtheo/oxyz/blob/main/docs/guides/mixed-datasets.md) |
+| Compression, archive members, S3 and HuggingFace | [Compressed and remote](https://github.com/theochemtheo/oxyz/blob/main/docs/guides/compressed-and-remote.md) |
+| ASE, metatomic and torch-sim conventions | [Converters](https://github.com/theochemtheo/oxyz/blob/main/docs/guides/converters.md) |
+| Inspect, check and freeze from the shell | [Command line](https://github.com/theochemtheo/oxyz/blob/main/docs/guides/command-line.md) |
+
+For lookup, see the [API reference](https://github.com/theochemtheo/oxyz/blob/main/docs/reference/api.md),
+[data model](https://github.com/theochemtheo/oxyz/blob/main/docs/concepts/data-model.md),
+[schema concepts](https://github.com/theochemtheo/oxyz/blob/main/docs/concepts/schemas.md)
+and [storage model](https://github.com/theochemtheo/oxyz/blob/main/docs/concepts/storage-and-streaming.md).
+[Format](https://github.com/theochemtheo/oxyz/blob/main/docs/reference/extxyz.md),
+[ASE compatibility](https://github.com/theochemtheo/oxyz/blob/main/docs/reference/compatibility.md)
+and [errors](https://github.com/theochemtheo/oxyz/blob/main/docs/reference/errors.md)
+describe grammar, deliberate divergences and failure context.
+Self-contained scripts and bundled inputs live in
+[`examples/`](https://github.com/theochemtheo/oxyz/tree/main/examples).
+
+## Performance and development
+
+The [saved results](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/RESULTS.md)
+contain timings, scaling figures, fixture definitions and environment details.
+[Memory measurements](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/MEMORY.md)
+are recorded separately. These are workload-specific results, not universal
+speed-up or memory guarantees; real-dataset rows require the dataset.
+The [benchmark entry point](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/run.py)
+and [performance guide](https://github.com/theochemtheo/oxyz/blob/main/docs/development/performance.md)
+explain reproduction and comparison limits.
+
+The [architecture map](https://github.com/theochemtheo/oxyz/blob/main/docs/development/architecture.md)
+routes changes across Rust core, PyO3 binding and Python policy.
+[Testing](https://github.com/theochemtheo/oxyz/blob/main/docs/development/testing.md)
+covers parser properties, serial/parallel parity, converter golden tests and
+isolated wheel environments.
+[Documentation authoring](https://github.com/theochemtheo/oxyz/blob/main/docs/development/documentation.md)
+explains executable examples and local preview.
+
+Public names and documented command-line options follow
+[Semantic Versioning](https://semver.org/) under the
+[release policy](https://github.com/theochemtheo/oxyz/blob/main/RELEASING.md).
+Underscore-prefixed modules are implementation details.
 
 ## Licence
 
-MIT or Apache-2.0, at your option.
+[MIT](https://github.com/theochemtheo/oxyz/blob/main/LICENSE-MIT) or
+[Apache-2.0](https://github.com/theochemtheo/oxyz/blob/main/LICENSE-APACHE),
+at your option.

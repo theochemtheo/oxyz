@@ -110,9 +110,6 @@ explicit = true
 [tool.ruff]
 target-version = "py312"
 src = ["src", "tests"]
-# The formatter would collapse the README's column-aligned code comments. `./`
-# stops a basename match exempting the READMEs under tests/data/.
-extend-exclude = ["./README.md"]
 
 [tool.ruff.lint]
 select = ["ALL"]
@@ -167,7 +164,7 @@ exclude-scripts = true
 
 [tool.pytest.ini_options]
 # Documentation examples need all optional targets; wheel tiers collect tests only.
-testpaths = ["tests", "src/oxyz", "docs"]
+testpaths = ["tests", "src/oxyz", "docs", "README.md"]
 addopts = "-p no:doctest"
 
 [tool.coverage.run]

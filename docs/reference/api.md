@@ -19,6 +19,9 @@ not a generated dump of private helpers.
 | Encode objects or stream output | [`write`, `Writer`](https://github.com/theochemtheo/oxyz/blob/main/src/oxyz/_write.py) | [Writing](../guides/writing.md) |
 | Named typed fields or typed batches | `read`/`iread(record=R)`, `read_batch`/`iread_batch(record=RecordBatch[R])` | [Typed records](../guides/typed-records.md) |
 | Mixed record types and presence | `record=A | B`, `RecordBatch[A | B]` | [Mixed datasets](../guides/mixed-datasets.md) |
+| Compressed files, archive members and remote sources | Reader `compression`/`member`/`storage_options` | [Compressed and remote](../guides/compressed-and-remote.md) |
+| Scientific target objects | `oxyz.ase`, `oxyz.metatomic`, `oxyz.torch_sim` | [Converters](../guides/converters.md) |
+| Inspect or validate from the shell | `oxyz scan`, `oxyz check`, `oxyz freeze` | [Command line](../guides/command-line.md) |
 
 ### Reader call shapes
 
@@ -49,7 +52,8 @@ infer_schema(path, *, compression="infer", member=None,
 
 - `path` is a string or `Path`. Source/selection restrictions depend on the
   operation; see [storage and streaming](../concepts/storage-and-streaming.md).
-  Remote URL schemes require `oxyz[s3]` and suitable store credentials.
+  [Compressed and remote sources](../guides/compressed-and-remote.md) covers
+  source codecs, archive selection, the `oxyz[s3]` extra and credential syntax.
 - `index` accepts an integer, a slice, a slice string such as `"1:8:2"`, or an
   ordered sequence of non-negative integers, with repetitions allowed.
   Integer selection, including an integer string, returns one frame from `read`;
@@ -172,11 +176,20 @@ indices and I/O failures also use standard Python exceptions. See
 [`oxyz.ase`](https://github.com/theochemtheo/oxyz/blob/main/src/oxyz/ase.py),
 [`oxyz.metatomic`](https://github.com/theochemtheo/oxyz/blob/main/src/oxyz/metatomic.py)
 and [`oxyz.torch_sim`](https://github.com/theochemtheo/oxyz/blob/main/src/oxyz/torch_sim.py)
-provide target-specific reads/conversions. Their docstrings describe return
-shapes, additional options and required extras. For example, ASE `read` defaults
-to the last frame, while native `oxyz.read` defaults to all frames. See
-[compatibility](compatibility.md) before substituting one representation for
-another.
+provide target-specific reads/conversions. Follow the
+[converter guide](../guides/converters.md) for checked structures and target
+extraction; the source docstrings give full signatures. ASE `read` defaults to
+the last frame, while native `oxyz.read` defaults to all frames. See
+[compatibility](compatibility.md) before substituting representations.
+
+| Module | Public operations |
+| --- | --- |
+| `oxyz.ase` | `read`, `iread`, `to_atoms`, `from_atoms`; `ToAseError`, `FromAtomsError` |
+| `oxyz.metatomic` | `read`, `iread`, `SystemSource` with `systems`/`per_config`/`per_atom`; `ToSystemError` |
+| `oxyz.torch_sim` | `read`, `iread`, `SimStateSource` with `state`/`per_config`/`per_atom`; `ToSimStateError` |
+
+There are no metatomic or torch-sim writer entry points. Native `write` accepts
+frames and ASE objects under the [writing contract](../guides/writing.md).
 
 Root exports and documented submodules follow the repository's semantic-versioning
 contract. Underscore-prefixed modules, including `oxyz._rust`, are implementation

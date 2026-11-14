@@ -4,7 +4,8 @@ Native oxyz frames preserve represented extxyz data. Optional converters interpr
 that data for another library. Those are different contracts: a successful parse
 does not imply that a frame describes a chemical structure or can be converted.
 See [the format reference](extxyz.md), [native data model](../concepts/data-model.md)
-and [API reference](api.md).
+and [API reference](api.md). The [converter guide](../guides/converters.md)
+provides executable target workflows; this page explains interpretation limits.
 
 ## What lossless means
 

@@ -19,6 +19,9 @@ nav = [
     { "Schemas and projection" = "guides/schemas-and-projection.md" },
     { "Typed records" = "guides/typed-records.md" },
     { "Mixed datasets" = "guides/mixed-datasets.md" },
+    { "Compressed and remote" = "guides/compressed-and-remote.md" },
+    { "Converters" = "guides/converters.md" },
+    { "Command line" = "guides/command-line.md" },
   ] },
   { "Concepts" = [
     { "Data model" = "concepts/data-model.md" },

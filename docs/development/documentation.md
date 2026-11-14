@@ -12,15 +12,15 @@ From the checkout root, with the full development environment:
 
 ```sh title="Check documentation from the checkout"
 uv sync --extra ase
-uv run pytest docs src/oxyz
+uv run pytest docs README.md src/oxyz
 uv run pytest -q tests/test_doc_examples.py
 ```
 
 Sybil checks `python` fences in public Markdown and doctests in package
-source docstrings. Root `README.md` has a collector route, but its conversion
-and inclusion in default collection are pending; do not treat its existing
-fragments as verified examples. Plans, skills, incidental strings in tests and
-`docs/superpowers/` are not example sources.
+source docstrings. Root `README.md` is also an executable source and joins
+`tests`, `src/oxyz` and `docs` in default collection. Its example is self-contained
+and uses portable Markdown, not native site-only authoring. Plans, skills,
+incidental strings in tests and `docs/superpowers/` are not example sources.
 
 Each document gets its own namespace and fresh temporary working directory.
 Blocks within a page share names and files in source order; pages cannot depend

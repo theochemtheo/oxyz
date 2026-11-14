@@ -153,7 +153,8 @@ silent repairs:
 
 These types do not promise parser coordinates. Conversion errors concern the
 target representation, not necessarily malformed extxyz syntax. Consult
-[compatibility](compatibility.md) for supported interpretation boundaries.
+[compatibility](compatibility.md) for interpretation boundaries and the
+[converter guide](../guides/converters.md) for checked target workflows.
 
 ## Contract sources
 
