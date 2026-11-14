@@ -69,8 +69,22 @@ assert picked[0] is not picked[2]
 ```
 
 An out-of-range integer raises `IndexError`; a slice is clipped to the available
-frames. A zero slice step is invalid. For native `Frame` reads, repeated indexed
-reads produce separate frames, not references to the same object.
+frames. A zero slice step is invalid. The indexed plain-file path used above
+returns separate frames for repeated indices. Eager fallback paths for
+compressed/remote sources or `schema=` can reuse the same mutable `Frame` for
+each occurrence of an index. Do not assume repeated results are independent:
+
+```python
+import gzip
+
+compressed = Path("selection.extxyz.gz")
+with gzip.open(compressed, "wt") as output:
+    output.write(trajectory.read_text())
+repeated = oxyz.read(compressed, [0, 0])
+assert repeated[0] is repeated[1]
+repeated[0].metadata["energy"] = 0.0
+assert repeated[1].metadata["energy"] == 0.0
+```
 
 ## Consume an iterator
 

@@ -99,9 +99,11 @@ np.testing.assert_array_equal(restored[1].columns["pos"], [[0, 0, 0], [0, 0, 0.7
 ```
 
 Equality compares represented values, not original file bytes or formatting.
-The encoder may change whitespace, quoting and field order while preserving
-the data. [Writing](guides/writing.md) covers incremental output, codecs and
-append/stdout restrictions.
+This example verifies its own round trip; it is not a guarantee for every
+possible parsed value. The encoder may change whitespace, quoting and field
+order, and has [string-quoting limitations](guides/writing.md#what-a-round-trip-preserves).
+The writing guide also covers incremental output, codecs and append/stdout
+restrictions.
 
 ## Choose the next step
 

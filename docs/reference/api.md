@@ -120,9 +120,11 @@ Writer(path, *, append=False, compression="infer", level=None, batch=None)
 
 `Writer.write(obj)` appends objects to the open encoder, and `Writer.close()`
 finalises it; use the context manager to ensure closure. Both accept native
-frames or ASE objects, not a `Record`/`Batch` as an implicit writer payload.
+frames or ASE objects. A native `Batch` is accepted as an iterable of frames;
+records and record batches need explicit conversion to writable frames.
+`Writer.write(iterable)` materialises that iterable, even with `batch=n`.
 See [writing](../guides/writing.md) for codecs, append/stdout restrictions,
-value-preserving round trips and bounded-memory output.
+verified round trips, string-quoting limitations and bounded-memory output.
 
 ## Errors and keyword/value types
 
