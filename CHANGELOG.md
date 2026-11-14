@@ -27,6 +27,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Constructed union batches default presence masks from each frame's tagged
+  member.
+- Union batch reads report projection errors and unmatched frames in requested
+  frame order, independent of batch size.
 - Record fields named `cls` or `self` work in conversions, batch construction
   and indexing.
 - Batches with unsigned offsets support per-atom frame ids and reordered gathers.

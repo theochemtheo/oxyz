@@ -648,6 +648,17 @@ def test_hand_built_union_batch_checks_tags():
     assert one_frame(tags=np.array([2], dtype=np.uint8)).tags.dtype == np.intp
 
 
+@pytest.mark.parametrize(
+    ("tags", "cell", "stress"),
+    [(None, False, False), (0, False, False), (1, True, False), (2, True, True)],
+)
+def test_constructed_union_masks_follow_the_tagged_member(tags, cell, stress):
+    batch = one_frame(tags=None if tags is None else np.array([tags]))
+    assert batch.present("cell").tolist() == [cell]
+    assert batch.present("stress").tolist() == [stress]
+    assert batch.present("energy").tolist() == [True]
+
+
 def test_a_member_the_file_never_contains(tmp_path: Path, recs: list[MadSample]):
     path = tmp_path / "molecules.xyz"
     oxyz.write(path, [f for f in oxyz.read(MAD) if "Lattice" not in f.metadata])
@@ -785,6 +796,70 @@ def test_unadmitted_frame_in_a_batch_read_raises_with_its_file_index(tmp_path: P
     with pytest.raises(oxyz.SchemaError) as e:
         oxyz.read_batch(path, record=RecordBatch[MadSample], conformance="strict")
     assert e.value.frame_index == 1
+
+
+@pytest.mark.parametrize("conformance", ["required", "strict"])
+@pytest.mark.parametrize("frames_per_batch", [1, 2])
+@pytest.mark.parametrize("threads", [None, 1])
+def test_union_error_order_does_not_depend_on_batch_size(
+    tmp_path: Path, conformance, frames_per_batch, threads
+):
+    path = mad_file(
+        tmp_path / "errors.xyz",
+        STRESS_TAIL,
+        f"{LATTICE_TAIL} stress=abc",
+    )
+    readers = [
+        lambda: oxyz.read(path, record=MadSample, conformance=conformance),
+        lambda: oxyz.read_batch(
+            path,
+            record=RecordBatch[MadSample],
+            conformance=conformance,
+            threads=threads,
+        ),
+        lambda: list(
+            oxyz.iread_batch(
+                path,
+                record=RecordBatch[MadSample],
+                conformance=conformance,
+                frames_per_batch=frames_per_batch,
+                threads=threads,
+            )
+        ),
+    ]
+    for read in readers:
+        with pytest.raises(oxyz.SchemaError, match="no member") as error:
+            read()
+        assert (error.value.frame_index, error.value.name) == (0, None)
+
+
+@pytest.mark.parametrize(
+    ("index", "frame_index", "name"),
+    [([0, 1], 0, None), ([1, 0], 1, "stress"), ([0, 0, 1], 0, None)],
+)
+def test_union_batch_errors_follow_requested_frame_order(
+    tmp_path: Path, index, frame_index, name
+):
+    path = mad_file(
+        tmp_path / "selected_errors.xyz",
+        STRESS_TAIL,
+        f"{LATTICE_TAIL} stress=abc",
+    )
+    with pytest.raises(oxyz.SchemaError) as error:
+        oxyz.read_batch(path, index, record=RecordBatch[MadSample])
+    assert (error.value.frame_index, error.value.name) == (frame_index, name)
+
+
+def test_union_batch_warnings_follow_frame_order(tmp_path: Path):
+    path = mad_file(
+        tmp_path / "warnings.xyz",
+        STRESS_TAIL,
+        f"{LATTICE_TAIL} stress=abc",
+    )
+    with pytest.warns(oxyz.SchemaWarning) as caught:
+        batch = oxyz.read_batch(path, record=RecordBatch[MadSample], conformance="warn")
+    assert warned_frames(caught) == [0, 1]
+    assert len(batch) == 0
 
 
 def test_lattice_frame_rule_sees_a_filled_cell_as_absent():

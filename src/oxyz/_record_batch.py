@@ -334,10 +334,10 @@ class RecordBatch[R: Record](FrameLayout, metaclass=RecordBatchMeta):
         Keyword only, keyed by field name: for an `X | None` field, or one
         some member of a union lacks, a bool mask of length `n_frames`
         marking the frames that carry it. A field left out is present in
-        every frame. Type checkers do not see this keyword on the
-        constructor, since `present` is also a method, and report it as an
-        unknown argument; `dataclasses.replace(batch, present=...)` is the
-        form they accept.
+        every frame whose member declares it. Type checkers do not see this
+        keyword on the constructor, since `present` is also a method, and
+        report it as an unknown argument. They accept the keyword through
+        `dataclasses.replace` instead.
     tags : numpy.ndarray, optional
         Keyword only: an integer array of length `n_frames`, each frame's
         member as an index into `members`. All zeros, the first member, by
@@ -403,7 +403,12 @@ class RecordBatch[R: Record](FrameLayout, metaclass=RecordBatchMeta):
         else:
             tags = _check_tags(name, _tags, n_frames, len(layout.members))
         for field in layout.optional:
-            masks.setdefault(field, np.ones(n_frames, dtype=np.bool_))
+            if field not in masks:
+                declared = np.array(
+                    [field in names for names in layout.union.member_fields],
+                    dtype=np.bool_,
+                )
+                masks[field] = declared[tags]
         object.__setattr__(self, "_present", masks)
         object.__setattr__(self, "_tags", tags)
 
