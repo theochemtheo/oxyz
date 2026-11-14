@@ -10,6 +10,7 @@ watch = ["CHANGELOG.md"]
 extra_css = ["stylesheets/glacier.css"]
 nav = [
   { "Home" = "index.md" },
+  { "Changelog" = "changelog.md" },
   { "Getting started" = "getting-started.md" },
   { "Guides" = [
     { "Reading and selecting" = "guides/reading-and-selecting.md" },
@@ -30,7 +31,6 @@ nav = [
     { "Compatibility" = "reference/compatibility.md" },
     { "Errors" = "reference/errors.md" },
   ] },
-  { "Changelog" = "changelog.md" },
   { "Development" = [
     { "Overview" = "development/index.md" },
     { "Architecture" = "development/architecture.md" },
