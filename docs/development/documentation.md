@@ -159,7 +159,7 @@ Publication, versioning and generated API documentation are separate work.
 See [development](index.md) for setup and [testing](testing.md) for source/wheel
 verification boundaries.
 
-## Site styling and mathematics
+## Site styling
 
 The modern theme uses Ledger's ruled layout and Glacier's dark/light palettes,
 initially dark. `docs/stylesheets/glacier.css` owns the production cascade,
@@ -170,9 +170,3 @@ Keep code titles, number gutters, highlighted lines and copy controls usable whe
 changing the stylesheet. Console transcripts and signatures retain `.no-copy`.
 Code is inset on desktop, with the inset removed below 40em. Check both palettes
 and narrow screens using actual guides, not just a typography specimen.
-
-The bundled Markdown extensions retain generic Arithmatex. Mark inline maths
-with `\(...\)` and display maths with `\[...\]`; `docs/javascripts/katex.js`
-renders only marked mathematics. KaTeX's stylesheet and scripts use the pinned
-0.16.22 jsDelivr URLs in `zensical.toml`: fonts are local, but mathematics still
-requires the CDN on an uncached visit. The site is not fully offline.

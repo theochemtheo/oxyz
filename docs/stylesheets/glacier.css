@@ -181,8 +181,6 @@
 .md-typeset a > code,
 .md-typeset :not(pre) > code { overflow-wrap: anywhere; }
 
-.md-typeset div.arithmatex { max-width: 100%; overflow-x: auto; }
-
 .md-typeset :focus-visible,
 .md-nav :focus-visible {
   outline: 2px solid var(--md-accent-fg-color);
