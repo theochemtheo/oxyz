@@ -6,6 +6,8 @@ exclude = [
     "build",
     "benchmarks/MEMORY.md",
     "benchmarks/RESULTS.md",
+    # Keep the vendored font licence byte-for-byte.
+    "docs/fonts/iosevka/LICENSE.md",
 ]
 respect-gitignore = true
 flavor = "gfm"

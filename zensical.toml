@@ -4,6 +4,15 @@ docs_dir = "docs"
 site_dir = "site"
 dev_addr = "127.0.0.1:8000"
 exclude_docs = "/superpowers/"
+extra_css = [
+  "https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css",
+  "stylesheets/glacier.css",
+]
+extra_javascript = [
+  "https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.js",
+  "https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/contrib/auto-render.min.js",
+  "javascripts/katex.js",
+]
 nav = [
   { "Home" = "index.md" },
   { "Getting started" = "getting-started.md" },
@@ -39,4 +48,29 @@ nav = [
 ]
 
 [project.theme]
-features = ["content.code.copy"]
+variant = "modern"
+font = false
+language = "en"
+features = [
+  "content.code.copy",
+  "content.tabs.link",
+  "navigation.sections",
+  "navigation.footer",
+  "navigation.top",
+  "search.highlight",
+  "toc.follow",
+]
+
+[[project.theme.palette]]
+scheme = "slate"
+primary = "custom"
+accent = "custom"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+[[project.theme.palette]]
+scheme = "default"
+primary = "custom"
+accent = "custom"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
