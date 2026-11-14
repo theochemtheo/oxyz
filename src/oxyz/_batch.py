@@ -1081,9 +1081,10 @@ def _resolve_projected_batch(
 
     data, survivors, reports, presence = projected
     survived = set(survivors)
-    for req_index, deviations in reports:
-        dropped = req_index not in survived
-        enforce_projection(deviations, conformance, req_index, dropped=dropped)
+    if binding is None or not survivors:
+        for req_index, deviations in reports:
+            dropped = req_index not in survived
+            enforce_projection(deviations, conformance, req_index, dropped=dropped)
     if not survivors:
         return None
     batch = _batch_from_data(data, survivors)
