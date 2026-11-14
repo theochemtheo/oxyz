@@ -173,3 +173,10 @@ Check both palettes and narrow screens using actual guides, not just a
 typography specimen.
 
 Sidebar groups are collapsible; the current page's group starts open.
+
+## Changelog source
+
+Edit the root `CHANGELOG.md`; `docs/changelog.md` includes it at build time using
+Zensical's native `include-markdown` support. Do not maintain a second copy of
+release notes. The preview watches the root file for updates. Use absolute
+repository URLs for source links so they work both on GitHub and in the site.

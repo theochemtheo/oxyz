@@ -20,6 +20,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `oxyz.Absent`.
 - Executable documentation examples, core workflow and contributor guides, and a
   local site preview with callouts, copyable code and installation tabs.
+- A changelog page sourced directly from the root `CHANGELOG.md`.
 
 ### Changed
 
@@ -300,7 +301,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   in the test corpus, guarding that real, chemically diverse data — 98 elements
   across molecules, clusters, bulk, surfaces and low-dimensional structures,
   drawn from a 102-element dataset — parses.
-- An [`examples/`](examples/) directory of runnable, self-contained snippets —
+- An [`examples/`](https://github.com/theochemtheo/oxyz/tree/main/examples)
+  directory of runnable, self-contained snippets —
   scanning and schema inference, reading to numpy, atom-budgeted batching,
   schema projection, the ASE drop-in, the PyTorch targets, and a write
   round-trip — each executed in CI against a committed sample.
@@ -318,7 +320,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   changed; the API and output are unchanged. On the reference corpus fixture the
   core read is ~28% faster serial and ~42% faster on 12 threads (thread scaling
   2.7×→3.3×); end-to-end `oxyz.read` is ~17–19% faster. See
-  [benchmarks/RESULTS.md](benchmarks/RESULTS.md).
+  [benchmarks/RESULTS.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/RESULTS.md).
 
 ### Dependencies
 
@@ -403,7 +405,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   stay unified with the version the `numpy` crate builds against.
 - Benchmarks now cover the full MAD-1.5 r²SCAN training set (303.5 MiB,
   180,184 frames) alongside the generated fixtures; see
-  [benchmarks/RESULTS.md](benchmarks/RESULTS.md).
+  [benchmarks/RESULTS.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/RESULTS.md).
 
 ## [0.5.0] - 2026-07-03
 
@@ -520,7 +522,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 A performance release: faster reads across the board, no API changes. Numbers
 are means on an Apple M3 Pro under CPython 3.13; full tables are in
-[benchmarks/RESULTS.md](benchmarks/RESULTS.md).
+[benchmarks/RESULTS.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/RESULTS.md).
 
 ### Performance
 
