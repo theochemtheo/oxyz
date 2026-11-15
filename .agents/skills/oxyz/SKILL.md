@@ -33,6 +33,13 @@ For implementation work, use [develop-oxyz](../develop-oxyz/SKILL.md) and the
 mechanics, use [run-oxyz](../run-oxyz/SKILL.md). Durable rationale lives in the
 [accepted decisions](../../../docs/development/decisions/index.md).
 
+Use the [format reference](../../../docs/reference/extxyz.md),
+[compatibility boundary](../../../docs/reference/compatibility.md) and
+[error contract](../../../docs/reference/errors.md) before changing accepted
+input or interpretation. [Testing](../../../docs/development/testing.md) and
+[performance](../../../docs/development/performance.md) separate correctness
+proof from measured claims.
+
 ## Focused implementation routing
 
 Load only the specialization relevant to the task; usage guides above remain
@@ -43,3 +50,6 @@ the public contract.
 | Grammar, malformed-frame line context, lossless writing, indexing/prefix reads, serial/parallel parity | [oxyz-core](../oxyz-core/SKILL.md) |
 | Inference, validation, projection, omitted optional fields, patterns and freeze | [oxyz-schema](../oxyz-schema/SKILL.md) |
 | Record declarations/binding, sibling unions, absent batch fields, masks/tags, selections and typing | [oxyz-records](../oxyz-records/SKILL.md) |
+| Selectors, compressed/archive members, remote streams, S3/Hub auth and seek restrictions | [oxyz-sources](../oxyz-sources/SKILL.md) |
+| ASE/metatomic/torch_sim conversion, scientific conventions, device/dtype and lazy imports | [oxyz-targets](../oxyz-targets/SKILL.md) |
+| Profiling, parser/binding allocations, bounded benchmarks, thread scaling and performance claims | [oxyz-performance](../oxyz-performance/SKILL.md) |

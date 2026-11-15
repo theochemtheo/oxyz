@@ -1,0 +1,3 @@
+interface:
+  display_name: "oxyz targets"
+  short_description: "ASE and Torch converters, conventions and golden parity"

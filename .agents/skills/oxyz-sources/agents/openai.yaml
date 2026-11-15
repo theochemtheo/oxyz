@@ -1,0 +1,3 @@
+interface:
+  display_name: "oxyz sources"
+  short_description: "Selectors, archives, remote streams and authentication"
