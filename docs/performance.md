@@ -2,8 +2,8 @@
 
 ## Reading a real dataset
 
-The MAD-1.5 r²SCAN training set contains molecules, crystals and surfaces.
-ASE timings include conversion to `ase.Atoms`.
+The MAD-1.5 r²SCAN training set contains 180k structures (2.63 M atoms) across molecules,
+crystals and surfaces. ASE timings include conversion to `ase.Atoms`.
 
 [![Full-trajectory MAD read times, with separate NumPy-frame and ASE-object panels.](assets/benchmarks/real_data.svg)](assets/benchmarks/real_data.svg)
 
