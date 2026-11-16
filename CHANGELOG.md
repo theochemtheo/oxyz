@@ -18,9 +18,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Schema rules take `absent: omit`: under project mode an absent optional
   field is left out of the frame instead of filled. Its type is exported as
   `oxyz.Absent`.
-- Executable documentation examples covering README and user/contributor guides,
-  including schemas, typed records, compressed/remote sources, converters and
-  command-line workflows, with a local site preview.
+- Executable README, guide and source-docstring examples checked by default with
+  pytest, covering schemas, typed records, compressed/remote sources, converters
+  and command-line workflows, with a local site preview.
 - Portable repository skills for API selection, development and execution, with
   a local smoke tour covering typed records, union batches and optional converters.
 - Performance documentation with real-dataset and scaling figures, corresponding
@@ -38,6 +38,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   member.
 - Union batch reads report projection errors and unmatched frames in requested
   frame order, independent of batch size.
+- Documentation examples collect correctly when the checkout path contains a
+  symbolic link.
 - Record fields named `cls` or `self` work in conversions, batch construction
   and indexing.
 - Batches with unsigned offsets support per-atom frame ids and reordered gathers.

@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
     from sybil.typing import Evaluator
 
-_ROOT = Path(__file__).resolve().parent
+_ROOT = Path(__file__).absolute().parent
 _FLAGS = NORMALIZE_WHITESPACE | ELLIPSIS
 
 

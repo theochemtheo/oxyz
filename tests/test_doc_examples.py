@@ -33,6 +33,18 @@ def test_wrong_markdown_output_reports_source(project):
     result.stdout.fnmatch_lines(["*Expected:*", "*5*", "*Got:*", "*4*"])
 
 
+@pytest.mark.parametrize(("output", "outcome"), [("4", "passed"), ("5", "failed")])
+def test_symlink_checkout_checks_markdown_output(project, output, outcome):
+    _page(project, "docs/linked.md", f"```python\n>>> 2 + 2\n{output}\n```\n")
+    linked = project.path.with_name(f"{project.path.name}-linked")
+    linked.symlink_to(project.path, target_is_directory=True)
+    result = project.runpytest_subprocess(str(linked / "docs/linked.md"), "-q")
+    result.assert_outcomes(**{outcome: 1})
+    if outcome == "failed":
+        result.stdout.fnmatch_lines(["*linked.md:2*"])
+        result.stdout.fnmatch_lines(["*Expected:*", "*5*", "*Got:*", "*4*"])
+
+
 @pytest.mark.parametrize("source", [">>> 2 + 2\n5", "assert 2 + 2 == 5"])
 @pytest.mark.parametrize(
     "fence",
