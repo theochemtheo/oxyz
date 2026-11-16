@@ -29,20 +29,23 @@ def test_fmt_value_uses_si_suffixes():
     assert _style.fmt_value(140_800) == "141k"
 
 
-def test_reader_label_shows_function_calls():
-    # The all-core rows name the recording machine's core count.
-    assert _style.reader_label("oxyz", 12) == "oxyz.read(threads=12)"
-    assert _style.reader_label("oxyz-serial") == "oxyz.read(threads=1)"
-    assert _style.reader_label("oxyz-to-ase", 12) == "oxyz.ase.read(threads=12)"
-    assert _style.reader_label("oxyz-to-ase-serial") == "oxyz.ase.read(threads=1)"
-    assert _style.reader_label("ase") == 'ase.io.read(format="extxyz")'
-    assert _style.reader_label("cextxyz") == "extxyz.read_dicts"
-    assert _style.reader_label("cextxyz-to-ase") == 'ase.io.read(format="cextxyz")'
+@pytest.mark.parametrize("reader", ["oxyz", "oxyz-to-ase"])
+def test_explicit_threads_override_recording_machine_cores(reader):
+    label = _style.reader_label(reader, ncores=12, threads=4)
+    assert "threads=4" in label
+    assert "threads=12" not in label
 
 
-def test_all_core_labels_fall_back_without_core_count():
-    assert _style.reader_label("oxyz") == "oxyz.read()"
-    assert _style.reader_label("oxyz-to-ase") == "oxyz.ase.read()"
+def test_thread_suffix_is_not_reported_as_all_cores():
+    label = _style.reader_label("oxyz-1t", ncores=12)
+    assert label.startswith("oxyz.read(")
+    assert "threads=1)" in label
+
+
+def test_consumed_iterator_is_distinct_from_eager_read():
+    label = _style.reader_label("oxyz-iter")
+    assert label.startswith("list(oxyz.iread(")
+    assert label.endswith("))")
 
 
 def test_serial_ase_reader_keeps_an_oxyz_shade():

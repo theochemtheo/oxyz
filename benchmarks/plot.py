@@ -3,19 +3,21 @@
 # dependencies = [
 #     "matplotlib>=3.8",
 #     "seaborn>=0.13",
+#     "fonttools[woff]>=4.0",
 # ]
 # ///
 """Render benchmarks/figures/ from a saved pytest-benchmark run.
 
 Usage:
-    uv run benchmarks/plot.py [SAVE.json]
+    uv run benchmarks/plot.py [SAVE.json] [--output-dir DIR]
 
-Without an argument, the newest save under .benchmarks/ is used. Bars show
-atoms/s where the save records the workload shape, else mean time.
+Without an argument, the newest save under .benchmarks/ is used. Pass an
+explicit save for publication; --only real_data scaling_dataset selects figures.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import sys
@@ -33,14 +35,89 @@ from _style import (  # ty: ignore[import-not-found]  # sibling module, run as a
     reader_marker,
     reader_order,
 )
+from fontTools.ttLib import TTFont
+from matplotlib import font_manager
 from matplotlib.ticker import LogLocator, NullFormatter
 
 REPO = Path(__file__).resolve().parent.parent
 FIGURES = Path(__file__).resolve().parent / "figures"
 
-# Small scenarios share a figure; the rest get one panel per group. scan's
-# groups become columns of one panel.
+# Small scenarios share a figure; the rest get one panel per group.
 SHARED_SCENARIOS = ["selective", "batches", "read_first", "read_last"]
+
+
+def configure_style() -> None:
+    """Use the site's bundled fonts without depending on installed fonts."""
+    fonts = REPO / "docs" / "fonts"
+    for weight in ("Regular", "Bold"):
+        font_manager.fontManager.addfont(
+            fonts / "atkinson" / f"AtkinsonHyperlegible-{weight}.ttf"
+        )
+    cache = REPO / ".cache" / "benchmark-fonts"
+    cache.mkdir(parents=True, exist_ok=True)
+    for weight in ("Regular", "Bold"):
+        source = fonts / "iosevka" / f"Iosevka-{weight}.woff2"
+        target = cache / f"Iosevka-{weight}.ttf"
+        if not target.exists() or target.stat().st_mtime < source.stat().st_mtime:
+            with TTFont(source) as font:
+                font.flavor = None
+                font.save(target)
+        font_manager.fontManager.addfont(target)
+    sns.set_theme(
+        style="ticks",
+        context="paper",
+        font="Atkinson Hyperlegible",
+        rc={
+            "font.monospace": ["Iosevka"],
+            "font.size": 10,
+            "axes.grid": True,
+            "grid.color": "#e9e9e9",
+            "grid.linewidth": 0.7,
+            "axes.spines.top": False,
+            "axes.spines.right": False,
+            "axes.titleweight": "bold",
+            "text.color": "#1a1a1a",
+            "axes.labelcolor": "#1a1a1a",
+            "svg.fonttype": "path",
+            "svg.hashsalt": "oxyz-benchmarks",
+        },
+    )
+
+
+def save_comparison(
+    fig,
+    name: str,
+    title: str,
+    notes: str,
+    provenance: str,
+    *,
+    output_dir: Path | None = None,
+) -> Path:
+    fig.suptitle(title, x=0.025, ha="left", fontsize=17, fontweight="bold")
+    fig.tight_layout(rect=(0, 0.07, 1, 1), h_pad=3, w_pad=3)
+    if provenance:
+        fig.text(
+            0.025,
+            0.025,
+            provenance.splitlines()[0],
+            fontsize=8,
+            color="#555555",
+            va="top",
+        )
+    out = (output_dir or FIGURES) / f"{name}.svg"
+    fig.savefig(
+        out,
+        metadata={
+            "Title": title,
+            "Description": f"{notes}\n{provenance}",
+            "Date": None,
+        },
+    )
+    out.write_text(
+        "\n".join(line.rstrip() for line in out.read_text().splitlines()) + "\n"
+    )
+    plt.close(fig)
+    return out
 
 
 def newest_save() -> Path:
@@ -135,7 +212,7 @@ def finish_log_axis(
         ha="right",
         rotation_mode="anchor",
         fontsize=8,
-        fontweight="bold",
+        fontfamily="Iosevka",
     )
     ax.yaxis.set_minor_locator(LogLocator(base=10, subs=range(2, 10)))
     ax.yaxis.set_minor_formatter(NullFormatter())
@@ -157,12 +234,7 @@ def panel(ax, rows: list[dict[str, Any]], metric: str) -> None:
             (r for r in rows if r["reader"] == reader),
             key=lambda r: r["threads"] or 0,
         )
-        # A lone parallel bar names its core count in the reader label;
-        # a thread sweep labels each bar instead.
-        if len(bars) == 1 and bars[0]["mode"] == "parallel":
-            tick_labels.append(f"{reader} ({bars[0]['threads']} cores)")
-        else:
-            tick_labels.append(reader)
+        tick_labels.append(reader_label(reader, threads=bars[0]["threads"]))
         width = slot / len(bars)
         has_sweep = has_sweep or len(bars) > 1
         for i, r in enumerate(bars):
@@ -171,7 +243,7 @@ def panel(ax, rows: list[dict[str, Any]], metric: str) -> None:
             pos = x - slot / 2 + (i + 0.5) * width
             label = fmt_value(value)
             if len(bars) > 1:
-                label = f"{r['threads']}c: {label}"
+                label = f"{reader_label(reader, threads=r['threads'])}\n{label}"
             draw_bar(
                 ax,
                 pos,
@@ -193,7 +265,11 @@ def metric_label(metric: str) -> str:
 
 
 def render_figure(
-    name: str, rows: list[dict[str, Any]], groups: list[str] | None = None
+    name: str,
+    rows: list[dict[str, Any]],
+    groups: list[str] | None = None,
+    *,
+    output_dir: Path | None = None,
 ) -> Path:
     """One panel per group, each with its own metric."""
     if groups is None:
@@ -214,32 +290,77 @@ def render_figure(
         prev_metric = metric
 
     fig.tight_layout()
-    out = FIGURES / f"{name}.svg"
+    out = (output_dir or FIGURES) / f"{name}.svg"
     fig.savefig(out)
     plt.close(fig)
     return out
 
 
-def scan_figure(rows: list[dict[str, Any]]) -> Path:
-    """The scan groups are one oxyz row each, so they make one panel with
-    a column per workload rather than a figure of one-bar panels."""
-    rows = sorted(rows, key=lambda r: r["workload"])
-    metric = "mean time (ms)"
-    values = [value_of(r, metric) for r in rows]
-
-    fig, ax = plt.subplots(figsize=(0.9 + 3.6, 3.1))
-    for x, (r, value) in enumerate(zip(rows, values, strict=True)):
-        draw_bar(ax, x, value, 0.55, reader_color(r["reader"]), fmt_value(value))
-    finish_log_axis(ax, values, [r["workload"] for r in rows])
-    ax.set_title("scan (oxyz structural scan)", fontsize=10)
-    ax.set_xlabel("workload")
-    ax.set_ylabel(metric_label(metric))
-
-    fig.tight_layout()
-    out = FIGURES / "scan.svg"
-    fig.savefig(out)
-    plt.close(fig)
-    return out
+def real_data_figure(
+    rows: list[dict[str, Any]],
+    provenance: str = "",
+    *,
+    output_dir: Path | None = None,
+) -> Path | None:
+    """Compare full MAD reads without mixing output contracts or scans."""
+    rows = [
+        r
+        for r in rows
+        if r["group"] == "real_data/mad"
+        and (r["reader"] != "oxyz" or r["threads"] in (1, 12))
+    ]
+    if not rows:
+        return None
+    contracts = [
+        (output, title)
+        for output, title in (
+            ("numpy frames", "NumPy frames"),
+            ("ase.Atoms", "ASE objects"),
+        )
+        if any(r["output"] == output for r in rows)
+    ]
+    fig, axes = plt.subplots(
+        len(contracts), 1, figsize=(10.5, 6.7), squeeze=False, sharex=True
+    )
+    for ax, (output, title) in zip(axes[:, 0], contracts, strict=True):
+        panel_rows = sorted(
+            (r for r in rows if r["output"] == output), key=lambda r: r["mean"]
+        )
+        values = [r["mean"] for r in panel_rows]
+        ax.barh(
+            range(len(panel_rows)),
+            values,
+            color=[reader_color(r["reader"]) for r in panel_rows],
+            height=0.65,
+        )
+        ax.set_yticks(
+            range(len(panel_rows)),
+            [reader_label(r["reader"], threads=r["threads"]) for r in panel_rows],
+            fontfamily="Iosevka",
+            fontsize=10,
+        )
+        ax.invert_yaxis()
+        ax.set_xlim(0, max(r["mean"] for r in rows) * 1.16)
+        ax.set_title(title, loc="left")
+        ax.set_xlabel("Full-trajectory read time (s)")
+        ax.grid(axis="y", visible=False)
+        for i, value in enumerate(values):
+            ax.annotate(
+                f"{value:.2f} s",
+                (value, i),
+                xytext=(5, 0),
+                textcoords="offset points",
+                va="center",
+                fontsize=9,
+            )
+    return save_comparison(
+        fig,
+        "real_data",
+        "Reading the MAD dataset",
+        "",
+        provenance,
+        output_dir=output_dir,
+    )
 
 
 def sweep_size_rows(
@@ -266,58 +387,105 @@ def size_curve_figure(
     name: str,
     xlabel: str,
     ncores: int | None = None,
+    provenance: str = "",
+    *,
+    output_dir: Path | None = None,
 ) -> Path | None:
-    """Read time vs size (loglog) and speedup vs ase (semilogx), all readers."""
-    by_reader = sweep_size_rows(rows, prefix)
-    if not by_reader:
-        return None
-
-    fig, (ax_t, ax_s) = plt.subplots(1, 2, figsize=(9.5, 4.0))
-    baseline = {s: m for s, m, _ in by_reader.get("ase", [])}
-
-    for reader in reader_order(set(by_reader)):
-        pts = by_reader[reader]
-        sizes = [s for s, _, _ in pts]
-        times = [m for _, m, _ in pts]
-        ax_t.loglog(
-            sizes,
-            times,
-            marker=reader_marker(reader),
-            label=reader_label(reader, ncores),
-            color=reader_color(reader),
+    """Plot time and same-output speedup without extrapolating references."""
+    selected = [r for r in rows if r["group"].startswith(prefix + "/")]
+    contracts = [
+        (output, title, baseline)
+        for output, title, baseline in (
+            ("numpy frames", "NumPy frames", "cextxyz"),
+            ("ase.Atoms", "ASE objects", "ase"),
         )
-        if baseline and reader != "ase":
-            shared = [(s, baseline[s] / m) for s, m, _ in pts if s in baseline]
-            if shared:
-                ax_s.semilogx(
-                    [s for s, _ in shared],
-                    [sp for _, sp in shared],
-                    marker=reader_marker(reader),
-                    label=reader_label(reader, ncores),
-                    color=reader_color(reader),
-                )
+        if any(r["output"] == output for r in selected)
+    ]
+    if not contracts:
+        return None
+    fig, axes = plt.subplots(
+        len(contracts), 2, figsize=(11.8, 4.0 * len(contracts) + 1.2), squeeze=False
+    )
+    for (ax_t, ax_s), (output, title, reference) in zip(axes, contracts, strict=True):
+        output_rows = [r for r in selected if r["output"] == output]
+        by_reader = sweep_size_rows(output_rows, prefix)
+        baseline = {s: m for s, m, _ in by_reader.get(reference, [])}
+        for reader in reader_order(set(by_reader)):
+            pts = by_reader[reader]
+            recorded = next(
+                r
+                for r in output_rows
+                if r["reader"].removesuffix(f"-{r['workload']}") == reader
+            )
+            label = reader_label(reader, ncores, threads=recorded["threads"])
+            ax_t.loglog(
+                [s for s, _, _ in pts],
+                [m for _, m, _ in pts],
+                marker=reader_marker(reader),
+                label=label,
+                color=reader_color(reader),
+            )
+            if reader != reference:
+                shared = [(s, baseline[s] / m) for s, m, _ in pts if s in baseline]
+                if shared:
+                    ax_s.semilogx(
+                        [s for s, _ in shared],
+                        [speedup for _, speedup in shared],
+                        marker=reader_marker(reader),
+                        label=label,
+                        color=reader_color(reader),
+                    )
+        ax_t.set_xlabel(xlabel)
+        ax_t.set_ylabel("Full-trajectory read time (s)")
+        ax_t.set_title(title, loc="left")
+        ax_t.grid(True, which="both", alpha=0.3)
+        ax_t.legend(prop={"family": "Iosevka", "size": 8}, loc="upper left")
+        if baseline:
+            ax_s.axhline(
+                1,
+                color=reader_color(reference),
+                linewidth=1,
+                linestyle="--",
+                label=reader_label(reference),
+            )
+            ax_s.legend(
+                title="Calls · dashed line is reference",
+                prop={"family": "Iosevka", "size": 8},
+                loc="upper right",
+            )
+        else:
+            ax_s.text(
+                0.5,
+                0.5,
+                "No matching reference measurements",
+                transform=ax_s.transAxes,
+                ha="center",
+            )
+        ax_s.set_xlabel(xlabel)
+        ax_s.set_ylabel("Speedup over reference (×)")
+        ax_s.set_title("Relative read speed", loc="left")
+        ax_s.grid(True, which="both", alpha=0.3)
+    title = (
+        "Reading increasingly large datasets"
+        if prefix == "scaling_dataset"
+        else "Reading increasingly large systems"
+    )
+    return save_comparison(
+        fig,
+        name,
+        title,
+        "Time panels: logarithmic axes; lower is better. "
+        "Speedup panels: higher is better.\n"
+        "References match the output type. "
+        "Speedups stop where reference measurements stop.",
+        provenance,
+        output_dir=output_dir,
+    )
 
-    ax_t.set_xlabel(xlabel)
-    ax_t.set_ylabel("read time (s) — lower is better")
-    ax_t.set_title(f"{name.replace('scaling_', '')}: time vs size")
-    ax_t.grid(True, which="both", alpha=0.3)
-    ax_t.legend(fontsize=8)
 
-    ax_s.axhline(1, color="gray", linewidth=0.8, linestyle="--")
-    ax_s.set_xlabel(xlabel)
-    ax_s.set_ylabel("speedup over ase.io")
-    ax_s.set_title("speedup vs size")
-    ax_s.grid(True, which="both", alpha=0.3)
-    ax_s.legend(fontsize=8)
-
-    fig.tight_layout()
-    out = FIGURES / f"{name}.svg"
-    fig.savefig(out)
-    plt.close(fig)
-    return out
-
-
-def thread_curve_figure(rows: list[dict[str, Any]]) -> Path | None:
+def thread_curve_figure(
+    rows: list[dict[str, Any]], *, output_dir: Path | None = None
+) -> Path | None:
     """Throughput (atoms/s) vs thread count, one panel per family."""
     families = [
         ("scaling_threads/dataset", "dataset (many small frames)"),
@@ -363,73 +531,88 @@ def thread_curve_figure(rows: list[dict[str, Any]]) -> Path | None:
         ax.legend(fontsize=8)
 
     fig.tight_layout()
-    out = FIGURES / "scaling_threads.svg"
+    out = (output_dir or FIGURES) / "scaling_threads.svg"
     fig.savefig(out)
     plt.close(fig)
     return out
 
 
 def main() -> None:
-    save = Path(sys.argv[1]) if len(sys.argv) > 1 else newest_save()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("save", nargs="?", type=Path)
+    parser.add_argument("--only", nargs="+", help="Figure names to generate")
+    parser.add_argument("--output-dir", type=Path, default=FIGURES)
+    args = parser.parse_args()
+    output_dir = args.output_dir.resolve()
+    save = args.save if args.save is not None else newest_save()
     data = json.loads(save.read_text())
-    rows = flatten(data)
+    rows = [r for r in flatten(data) if r["reader"] != "oxyz-scan"]
     ncores = data["machine_info"].get("cpu", {}).get("count")
-
-    # "ticks" so the log subticks draw; the grid returns via rc.
-    sns.set_theme(
-        style="ticks",
-        context="paper",
-        rc={
-            "axes.grid": True,
-            "axes.grid.axis": "y",
-            "grid.color": "#e9e9e9",
-            "grid.linewidth": 0.7,
-            "axes.linewidth": 1.2,
-            "axes.edgecolor": "#262626",
-            "axes.labelweight": "bold",
-            "axes.titleweight": "bold",
-            "text.color": "#1a1a1a",
-            "axes.labelcolor": "#1a1a1a",
-            "xtick.color": "#1a1a1a",
-            "ytick.color": "#1a1a1a",
-        },
+    machine = data["machine_info"]
+    cpu = machine.get("cpu", {}).get("brand_raw", machine.get("processor", "?"))
+    revision = data.get("commit_info", {})
+    dirty = " (uncommitted changes)" if revision.get("dirty") else ""
+    version = machine.get("package_versions", {}).get("oxyz", "?")
+    provenance = (
+        f"Measured {data.get('datetime', '?')[:10]} · revision "
+        f"{revision.get('id', '?')[:9]}{dirty} · {cpu} · "
+        f"CPython {machine.get('python_version', '?')} · oxyz {version}\n"
+        f"Source: {save.name}"
     )
-    FIGURES.mkdir(exist_ok=True)
+    configure_style()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    def wanted(name: str) -> bool:
+        return args.only is None or name in args.only
 
     by_scenario: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
-        by_scenario.setdefault(r["scenario"], []).append(r)
-
-    for scaling in ("scaling_dataset", "scaling_system", "scaling_threads"):
-        by_scenario.pop(scaling, None)
-
+        if r["scenario"] not in (
+            "scaling_dataset",
+            "scaling_system",
+            "scaling_threads",
+            "real_data",
+        ):
+            by_scenario.setdefault(r["scenario"], []).append(r)
     shared = [s for s in SHARED_SCENARIOS if s in by_scenario]
-    scan_rows = by_scenario.pop("scan", None)
     outputs: list[Path | None] = [
-        render_figure(scenario, by_scenario[scenario])
+        render_figure(scenario, by_scenario[scenario], output_dir=output_dir)
         for scenario in sorted(set(by_scenario) - set(shared))
+        if wanted(scenario)
     ]
-    if shared:
+    if shared and wanted("scenarios"):
         shared_rows = [r for s in shared for r in by_scenario[s]]
         shared_groups = [
             g for s in shared for g in sorted({r["group"] for r in by_scenario[s]})
         ]
-        outputs.append(render_figure("scenarios", shared_rows, shared_groups))
-    if scan_rows:
-        outputs.append(scan_figure(scan_rows))
-
-    outputs.append(
-        size_curve_figure(rows, "scaling_dataset", "scaling_dataset", "frames", ncores)
-    )
-    outputs.append(
-        size_curve_figure(
-            rows, "scaling_system", "scaling_system", "atoms per frame", ncores
+        outputs.append(
+            render_figure(
+                "scenarios", shared_rows, shared_groups, output_dir=output_dir
+            )
         )
-    )
-    outputs.append(thread_curve_figure(rows))
+    if wanted("real_data"):
+        outputs.append(real_data_figure(rows, provenance, output_dir=output_dir))
+    for prefix, xlabel in (
+        ("scaling_dataset", "Number of frames"),
+        ("scaling_system", "Atoms per frame"),
+    ):
+        if wanted(prefix):
+            outputs.append(
+                size_curve_figure(
+                    rows,
+                    prefix,
+                    prefix,
+                    xlabel,
+                    ncores,
+                    provenance,
+                    output_dir=output_dir,
+                )
+            )
+    if wanted("scaling_threads"):
+        outputs.append(thread_curve_figure(rows, output_dir=output_dir))
 
     for out in [o for o in outputs if o is not None]:
-        print(f"wrote {out.relative_to(REPO)} from {save.name}")
+        print(f"wrote {out} from {save.name}")
 
 
 if __name__ == "__main__":

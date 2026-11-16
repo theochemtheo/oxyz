@@ -2,7 +2,7 @@
 # requires-python = ">=3.12"
 # dependencies = []
 # ///
-"""Render benchmarks/RESULTS.md from a saved pytest-benchmark run.
+"""Render benchmark tables and their environment from a saved run.
 
 Usage:
     uv run benchmarks/report.py [SAVE.json]
@@ -23,6 +23,7 @@ from typing import Any
 
 REPO = Path(__file__).resolve().parent.parent
 RESULTS = Path(__file__).resolve().parent / "RESULTS.md"
+ENVIRONMENT = RESULTS.with_name("ENVIRONMENT.md")
 
 INTRO = """\
 # Benchmark results
@@ -60,29 +61,51 @@ hand-roll; ase-sqlite and ase-lmdb are the common ASE ecosystem paths.
 ase.Atoms; the two output contracts are never compared in one table.
 """
 
-WORKLOADS = """\
-## Workloads
 
-Deterministic fixtures from `benchmarks/conftest.py`, plus one real dataset
-that is downloaded rather than generated (see Real dataset below):
-
-| file | shape |
-| --- | --- |
-| many_small_frames | 2,000 frames × 16–64 atoms |
-| large_frames | 4 frames × 100,000 atoms |
-| metadata_heavy | 2,000 frames × 16–64 atoms, ~16-key comment lines |
-| mace_mixed | 5 isolated-atom frames + 995 bulk frames (32–96 atoms) |
-| store_100k | 100,000 frames × 64 atoms (store comparison) |
-| sweep_dataset_N | N frames, corpus-shaped (mean ~7 atoms, long tail to 240) |
-| sweep_system_N | 3 frames × N atoms |
-| mad-1.5-r2scan | 180,184 frames × 1–352 atoms (mean 14.6), 303.5 MiB real dataset |
-
-`selective/...` groups read every 20th frame. The `scaling_*` groups sweep
-the sweep fixtures over a size range; see the Scaling sweeps section.
-cextxyz and ase-extxyz publish no CPython 3.14 wheels, so
-`benchmarks/run.py` pins CPython 3.13; oxyz ships the same abi3 wheel for
-3.13 and 3.14.
-"""
+def workloads(groups: dict[str, list[dict[str, Any]]]) -> str:
+    """Describe only the workload families present in the saved run."""
+    shapes = {
+        "many_small_frames": "2,000 frames × 16–63 atoms",
+        "large_frames": "4 frames × 100,000 atoms",
+        "metadata_heavy": "2,000 frames × 16–63 atoms, ~16-key comment lines",
+        "mace_mixed": "5 isolated-atom frames + 995 bulk frames (32–96 atoms)",
+        "store_100k": "100,000 frames × 64 atoms (store comparison)",
+        "sweep_dataset_N": "N frames, corpus-shaped (mean ~7 atoms, long tail to 240)",
+        "sweep_system_N": "3 frames × N atoms",
+        "mad-1.5-r2scan": (
+            "180,184 frames × 1–352 atoms (mean 14.6), 303.5 MiB real dataset"
+        ),
+    }
+    measured = set()
+    for group in groups:
+        family, _, name = group.partition("/")
+        if family.startswith("stores"):
+            measured.add("store_100k")
+        elif family == "real_data":
+            measured.add("mad-1.5-r2scan")
+        elif family in ("scaling_dataset", "scaling_system"):
+            measured.add(f"sweep_{family.removeprefix('scaling_')}_N")
+        elif family == "scaling_threads":
+            measured.add(f"sweep_{name}_N")
+        else:
+            measured.add(name)
+    lines = [
+        "## Workloads",
+        "",
+        "Only the workload families measured in this saved run are listed.",
+        "Synthetic inputs are deterministic fixtures from `benchmarks/conftest.py`.",
+        "",
+        "| file | shape |",
+        "| --- | --- |",
+        *(
+            f"| {name} | {shape} |"
+            for name, shape in shapes.items()
+            if name in measured
+        ),
+    ]
+    if any(group.startswith("selective/") for group in groups):
+        lines += ["", "`selective/...` groups read every 20th frame."]
+    return "\n".join(lines) + "\n"
 
 
 SCALING_INTRO = """\
@@ -92,8 +115,8 @@ The `scaling_dataset/...` and `scaling_system/...` groups sweep one size axis
 with the readers overlaid, and `scaling_threads/...` sweeps thread count for
 oxyz alone. The dataset family sweeps frame count over a corpus-shaped file of
 many small frames; the system family sweeps atoms per frame over a few large
-frames. These groups back the scaling curves in `benchmarks/figures/`; the
-per-size tables here are the provenance record.
+frames. The per-size tables here are the provenance record for the scaling
+curves.
 """
 
 REAL_DATA_INTRO = """\
@@ -115,9 +138,9 @@ Cloud Archive,
 (v3), described in [arXiv:2603.02089](https://arxiv.org/abs/2603.02089). Used
 under [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/).
 
-The dataset is a 303.5 MiB download kept on a local path outside the repository,
-so these rows are skipped wherever absent and **cannot be regenerated from this
-repository alone**. To reproduce them, put the file at `data/mad-1.5-r2scan-train.xyz`.
+The dataset is a 303.5 MiB download kept at an ignored local path, so these rows
+are skipped wherever absent and **cannot be regenerated from this repository
+alone**. To reproduce them, put the file at `data/mad-1.5-r2scan-train.xyz`.
 
 One read here is seconds of work, so the slower rows are timed over a single
 round: a `± 0.00` spread means the row was measured once, not that it is
@@ -194,7 +217,7 @@ def throughput(bench: dict[str, Any], key: str) -> str:
     return fmt_rate(count / bench["stats"]["mean"])
 
 
-def environment(data: dict[str, Any]) -> str:
+def environment(data: dict[str, Any], heading: str = "Environment") -> str:
     machine = data["machine_info"]
     commit = data.get("commit_info", {})
     cpu = machine.get("cpu", {}).get("brand_raw", machine.get("processor", "?"))
@@ -204,7 +227,7 @@ def environment(data: dict[str, Any]) -> str:
     )
 
     lines = [
-        "## Environment",
+        f"## {heading}",
         "",
         (
             f"- {cpu}, {machine.get('system', '?')} {machine.get('release', '?')}"
@@ -286,7 +309,7 @@ def main() -> None:
     parts = [
         INTRO.format(save=save.name),
         environment(data),
-        WORKLOADS,
+        workloads(groups),
         "## Results\n",
         *(
             group_table(group, rows)
@@ -320,7 +343,8 @@ def main() -> None:
         not_led_by_oxyz(groups),
     ]
     RESULTS.write_text("\n".join(parts))
-    print(f"wrote {RESULTS} from {save.name}")
+    ENVIRONMENT.write_text(environment(data, heading="Measurement environment"))
+    print(f"wrote {RESULTS} and {ENVIRONMENT} from {save.name}")
 
 
 if __name__ == "__main__":

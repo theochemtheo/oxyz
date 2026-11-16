@@ -23,6 +23,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   command-line workflows, with a local site preview.
 - Portable repository skills for API selection, development and execution, with
   a local smoke tour covering typed records, union batches and optional converters.
+- Performance documentation with real-dataset and scaling figures, corresponding
+  benchmark tables and an archived measurement snapshot for regeneration.
 
 ### Changed
 
@@ -45,6 +47,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Internal
 
 - ty floor raised to 0.0.100.
+- Benchmark plots use website fonts, call-expression labels and output-matched
+  comparisons, with compact measurement provenance. The published snapshot
+  covers MAD full reads and dataset-size scaling.
 
 ## [1.3.1] - 2026-11-13
 

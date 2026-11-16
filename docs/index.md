@@ -44,6 +44,12 @@ for concatenated arrays, or records for declared typed fields. Converter
 modules are optional and have their own installation extras. NumPy and PyYAML
 are the base runtime dependencies.
 
+## Performance
+
+The [performance overview](performance.md) compares full reads of a real dataset
+and dataset-size scaling, with separate NumPy and ASE outputs. It includes the
+measurement environment and links to complete results and reproduction commands.
+
 ## Developing oxyz
 
 - [Development setup](development/index.md): build from a checkout and choose

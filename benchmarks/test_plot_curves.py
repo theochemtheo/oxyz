@@ -25,9 +25,11 @@ def _row(group, reader, mean, n_atoms, threads=1):
 
 
 # Real saves keep the size suffix on the reader; sweep_size_rows strips it.
-def _size_row(group, base_reader, mean, n_atoms):
+def _size_row(group, base_reader, mean, n_atoms, output="numpy frames"):
     size = group.split("/")[1]
-    return _row(group, f"{base_reader}-{size}", mean, n_atoms)
+    result = _row(group, f"{base_reader}-{size}", mean, n_atoms)
+    result["output"] = output
+    return result
 
 
 def test_sweep_size_rows_groups_by_reader():
@@ -41,20 +43,67 @@ def test_sweep_size_rows_groups_by_reader():
     assert "ase" in grouped
 
 
-def test_size_curve_figure_writes_svg(tmp_path, monkeypatch):
+@pytest.fixture
+def figures(monkeypatch):
+    captured = []
+    close = plot.plt.close
+    monkeypatch.setattr(plot.plt, "close", captured.append)
+    yield captured
+    for figure in captured:
+        close(figure)
+
+
+def test_scaling_references_match_output_and_do_not_extrapolate(
+    tmp_path, monkeypatch, figures
+):
     monkeypatch.setattr(plot, "FIGURES", tmp_path)
     rows = [
         _size_row("scaling_dataset/1000", "oxyz", 0.01, 7000),
         _size_row("scaling_dataset/10000", "oxyz", 0.1, 70000),
-        _size_row("scaling_dataset/1000", "oxyz-to-ase", 0.05, 7000),
-        _size_row("scaling_dataset/10000", "oxyz-to-ase", 0.5, 70000),
-        _size_row("scaling_dataset/1000", "ase", 0.2, 7000),
-        _size_row("scaling_dataset/10000", "ase", 2.0, 70000),
+        _size_row("scaling_dataset/1000", "cextxyz", 0.08, 7000),
+        _size_row("scaling_dataset/1000", "oxyz-to-ase", 0.05, 7000, "ase.Atoms"),
+        _size_row("scaling_dataset/1000", "ase", 0.2, 7000, "ase.Atoms"),
     ]
-    out = plot.size_curve_figure(
+    plot.size_curve_figure(
         rows, "scaling_dataset", "scaling_dataset", "frames", ncores=12
     )
-    assert out is not None and out.exists() and out.suffix == ".svg"
+    numpy_time, numpy_speed, ase_time, ase_speed = figures[0].axes
+    assert len(numpy_time.lines) == 2
+    assert len(ase_time.lines) == 2
+    native = numpy_speed.lines[0]
+    assert list(native.get_xdata()) == [1000]
+    assert list(native.get_ydata()) == [8.0]
+    converted = ase_speed.lines[0]
+    assert list(converted.get_ydata()) == [4.0]
+
+
+def test_real_data_excludes_scans_and_keeps_output_panels(
+    tmp_path, monkeypatch, figures
+):
+    monkeypatch.setattr(plot, "FIGURES", tmp_path)
+    native = _row("real_data/mad", "oxyz", 1.0, 100, threads=12)
+    converted = _row("real_data/mad", "oxyz-to-ase", 3.0, 100, threads=4)
+    converted["output"] = "ase.Atoms"
+    scan = _row("real_data/mad_scan", "oxyz-scan", 0.01, 100)
+    scan["output"] = "FrameIndex"
+    serial = _row("real_data/mad", "oxyz", 2.0, 100, threads=1)
+    iterator = _row("real_data/mad", "oxyz-iter", 1.5, 100)
+    extxyz = _row("real_data/mad", "cextxyz", 4.0, 100)
+    intermediate = [
+        _row("real_data/mad", "oxyz", 0.9, 100, threads=threads)
+        for threads in (2, 4, 8)
+    ]
+    plot.real_data_figure(
+        [native, converted, scan, serial, iterator, extxyz, *intermediate],
+        provenance="Historical measurement",
+    )
+    numpy_axis, ase_axis = figures[0].axes
+    assert [bar.get_width() for bar in numpy_axis.patches] == [1.0, 1.5, 2.0, 4.0]
+    assert [bar.get_width() for bar in ase_axis.patches] == [3.0]
+    assert not numpy_axis.collections
+    assert not ase_axis.collections
+    for axis in (numpy_axis, ase_axis):
+        assert axis.get_yticklabels()[0].get_fontfamily() == ["Iosevka"]
 
 
 def test_thread_curve_figure_writes_svg(tmp_path, monkeypatch):

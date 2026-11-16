@@ -180,3 +180,16 @@ Edit the root `CHANGELOG.md`; `docs/changelog.md` includes it at build time usin
 Zensical's native `include-markdown` support. Do not maintain a second copy of
 release notes. The preview watches the root file for updates. Use absolute
 repository URLs for source links so they work both on GitHub and in the site.
+
+## Benchmark evidence
+
+`docs/performance.md` embeds the committed SVGs in `docs/assets/benchmarks/`
+and includes `benchmarks/ENVIRONMENT.md`. `docs/reference/benchmarks.md` includes
+`benchmarks/RESULTS.md`. Both Markdown files are generated from the same selected
+run by `report.py`. The preview watches them; there is no benchmark or
+figure-generation step in the docs build.
+
+Update published evidence with the explicit archived input and commands in
+[performance work](performance.md#reproduce-the-published-snapshot), not copied
+tables or independently edited SVGs. Keep the measured revision and environment
+visible, and do not present a historical run as a current-version benchmark.

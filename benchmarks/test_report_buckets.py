@@ -42,3 +42,13 @@ def test_real_data_intro_carries_attribution_and_caveat():
     # CC-BY-4.0 attribution is a licence obligation.
     assert "materialscloud:ak-4p" in report.REAL_DATA_INTRO
     assert "cannot be regenerated" in report.REAL_DATA_INTRO
+
+
+def test_partial_run_does_not_claim_unmeasured_workloads():
+    text = report.workloads({"scaling_dataset/1000": [], "real_data/mad": []})
+    rows = {
+        line.split("|")[1].strip()
+        for line in text.splitlines()
+        if line.startswith("| ")
+    }
+    assert rows - {"file", "---"} == {"sweep_dataset_N", "mad-1.5-r2scan"}
