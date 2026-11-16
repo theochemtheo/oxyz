@@ -59,7 +59,7 @@ These commands regenerate the tables and approved figures from that tracked
 input, without benchmarking or downloading data:
 
 ```sh title="Regenerate the published benchmark views"
-save=docs/assets/benchmarks/oxyz-performance-20261116T105540Z.json
+save=docs/assets/benchmarks/oxyz-performance-7b819e8b0e.json
 uv run benchmarks/report.py "$save"
 uv run benchmarks/plot.py "$save" --only real_data scaling_dataset \
     --output-dir docs/assets/benchmarks
@@ -98,8 +98,7 @@ uv run benchmarks/run.py -q \
 ```
 
 Choose a new output filename for a new measurement rather than overwriting
-an existing run. The recorded checkout had uncommitted changes, which remain
-explicit in the snapshot's revision metadata.
+an existing run.
 
 ## Fixtures and limits
 

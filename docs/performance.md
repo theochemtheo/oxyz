@@ -24,4 +24,4 @@ Synthetic trajectories with a corpus-shaped distribution of frame sizes.
 [Complete results](reference/benchmarks.md) · [Raw timings][saved-run] ·
 [Reproduction instructions](development/performance.md#reproduce-the-published-snapshot)
 
-[saved-run]: assets/benchmarks/oxyz-performance-20261116T105540Z.json
+[saved-run]: assets/benchmarks/oxyz-performance-7b819e8b0e.json
