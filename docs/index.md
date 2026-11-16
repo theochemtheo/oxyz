@@ -65,4 +65,4 @@ measurement environment and links to complete results and reproduction commands.
 - [Accepted decisions](development/decisions/index.md): durable contracts and
   their trade-offs.
 
-This local documentation preview is not a published documentation service.
+The site tracks `main`; features may differ from the latest PyPI release.

@@ -153,11 +153,37 @@ examples when requesting review. Record explicit approval of the reviewed
 revision before proceeding past a required review checkpoint; passing checks
 or silence are not approval. Changed content needs renewed review.
 
-This is a local preview, not website deployment. README is outside `docs_dir`
-and is not rendered by this preview; review it separately as Markdown.
-Publication, versioning and generated API documentation are separate work.
-See [development](index.md) for setup and [testing](testing.md) for source/wheel
-verification boundaries.
+README is outside `docs_dir` and is not rendered by this preview; review it
+separately as Markdown. See [development](index.md) for setup and
+[testing](testing.md) for source/wheel verification boundaries.
+
+## GitHub Pages
+
+The publication URL is <https://theochemtheo.github.io/oxyz/>. It tracks `main`,
+not a versioned PyPI release. `site_url` in `zensical.toml` sets the project path.
+
+The [Pages workflow](https://github.com/theochemtheo/oxyz/blob/main/.github/workflows/pages.yml)
+runs on pushes to `main` and manual dispatches from `main`. It installs the locked
+full environment, checks README/guide/source examples and builds `site/`.
+The build job has read-only repository access; only the separate deployment job
+receives Pages and OIDC write permissions. The uploaded artifact is named for
+the exact source commit.
+
+Publication is disabled unless the repository Actions variable
+`OXYZ_PAGES_ENABLED` equals `true`. To enable it:
+
+1. Merge the workflow into `main`.
+2. In repository **Settings → Pages → Build and deployment**, select
+   **GitHub Actions** as the source.
+3. Set `OXYZ_PAGES_ENABLED` to `true` under **Settings → Secrets and variables →
+   Actions → Variables**.
+4. Run the `pages` workflow from `main`, or push a new commit to `main`.
+
+Unsetting the variable disables future uploads/deployments; it does not remove
+an already published site. Unpublish through repository Pages settings if needed.
+Repository Pages settings and Actions variables are remote changes, separate
+from local builds. Versioned sites, custom domains and generated API pages are
+not configured by this workflow.
 
 ## Site styling
 

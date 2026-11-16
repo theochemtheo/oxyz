@@ -2,6 +2,7 @@
 
 [![test](https://github.com/theochemtheo/oxyz/actions/workflows/test.yml/badge.svg)](https://github.com/theochemtheo/oxyz/actions/workflows/test.yml)
 [![PyPI](https://img.shields.io/pypi/v/oxyz)](https://pypi.org/project/oxyz/)
+[![Documentation](https://img.shields.io/badge/docs-development-blue)](https://theochemtheo.github.io/oxyz/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/downloads/)
 [![SPEC 0](https://img.shields.io/badge/SPEC-0-green?labelColor=%23004811&color=%235CB05C)](https://scientific-python.org/specs/spec-0000/)
 
@@ -86,8 +87,9 @@ before replacing source data.
 
 ## Documentation
 
-Public Markdown lives in the repository; there is no published website URL.
-The local site preview is documented in the contributor guide.
+The [development documentation](https://theochemtheo.github.io/oxyz/) tracks `main`.
+The guides below link to repository Markdown. Local preview instructions are in
+the contributor guide.
 
 | Task | Guide |
 | --- | --- |

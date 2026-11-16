@@ -1,5 +1,6 @@
 [project]
 site_name = "oxyz"
+site_url = "https://theochemtheo.github.io/oxyz/"
 repo_url = "https://github.com/theochemtheo/oxyz"
 repo_name = "theochemtheo/oxyz"
 docs_dir = "docs"

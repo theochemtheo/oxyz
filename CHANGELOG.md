@@ -20,7 +20,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `oxyz.Absent`.
 - Executable README, guide and source-docstring examples checked by default with
   pytest, covering schemas, typed records, compressed/remote sources, converters
-  and command-line workflows, with a local site preview.
+  and command-line workflows, with a local preview and guarded GitHub Pages
+  deployment.
 - Portable repository skills for API selection, development and execution, with
   a local smoke tour covering typed records, union batches and optional converters.
 - Performance documentation with real-dataset and scaling figures, corresponding
