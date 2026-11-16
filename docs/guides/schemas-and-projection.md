@@ -144,9 +144,7 @@ removed rather than rejected.
 ```python title="Separate exact validation from integer-to-real promotion"
 integer_source = Path("integer-energy.extxyz")
 integer_source.write_text("1\nProperties=species:S:1:pos:R:3 energy=2\nH 0 0 0\n")
-real_energy = oxyz.SchemaSpec(
-    metadata=(oxyz.MetadataRule("energy", oxyz.Kind.REAL),)
-)
+real_energy = oxyz.SchemaSpec(metadata=(oxyz.MetadataRule("energy", oxyz.Kind.REAL),))
 try:
     oxyz.read(integer_source, schema=real_energy)
 except oxyz.SchemaError as error:
@@ -179,8 +177,9 @@ with warnings.catch_warnings(record=True) as caught:
     replaced = oxyz.read(bad_source, schema=charge_spec, conformance="warn")
 assert len(replaced) == 1
 assert np.isnan(replaced[0].columns["charge"]).all()
-assert any("frame 0" in str(item.message) and "charge" in str(item.message)
-           for item in caught)
+assert any(
+    "frame 0" in str(item.message) and "charge" in str(item.message) for item in caught
+)
 assert all(issubclass(item.category, oxyz.SchemaWarning) for item in caught)
 ```
 
@@ -192,8 +191,7 @@ rules. Present data must still have the declared kind and width or shape.
 
 ```python title="Preserve absence rather than manufacturing a value"
 omit_spec = oxyz.SchemaSpec(
-    columns=(oxyz.ColumnRule("charge", oxyz.Kind.REAL,
-                             required=False, absent="omit"),),
+    columns=(oxyz.ColumnRule("charge", oxyz.Kind.REAL, required=False, absent="omit"),),
     mode="project",
 )
 omitted = oxyz.read(source, schema=omit_spec)
@@ -254,8 +252,7 @@ Projection needs literal names: freeze against a representative local sample.
 ```python title="Expand a pattern and check the resulting projected values"
 descriptors = Path("descriptors.extxyz")
 descriptors.write_text(
-    "1\nProperties=d_0:R:1:d_1:R:1\n0.1 0.2\n"
-    "1\nProperties=d_0:R:1\n0.3\n"
+    "1\nProperties=d_0:R:1:d_1:R:1\n0.1 0.2\n1\nProperties=d_0:R:1\n0.3\n"
 )
 pattern = oxyz.SchemaSpec(columns=(oxyz.ColumnRule("d_*", oxyz.Kind.REAL),))
 frozen = pattern.freeze(descriptors)

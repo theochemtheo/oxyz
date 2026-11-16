@@ -55,7 +55,7 @@ import oxyz
 trajectory = Path("converter.extxyz")
 header = (
     'Lattice="2 1 0 0 3 0 0 0 4" pbc="T T T" '
-    'Properties=species:S:1:pos:R:3:forces:R:3:charge:R:1 '
+    "Properties=species:S:1:pos:R:3:forces:R:3:charge:R:1 "
     'stress="1 0 0 0 2 0 0 0 3" '
 )
 trajectory.write_text(
@@ -121,7 +121,11 @@ for atoms, reference in zip(images, reference_atoms, strict=True):
     assert atoms.info["REF_energy"] == reference.info["REF_energy"]
 
 assert images[0].numbers.tolist() == [1, 8]
-assert images[0].cell.array.tolist() == [[2.0, 1.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 4.0]]
+assert images[0].cell.array.tolist() == [
+    [2.0, 1.0, 0.0],
+    [0.0, 3.0, 0.0],
+    [0.0, 0.0, 4.0],
+]
 assert images[0].get_potential_energy() == -1.5
 assert images[0].get_forces().tolist() == [[0.25, 0.0, 0.0], [-0.25, 0.0, 0.0]]
 assert images[0].get_stress().tolist() == [1.0, 2.0, 3.0, 0.0, 0.0, 0.0]
@@ -216,11 +220,18 @@ assert systems[0].cell.tolist() == images[0].cell.array.tolist()
 assert systems[0].pbc.tolist() == [True, True, True]
 assert systems[0].types.dtype == torch.int32
 assert systems[0].positions.device == cpu
-assert [system.positions.shape[0] for system in oxyz.metatomic.iread(trajectory)] == [2, 1]
+assert [system.positions.shape[0] for system in oxyz.metatomic.iread(trajectory)] == [
+    2,
+    1,
+]
 
 differentiable = oxyz.metatomic.read(
-    trajectory, 0, dtype=torch.float32, device=cpu,
-    positions_requires_grad=True, cell_requires_grad=True,
+    trajectory,
+    0,
+    dtype=torch.float32,
+    device=cpu,
+    positions_requires_grad=True,
+    cell_requires_grad=True,
 )
 assert differentiable.positions.dtype == torch.float32
 assert differentiable.positions.requires_grad
@@ -251,18 +262,22 @@ the tensor. Scalar metadata has shape `(n_frames,)`, not `(n_frames, 1)`.
 source = oxyz.metatomic.SystemSource(trajectory)
 assert len(source) == 2
 cached_systems = source.systems(dtype=torch.float64, device=cpu)
-torch.testing.assert_close(cached_systems[0].positions, systems[0].positions, rtol=0, atol=0)
+torch.testing.assert_close(
+    cached_systems[0].positions, systems[0].positions, rtol=0, atol=0
+)
 energy = source.per_config("energy", dtype=torch.float64, device=cpu)
 forces, offsets = source.per_atom("forces", dtype=torch.float64, device=cpu)
 assert energy.shape == (2,)
 assert energy.tolist() == [-1.5, -0.5]
 assert forces.shape == (3, 3)
 assert offsets.tolist() == [0, 2, 3]
-np.testing.assert_array_equal(energy.numpy(), [a.get_potential_energy() for a in reference_atoms])
+np.testing.assert_array_equal(
+    energy.numpy(), [a.get_potential_energy() for a in reference_atoms]
+)
 np.testing.assert_array_equal(
     forces.numpy(), np.concatenate([a.get_forces() for a in reference_atoms])
 )
-assert forces[offsets[1]:offsets[2]].tolist() == [[0.0, 0.5, 0.0]]
+assert forces[offsets[1] : offsets[2]].tolist() == [[0.0, 0.5, 0.0]]
 assert source.per_config("REF_energy").tolist() == [-2.0, -0.75]
 stored_stress = source.per_config("stress", dtype=torch.float64)
 assert stored_stress.shape == (2, 9)
@@ -315,7 +330,9 @@ for field in ("positions", "cell", "masses", "atomic_numbers", "system_idx", "pb
         getattr(state, field), getattr(reference_state, field), rtol=0, atol=0
     )
 np.testing.assert_array_equal(state.cell[0].numpy(), images[0].cell.array.T)
-np.testing.assert_allclose(state.masses.numpy(), [1.008, 15.999, 1.008], rtol=0, atol=1e-12)
+np.testing.assert_allclose(
+    state.masses.numpy(), [1.008, 15.999, 1.008], rtol=0, atol=1e-12
+)
 assert oxyz.torch_sim.read(trajectory).positions.dtype == torch.float64
 single_state = oxyz.torch_sim.read(trajectory, -1)
 assert single_state.n_systems == 1
@@ -335,8 +352,7 @@ atom; this is not an isotope inference step.
 ```python title="Override standard atomic weights explicitly"
 isotopes = Path("custom-masses.extxyz")
 isotopes.write_text(
-    "2\nProperties=species:S:1:pos:R:3:masses:R:1\n"
-    "H 0 0 0 2.5\nO 1 0 0 18\n"
+    "2\nProperties=species:S:1:pos:R:3:masses:R:1\nH 0 0 0 2.5\nO 1 0 0 18\n"
 )
 custom_state = oxyz.torch_sim.read(isotopes)
 custom_reference = atoms_to_state(ase.io.read(isotopes, index=":"))
@@ -356,8 +372,12 @@ calculator-result routing. Keys must exist and values must be numeric/boolean;
 
 ```python title="Attach targets and stream fixed-size states"
 labelled_state = oxyz.torch_sim.read(
-    trajectory, dtype=torch.float32, device=cpu, positions_requires_grad=True,
-    system_extras={"energy": "REF_energy"}, atom_extras={"forces": "forces"},
+    trajectory,
+    dtype=torch.float32,
+    device=cpu,
+    positions_requires_grad=True,
+    system_extras={"energy": "REF_energy"},
+    atom_extras={"forces": "forces"},
 )
 assert labelled_state.positions.dtype == torch.float32
 assert labelled_state.positions.device == cpu
@@ -365,7 +385,11 @@ assert labelled_state.positions.requires_grad
 assert labelled_state.energy.shape == (2,)
 assert labelled_state.energy.tolist() == [-2.0, -0.75]
 assert labelled_state.forces.shape == (3, 3)
-assert labelled_state.forces.tolist() == [[0.25, 0.0, 0.0], [-0.25, 0.0, 0.0], [0.0, 0.5, 0.0]]
+assert labelled_state.forces.tolist() == [
+    [0.25, 0.0, 0.0],
+    [-0.25, 0.0, 0.0],
+    [0.0, 0.5, 0.0],
+]
 states = list(oxyz.torch_sim.iread(trajectory, frames_per_batch=1))
 assert [item.n_systems for item in states] == [1, 1]
 assert [item.positions.shape for item in states] == [(2, 3), (1, 3)]

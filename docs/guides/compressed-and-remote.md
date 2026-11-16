@@ -96,7 +96,10 @@ for path in ["runs.zip", "runs.tar.gz"]:
     joined = oxyz.read(path, member="*")
     assert joined == frames
     assert [frame.metadata["energy"] for frame in joined] == [-1.5, -2.5]
-    assert [frame.metadata["energy"] for frame in oxyz.iread(path, member="*")] == [-1.5, -2.5]
+    assert [frame.metadata["energy"] for frame in oxyz.iread(path, member="*")] == [
+        -1.5,
+        -2.5,
+    ]
     assert oxyz.scan(path, member="*").n_frames == 2
     try:
         oxyz.read(path)

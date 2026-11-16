@@ -37,7 +37,7 @@ assert index.n_atoms.tolist() == [1, 2]
 assert index.total_atoms == 3
 assert index.volumes is None
 raw = source.read_bytes()
-assert [raw[int(offset):].splitlines()[0] for offset in index.offsets] == [b"1", b"2"]
+assert [raw[int(offset) :].splitlines()[0] for offset in index.offsets] == [b"1", b"2"]
 try:
     oxyz.infer_schema(source)
 except oxyz.ParseError as error:

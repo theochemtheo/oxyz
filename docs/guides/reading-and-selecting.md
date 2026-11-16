@@ -48,7 +48,7 @@ The default `":"` selects all frames. Slice stops are exclusive; omitted
 bounds and negative bounds have Python slice semantics. Explicit index
 sequences accept non-negative indices and preserve order and repetition.
 
-```python title="Select frames and preserve request order" linenums="1" hl_lines="3-6 14-17"
+```python title="Select frames and preserve request order" linenums="1" hl_lines="3-6 18-21"
 import oxyz
 
 first = oxyz.read(trajectory, 0)
@@ -61,7 +61,11 @@ one = oxyz.read(trajectory, slice(0, 1))
 assert isinstance(one, list) and len(one) == 1
 assert one[0] == first
 assert [f.metadata["energy"] for f in oxyz.read(trajectory, "0:3:2")] == [-2.5, -7.5]
-assert [f.metadata["energy"] for f in oxyz.read(trajectory, "::-1")] == [-7.5, -4.0, -2.5]
+assert [f.metadata["energy"] for f in oxyz.read(trajectory, "::-1")] == [
+    -7.5,
+    -4.0,
+    -2.5,
+]
 picked = oxyz.read(trajectory, [2, 0, 2])
 assert [f.columns["species"] for f in picked] == [["Ne"], ["He"], ["Ne"]]
 assert picked[0] == picked[2]

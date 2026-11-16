@@ -139,7 +139,7 @@ import oxyz.ase
 
 path = Path("ase-boundary.extxyz")
 path.write_text(
-    '1\nProperties=species:S:1:pos:R:3 '
+    "1\nProperties=species:S:1:pos:R:3 "
     'Lattice="2 1 0 0 3 0 0 0 4" stress="1 2 3 4 5 6" '
     'virial="1 2 3 4 5 6 7 8 9"\nSi 0.5 0.25 0\n'
 )

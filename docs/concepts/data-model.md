@@ -166,10 +166,12 @@ import numpy as np
 from numpy.typing import NDArray
 import oxyz
 
+
 class Geometry(oxyz.Record):
     coordinates: oxyz.Column[NDArray[np.float64]] = oxyz.Column("pos", width=3)
     labels: oxyz.Column[list[str]] = oxyz.Column("species")
     energy: oxyz.Meta[float] = oxyz.Meta()
+
 
 record = Geometry.from_frame(frame)
 assert record.coordinates.shape == (1, 3)

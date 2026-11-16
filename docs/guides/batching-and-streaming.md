@@ -104,9 +104,7 @@ oversized = list(oxyz.iread_batch(trajectory, atoms_per_batch=2))
 assert [part.frame_indices.tolist() for part in oversized] == [[0], [1], [2]]
 assert oversized[-1].total_atoms == 3
 
-bins = list(oxyz.iread_batch(
-    trajectory, memory_scales_with="n_atoms", max_scaler=3
-))
+bins = list(oxyz.iread_batch(trajectory, memory_scales_with="n_atoms", max_scaler=3))
 assert [part.frame_indices.tolist() for part in bins] == [[2], [0, 1]]
 np.testing.assert_array_equal(bins[1]["pos"][:, 0], [0.25, 0.75, 1.5])
 ```
@@ -135,12 +133,12 @@ energies are frame-major, and provenance remains available after shuffling.
 import numpy as np
 import oxyz
 
-serial = list(oxyz.iread_batch(
-    trajectory, atoms_per_batch=3, shuffle=True, seed=7, threads=1
-))
-parallel = list(oxyz.iread_batch(
-    trajectory, atoms_per_batch=3, shuffle=True, seed=7, threads=2
-))
+serial = list(
+    oxyz.iread_batch(trajectory, atoms_per_batch=3, shuffle=True, seed=7, threads=1)
+)
+parallel = list(
+    oxyz.iread_batch(trajectory, atoms_per_batch=3, shuffle=True, seed=7, threads=2)
+)
 assert serial == parallel
 seen = []
 energies_by_file = np.empty(3)

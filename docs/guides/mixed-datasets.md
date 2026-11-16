@@ -102,13 +102,13 @@ assert selected.where(Bare, Charged).all()
 assert not selected.where().any()
 assert oxyz.read(source, [2, 0], record=Sample) == [records[2], records[0]]
 
-windows = list(
-    oxyz.iread_batch(source, record=RecordBatch[Sample], frames_per_batch=2)
-)
+windows = list(oxyz.iread_batch(source, record=RecordBatch[Sample], frames_per_batch=2))
 assert [w.frame_indices.tolist() for w in windows] == [[0, 1], [2]]
 assert [type(r) for w in windows for r in w] == [Bare, Charged, Charged]
 assert [bool(p) for w in windows for p in w.present(Charged.charge)] == [
-    False, True, True
+    False,
+    True,
+    True,
 ]
 ```
 
