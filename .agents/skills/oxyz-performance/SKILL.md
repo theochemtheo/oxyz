@@ -44,8 +44,8 @@ store comparisons build 100,000 × 64-atom datasets and large derived stores.
 Do not run the full suite, download real data or generate multi-GB stores by
 default. Missing ignored real data is a skip, not measured coverage.
 
-`run.py` has an independent PEP 723 environment below Python 3.14 for comparison
-wheels; its conftest rejects debug extensions. A small fixture-shape smoke with
+`run.py` has an independent PEP 723 environment with pinned comparison parsers;
+its conftest rejects debug extensions. A small fixture-shape smoke with
 `--benchmark-disable` is not a parser timing. Use [run-oxyz](../run-oxyz/SKILL.md)
 for routine builds rather than changing runtime dependencies for benchmarks.
 

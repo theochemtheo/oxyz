@@ -50,6 +50,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Benchmark plots use website fonts, call-expression labels and output-matched
   comparisons, with compact measurement provenance. The published snapshot
   covers MAD full reads and dataset-size scaling.
+- Benchmark comparisons pin extxyz 0.4.6 and ase-extxyz 0.1.2.
 
 ## [1.3.1] - 2026-11-13
 

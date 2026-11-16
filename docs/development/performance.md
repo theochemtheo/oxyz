@@ -35,8 +35,8 @@ cargo bench -p oxyz-core --bench parse
 The first command is a small fixture smoke, not a timing result. The full suite
 can generate large stores and fixtures; select the relevant cases before
 running it. `benchmarks/run.py` uses a separate PEP 723 environment with its own
-Python constraint and comparison libraries. It currently resolves a supported
-interpreter below Python 3.14 because some comparison parsers lack 3.14 wheels.
+Python constraint and comparison libraries. Parser versions are pinned in the
+script; the saved run records the interpreter and all resolved package versions.
 It builds this checkout in release mode. The benchmark conftest rejects a debug
 extension because debug timing is misleading.
 

@@ -5,8 +5,8 @@
 #     "pytest>=9",
 #     "pytest-benchmark>=5.2",
 #     "ase>=3.28,<4",
-#     "extxyz>=0.4",
-#     "ase-extxyz>=0.1",
+#     "extxyz==0.4.6",
+#     "ase-extxyz==0.1.2",
 #     "atompack-db>=0.4",
 #     "lmdb>=1.4",
 #     "torch>=2",
@@ -27,9 +27,8 @@
 # ///
 """Run the benchmark suite in its own environment.
 
-The inline metadata pins CPython 3.13, as cextxyz and ase-extxyz publish no
-3.14 wheels, and builds this checkout's oxyz in release. Arguments pass
-through to pytest:
+The independent environment builds this checkout's oxyz in release. Arguments
+pass through to pytest:
 
     uv run benchmarks/run.py --benchmark-autosave    # record a run
     uv run benchmarks/run.py --benchmark-disable     # smoke test
