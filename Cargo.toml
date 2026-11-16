@@ -9,6 +9,7 @@ resolver = "2"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/theochemtheo/oxyz"
 
 # Line tables let samply attribute samples; no codegen change.
 [profile.release]
