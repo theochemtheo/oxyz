@@ -9,3 +9,5 @@
 *.zst binary
 *.zip binary
 *.tar binary
+
+docs/** linguist-documentation
