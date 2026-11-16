@@ -1,0 +1,84 @@
+[project]
+site_name = "oxyz"
+site_url = "https://theochemtheo.github.io/oxyz/"
+repo_url = "https://github.com/theochemtheo/oxyz"
+repo_name = "theochemtheo/oxyz"
+docs_dir = "docs"
+site_dir = "site"
+dev_addr = "127.0.0.1:8000"
+exclude_docs = "/superpowers/"
+watch = ["CHANGELOG.md", "benchmarks/RESULTS.md", "benchmarks/ENVIRONMENT.md"]
+extra_css = ["stylesheets/glacier.css"]
+nav = [
+  { "Home" = "index.md" },
+  { "Changelog" = "changelog.md" },
+  { "Getting started" = "getting-started.md" },
+  { "Performance" = "performance.md" },
+  { "Guides" = [
+    { "Reading and selecting" = "guides/reading-and-selecting.md" },
+    { "Batching and streaming" = "guides/batching-and-streaming.md" },
+    { "Writing" = "guides/writing.md" },
+    { "Schemas and projection" = "guides/schemas-and-projection.md" },
+    { "Typed records" = "guides/typed-records.md" },
+    { "Mixed datasets" = "guides/mixed-datasets.md" },
+    { "Compressed and remote" = "guides/compressed-and-remote.md" },
+    { "Converters" = "guides/converters.md" },
+    { "Command line" = "guides/command-line.md" },
+  ] },
+  { "Concepts" = [
+    { "Data model" = "concepts/data-model.md" },
+    { "Schemas" = "concepts/schemas.md" },
+    { "Storage and streaming" = "concepts/storage-and-streaming.md" },
+  ] },
+  { "Reference" = [
+    { "API" = "reference/api.md" },
+    { "Extended XYZ" = "reference/extxyz.md" },
+    { "Compatibility" = "reference/compatibility.md" },
+    { "Errors" = "reference/errors.md" },
+    { "Benchmark results" = "reference/benchmarks.md" },
+  ] },
+  { "Development" = [
+    { "Overview" = "development/index.md" },
+    { "Architecture" = "development/architecture.md" },
+    { "Testing" = "development/testing.md" },
+    { "Performance" = "development/performance.md" },
+    { "Writing documentation" = "development/documentation.md" },
+    { "Accepted decisions" = [
+      { "Overview" = "development/decisions/index.md" },
+      { "Lossless core and layering" = "development/decisions/lossless-core-and-layering.md" },
+      { "Schemas and projection" = "development/decisions/schemas-and-projection.md" },
+      { "Typed records and unions" = "development/decisions/typed-records-and-unions.md" },
+      { "Optional output targets" = "development/decisions/optional-output-targets.md" },
+    ] },
+  ] },
+]
+
+[project.theme]
+variant = "modern"
+font = false
+language = "en"
+features = [
+  "content.code.copy",
+  "content.tabs.link",
+  "navigation.footer",
+  "navigation.top",
+  "search.highlight",
+  "toc.follow",
+]
+
+[[project.theme.palette]]
+scheme = "slate"
+primary = "custom"
+accent = "custom"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+[[project.theme.palette]]
+scheme = "default"
+primary = "custom"
+accent = "custom"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[project.plugins.include-markdown]
+include_from_url = false

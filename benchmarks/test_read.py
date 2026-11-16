@@ -15,9 +15,9 @@ import importlib.util
 from pathlib import Path
 
 import pytest
+from benchmarks.conftest import MAD_N_FRAMES
 
 import oxyz
-from conftest import MAD_N_FRAMES
 
 needs_ase = pytest.mark.skipif(
     importlib.util.find_spec("ase") is None, reason="ase not installed"
@@ -25,13 +25,13 @@ needs_ase = pytest.mark.skipif(
 
 needs_cextxyz = pytest.mark.skipif(
     importlib.util.find_spec("extxyz") is None,
-    reason="libAtoms extxyz not installed (no CPython 3.14 wheels)",
+    reason="libAtoms extxyz not installed",
 )
 
 needs_ase_extxyz = pytest.mark.skipif(
     importlib.util.find_spec("ase_extxyz") is None
     or importlib.util.find_spec("ase") is None,
-    reason="ase-extxyz not installed (no CPython 3.14 wheels)",
+    reason="ase-extxyz not installed",
 )
 
 
@@ -176,7 +176,7 @@ def ase_read_first(path: Path) -> object:
 
 @row("numpy frames", "serial")
 def cextxyz_read_all(path: Path) -> list:
-    # No 3.14 wheels, so unresolvable for ty.
+    # Comparison parsers live in the independent benchmark environment.
     from extxyz import read_dicts  # ty: ignore[import-not-found]
 
     frames = read_dicts(str(path))

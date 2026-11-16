@@ -1,0 +1,3 @@
+interface:
+  display_name: "oxyz performance"
+  short_description: "Profiling, benchmark selection, allocations and evidence"

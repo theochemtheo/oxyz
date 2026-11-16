@@ -18,6 +18,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Schema rules take `absent: omit`: under project mode an absent optional
   field is left out of the frame instead of filled. Its type is exported as
   `oxyz.Absent`.
+- Executable README, guide and source-docstring examples checked by default with
+  pytest, covering schemas, typed records, compressed/remote sources, converters
+  and command-line workflows, with a local preview and guarded GitHub Pages
+  deployment.
+- Portable repository skills for API selection, development and execution, with
+  a local smoke tour covering typed records, union batches and optional converters.
+- Performance documentation with real-dataset and scaling figures, corresponding
+  benchmark tables and an archived measurement snapshot for regeneration.
 
 ### Changed
 
@@ -31,6 +39,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   member.
 - Union batch reads report projection errors and unmatched frames in requested
   frame order, independent of batch size.
+- Documentation examples collect correctly when the checkout path contains a
+  symbolic link.
 - Record fields named `cls` or `self` work in conversions, batch construction
   and indexing.
 - Batches with unsigned offsets support per-atom frame ids and reordered gathers.
@@ -40,6 +50,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Internal
 
 - ty floor raised to 0.0.100.
+- Benchmark plots use website fonts, call-expression labels and output-matched
+  comparisons, with compact measurement provenance. The published snapshot
+  covers MAD full reads and dataset-size scaling.
+- Benchmark comparisons pin extxyz 0.4.6 and ase-extxyz 0.1.2.
 
 ## [1.3.1] - 2026-11-13
 
@@ -294,7 +308,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   in the test corpus, guarding that real, chemically diverse data — 98 elements
   across molecules, clusters, bulk, surfaces and low-dimensional structures,
   drawn from a 102-element dataset — parses.
-- An [`examples/`](examples/) directory of runnable, self-contained snippets —
+- An [`examples/`](https://github.com/theochemtheo/oxyz/tree/main/examples)
+  directory of runnable, self-contained snippets —
   scanning and schema inference, reading to numpy, atom-budgeted batching,
   schema projection, the ASE drop-in, the PyTorch targets, and a write
   round-trip — each executed in CI against a committed sample.
@@ -312,7 +327,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   changed; the API and output are unchanged. On the reference corpus fixture the
   core read is ~28% faster serial and ~42% faster on 12 threads (thread scaling
   2.7×→3.3×); end-to-end `oxyz.read` is ~17–19% faster. See
-  [benchmarks/RESULTS.md](benchmarks/RESULTS.md).
+  [benchmarks/RESULTS.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/RESULTS.md).
 
 ### Dependencies
 
@@ -397,7 +412,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   stay unified with the version the `numpy` crate builds against.
 - Benchmarks now cover the full MAD-1.5 r²SCAN training set (303.5 MiB,
   180,184 frames) alongside the generated fixtures; see
-  [benchmarks/RESULTS.md](benchmarks/RESULTS.md).
+  [benchmarks/RESULTS.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/RESULTS.md).
 
 ## [0.5.0] - 2026-07-03
 
@@ -514,7 +529,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 A performance release: faster reads across the board, no API changes. Numbers
 are means on an Apple M3 Pro under CPython 3.13; full tables are in
-[benchmarks/RESULTS.md](benchmarks/RESULTS.md).
+[benchmarks/RESULTS.md](https://github.com/theochemtheo/oxyz/blob/main/benchmarks/RESULTS.md).
 
 ### Performance
 

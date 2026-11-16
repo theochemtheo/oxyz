@@ -1,0 +1,3 @@
+interface:
+  display_name: "oxyz records"
+  short_description: "Typed records, sibling unions, batch views and presence"

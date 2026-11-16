@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 
 import pytest
+from benchmarks import conftest
 from test_read import (
     needs_ase,
     needs_ase_extxyz,
@@ -19,7 +20,6 @@ from test_read import (
     run,
 )
 
-import conftest
 import oxyz
 
 # Caps the far slower competitors to keep a full run within budget.

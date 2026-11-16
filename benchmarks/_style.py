@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import seaborn as sns
@@ -72,19 +73,28 @@ ALL_CORE_LABELS = {
 }
 
 READER_LABELS = {
-    "oxyz-serial": "oxyz.read(threads=1)",
-    "oxyz-to-ase-serial": "oxyz.ase.read(threads=1)",
-    "ase": 'ase.io.read(format="extxyz")',
-    "cextxyz": "extxyz.read_dicts",
-    "cextxyz-to-ase": 'ase.io.read(format="cextxyz")',
+    "oxyz-serial": "oxyz.read(..., threads=1)",
+    "oxyz-iter": "list(oxyz.iread(...))",
+    "oxyz-to-ase-serial": "oxyz.ase.read(..., threads=1)",
+    "ase": 'ase.io.read(..., format="extxyz")',
+    "cextxyz": "extxyz.read_dicts(...)",
+    "cextxyz-to-ase": 'ase.io.read(..., format="cextxyz")',
 }
 
 
-def reader_label(reader: str, ncores: int | None = None) -> str:
-    """The function-call label for a reader in a scaling legend."""
+def reader_label(
+    reader: str, ncores: int | None = None, *, threads: int | None = None
+) -> str:
+    """Label the timed call with its recorded thread setting."""
+    suffix = re.search(r"-(\d+)t$", reader)
+    if suffix:
+        reader = reader[: suffix.start()]
+        if threads is None:
+            threads = int(suffix[1])
     call = ALL_CORE_LABELS.get(reader)
     if call is not None:
-        return f"{call}(threads={ncores})" if ncores else f"{call}()"
+        count = threads if threads is not None else ncores
+        return f"{call}(..., threads={count})" if count else f"{call}(...)"
     return READER_LABELS.get(reader, reader)
 
 

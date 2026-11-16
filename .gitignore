@@ -22,6 +22,10 @@ htmlcov/
 coverage/
 *.profraw
 
+# Local documentation preview output
+/site/
+/.cache/
+
 # Rust
 target/
 
@@ -35,7 +39,8 @@ target/
 .DS_Store
 
 # agents
-.claude
+/.claude/*
+!/.claude/skills
 .codex
 
 # local planning notes and design specs, never committed

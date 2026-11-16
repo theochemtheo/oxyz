@@ -4,6 +4,12 @@ Onboarding for coding agents working in this repo: what oxyz is, how it is
 laid out, and the loop and gates a change goes through. A concise guide, not
 an exhaustive manual.
 
+Start with the committed [API/task router](.agents/skills/oxyz/SKILL.md).
+[Development discipline](.agents/skills/develop-oxyz/SKILL.md) and
+[run/test mechanics](.agents/skills/run-oxyz/SKILL.md) link to the public guides,
+owners and checks. Canonical skills live in `.agents/skills/`;
+`.claude/skills` is a relative discovery symlink, not local configuration.
+
 ## What oxyz is
 
 `oxyz` is a Rust+Python extxyz reader/writer, aiming to be:
@@ -39,6 +45,7 @@ compile; later runs are instant.
 
 ```sh
 uv run python -c "import oxyz"                                   # build + import
+uv run python .agents/skills/run-oxyz/driver.py                    # local smoke tour
 uv run pytest -q                                                  # Python suite
 cargo test -p oxyz-core -q                                        # Rust core suite
 cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -79,6 +86,10 @@ Match the test to the promise:
 - Rust `///` docs: a summary line, then the contract where it isn't obvious.
   Not teaching material.
 - This applies to config, CI, and scripts as well as source.
+
+Durable architectural rationale belongs in the public
+[accepted decisions](docs/development/decisions/index.md); follow its status and
+supersession convention. Private notes are not required onboarding material.
 
 ## Gates before a PR
 

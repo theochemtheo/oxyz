@@ -1,0 +1,3 @@
+interface:
+  display_name: "oxyz core"
+  short_description: "Rust parser, writer, indexing and serial/parallel parity"

@@ -13,6 +13,11 @@ repo = "builtin"
 [[repos.hooks]]
 id = "trailing-whitespace"
 stages = ["pre-commit"]
+# Preserve the vendored licence bytes.
+exclude = { glob = [
+  "docs/fonts/atkinson/OFL.txt",
+  "docs/fonts/iosevka/LICENSE.md",
+] }
 
 [[repos.hooks]]
 id = "end-of-file-fixer"
@@ -37,6 +42,8 @@ stages = ["pre-commit"]
 [[repos.hooks]]
 id = "check-added-large-files"
 stages = ["pre-commit"]
+# Keep the selected font distributions unmodified.
+exclude = { glob = ["docs/fonts/iosevka/Iosevka-*.woff2"] }
 
 
 [[repos]]
