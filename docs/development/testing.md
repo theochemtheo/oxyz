@@ -58,9 +58,8 @@ optional converters through the root hook.
 Sybil replaces pytest's built-in doctest plugin. Public Markdown and package
 docstrings use the isolated namespace/workdir contract described in
 [writing documentation](documentation.md). New examples need visible imports and
-inputs; shell fences are not executable coverage. README conversion/default
-collection is still pending, so current default collection covers `tests`,
-`src/oxyz` and `docs`.
+inputs; shell fences are not executable coverage. Default collection covers
+`tests`, `src/oxyz`, `docs` and `README.md`.
 
 [`scripts/coverage.sh`](https://github.com/theochemtheo/oxyz/blob/main/scripts/coverage.sh)
 uses `cargo llvm-cov` and an instrumented extension to combine Rust and Python
@@ -69,6 +68,10 @@ it runs default pytest collection with `--no-sync` to retain instrumentation.
 Do not bypass ordinary uv rebuilding for routine tests: this is an explicit
 coverage-only build workflow. Coverage outputs live under `coverage/` and
 `htmlcov/`, and the script enforces its configured floors.
+
+Coverage cleanup warnings are fatal. CI uses separate Cargo and uv caches for
+coverage and initialises Cargo's cache marker before the first extension build.
+An existing unmarked target directory is not retagged to bypass safe cleanup.
 
 ## Before a pull request
 
