@@ -43,12 +43,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           components: clippy, rustfmt
+      # rust-cache keys omit the runner image, whose system libraries build scripts probe.
+      - run: echo "IMAGE_OS=$ImageOS" >> "$GITHUB_ENV"
+        shell: bash
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ env.IMAGE_OS }}
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.13.0"
           cache-suffix: pre-push
       - run: uv sync --extra ase
+      # A versioned interpreter path makes pyo3 rerun its build script when Python changes.
+      - run: echo "PYO3_PYTHON=$(uv run --no-sync python -c 'import sys; print(sys._base_executable)')" >> "$GITHUB_ENV"
       - run: uv run prek run --hook-stage pre-push --all-files
 
   rust:
@@ -64,7 +71,11 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - run: echo "IMAGE_OS=$ImageOS" >> "$GITHUB_ENV"
+        shell: bash
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ env.IMAGE_OS }}
       # oxyz-py has no Rust tests; its test binary links the runner's libpython.
       - run: cargo test --workspace --exclude oxyz-py
 
@@ -83,7 +94,11 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - run: echo "IMAGE_OS=$ImageOS" >> "$GITHUB_ENV"
+        shell: bash
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ env.IMAGE_OS }}
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.13.0"
@@ -105,7 +120,11 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - run: echo "IMAGE_OS=$ImageOS" >> "$GITHUB_ENV"
+        shell: bash
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ env.IMAGE_OS }}
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.13.0"
@@ -182,9 +201,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           components: llvm-tools-preview
+      - run: echo "IMAGE_OS=$ImageOS" >> "$GITHUB_ENV"
+        shell: bash
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: tagged-target
+          key: tagged-target-${{ env.IMAGE_OS }}
       # Cargo skips its marker when a build tool creates target first.
       - name: Initialize Cargo target directory
         run: |
