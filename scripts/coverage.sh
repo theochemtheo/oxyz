@@ -26,7 +26,7 @@ restore_build() {
 trap restore_build EXIT
 
 CARGO_LLVM_COV_DENY_WARNINGS=1 cargo llvm-cov clean --workspace
-cargo test --workspace
+cargo test --workspace --exclude oxyz-py
 uv run --no-sync maturin develop
 uv run --no-sync pytest --cov=oxyz --cov-report=html --cov-report=lcov --cov-report=term-missing
 uv run --no-sync coverage report --format=markdown > coverage/python.md

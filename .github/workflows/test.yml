@@ -65,7 +65,8 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: cargo test --workspace
+      # oxyz-py has no Rust tests; its test binary links the runner's libpython.
+      - run: cargo test --workspace --exclude oxyz-py
 
   python:
     strategy:
