@@ -35,8 +35,10 @@ artifact from the same workflow run and generate one SLSA bundle per file,
 without executing project code or artifact contents. An unprivileged job
 converts the bundles with `scripts/pypi_slsa_attestation.py`, whose dependencies
 are locked in its adjacent `.lock` file. Conversion verifies the signature,
-repository, workflow, filename, digest, and single-subject SLSA statement before
-preparing anything for publication.
+repository, workflow, filename, digest, and single-subject SLSA statement, and
+that every distribution has exactly one bundle, before preparing anything for
+publication. Each kind of wheel a build job produces needs its own entry in the
+`attest` matrix.
 
 The protected PyPI job only downloads those prepared files and runs
 `pypa/gh-action-pypi-publish`, which generates publish attestations and uploads
