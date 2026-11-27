@@ -12,6 +12,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   importing oxyz leaves the GIL disabled. Separate threads may read and write
   concurrently; each iterator and `Writer` belongs to one thread at a time.
 
+### Fixed
+
+- Comparing two `Schema` or `FrameIndex` objects with `==` no longer raises
+  `ValueError` for a file of more than one frame, and `FrameIndex` volumes
+  that are NaN now compare equal. Both are unhashable, as `Frame` is.
+
 ## [1.4.0] - 2026-11-18
 
 ### Added

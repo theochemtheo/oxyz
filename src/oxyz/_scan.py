@@ -14,8 +14,8 @@ if TYPE_CHECKING:
     from oxyz._frames import Compression
 
 
-@dataclass(frozen=True, slots=True)
-class FrameIndex(AtomCountStats):
+@dataclass(frozen=True, slots=True, eq=False)
+class FrameIndex(AtomCountStats):  # noqa: PLW1641  holds arrays, so unhashable
     """Structural facts from a scan: frame offsets and declared atom counts.
 
     All statistics are None for an empty file; `std_atoms` is the population
@@ -35,6 +35,16 @@ class FrameIndex(AtomCountStats):
     offsets: np.ndarray
     n_atoms: np.ndarray
     volumes: np.ndarray | None = None
+
+    def __eq__(self, other: object) -> bool:
+        """Compare offsets, atom counts and volumes; NaN volumes compare equal."""
+        if not isinstance(other, FrameIndex):
+            return NotImplemented
+        return (
+            _summary.values_equal(self.offsets, other.offsets)
+            and _summary.values_equal(self.n_atoms, other.n_atoms)
+            and _summary.values_equal(self.volumes, other.volumes)
+        )
 
     def __repr__(self) -> str:
         """Summarise the counts without printing the per-frame arrays."""

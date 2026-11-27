@@ -258,6 +258,9 @@ Equality returns one boolean rather than NumPy's elementwise result:
 - Records require the same concrete record class, atom count and field values.
 - Record batches require the same concrete batch class, layout, field values,
   presence masks and member tags.
+- Schemas compare their counts, per-frame atom counts and every column and
+  metadata entry. Frame indices from `scan` compare offsets, atom counts and
+  volumes.
 
 NaN compares equal to NaN in corresponding positions. These mutable-value
 containers are unhashable: do not use them as dictionary keys or set members.

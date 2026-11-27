@@ -185,6 +185,34 @@ def test_scan_volume_is_nan_without_lattice() -> None:
     assert np.isnan(index.volumes).all()
 
 
+def test_scans_of_the_same_multi_frame_file_are_equal() -> None:
+    path = DATA_DIR / "varying_atom_counts.xyz"
+
+    assert oxyz.scan(path) == oxyz.scan(path)
+
+
+def test_scans_with_nan_volumes_are_equal() -> None:
+    path = DATA_DIR / "no_lattice_molecule.xyz"
+
+    assert oxyz.scan(path, with_volume=True) == oxyz.scan(path, with_volume=True)
+
+
+def test_scans_differing_in_any_array_are_unequal() -> None:
+    varying = oxyz.scan(DATA_DIR / "varying_atom_counts.xyz")
+    reversed_counts = oxyz.FrameIndex(varying.offsets, varying.n_atoms[::-1])
+    shifted_offsets = oxyz.FrameIndex(varying.offsets + 1, varying.n_atoms)
+    density = DATA_DIR / "varying_density.extxyz"
+
+    assert varying != reversed_counts
+    assert varying != shifted_offsets
+    assert oxyz.scan(density) != oxyz.scan(density, with_volume=True)
+
+
+def test_frame_indices_are_unhashable() -> None:
+    with pytest.raises(TypeError, match="unhashable type: 'FrameIndex'"):
+        hash(oxyz.scan(DATA_DIR / "varying_atom_counts.xyz"))
+
+
 def test_scan_rejects_structural_garbage(tmp_path: Path) -> None:
     text = (DATA_DIR / "varying_atom_counts.xyz").read_text()
     broken = tmp_path / "broken.xyz"

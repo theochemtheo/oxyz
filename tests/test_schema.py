@@ -176,3 +176,35 @@ def test_duplicate_metadata_key_counts_once(tmp_path: Path) -> None:
     assert energy.frames_present == 1
     assert energy.variants == (MetadataVariant(Kind.REAL, (), 1),)
     assert schema.is_consistent
+
+
+ONE_ATOM = "1\nProperties=species:S:1:pos:R:3 energy=-1.0\nH 0 0 0\n"
+TWO_ATOMS = "2\nProperties=species:S:1:pos:R:3 energy=-2.0\nH 0 0 0\nH 1 0 0\n"
+
+
+def test_schemas_of_the_same_multi_frame_file_are_equal(tmp_path: Path) -> None:
+    path = tmp_path / "two.xyz"
+    path.write_text(ONE_ATOM + TWO_ATOMS)
+
+    assert oxyz.infer_schema(path) == oxyz.infer_schema(path)
+
+
+def test_schemas_differing_only_in_atom_count_order_are_unequal(
+    tmp_path: Path,
+) -> None:
+    forward, backward = tmp_path / "forward.xyz", tmp_path / "backward.xyz"
+    forward.write_text(ONE_ATOM + TWO_ATOMS)
+    backward.write_text(TWO_ATOMS + ONE_ATOM)
+
+    assert oxyz.infer_schema(forward) != oxyz.infer_schema(backward)
+
+
+def test_schema_equality_against_a_non_schema_defers_to_python(
+    mixed_schema: oxyz.Schema,
+) -> None:
+    assert mixed_schema != object()
+
+
+def test_schemas_are_unhashable(mixed_schema: oxyz.Schema) -> None:
+    with pytest.raises(TypeError, match="unhashable type: 'Schema'"):
+        hash(mixed_schema)

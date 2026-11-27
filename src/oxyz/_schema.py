@@ -148,8 +148,8 @@ class MetadataSchema:
     unified: tuple[Kind, tuple[int, ...]] | None
 
 
-@dataclass(frozen=True, slots=True)
-class Schema(AtomCountStats, NameLookup[ColumnSchema, MetadataSchema]):
+@dataclass(frozen=True, slots=True, eq=False)
+class Schema(AtomCountStats, NameLookup[ColumnSchema, MetadataSchema]):  # noqa: PLW1641  holds an array, so unhashable
     """Observed structure of a dataset: columns, metadata, and consistency.
 
     `schema[name]` returns the `ColumnSchema` or `MetadataSchema` so named.
@@ -185,6 +185,21 @@ class Schema(AtomCountStats, NameLookup[ColumnSchema, MetadataSchema]):
     metadata: tuple[MetadataSchema, ...]
     is_consistent: bool
     _report: str = field(repr=False)
+
+    def __eq__(self, other: object) -> bool:
+        """Compare every observed count, column and metadata entry."""
+        if not isinstance(other, Schema):
+            return NotImplemented
+        return (
+            self.n_frames == other.n_frames
+            and self.total_atoms == other.total_atoms
+            and self.min_atoms == other.min_atoms
+            and self.max_atoms == other.max_atoms
+            and _summary.values_equal(self.n_atoms, other.n_atoms)
+            and self.columns == other.columns
+            and self.metadata == other.metadata
+            and self.is_consistent == other.is_consistent
+        )
 
     def _sides(
         self,
