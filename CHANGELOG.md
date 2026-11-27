@@ -12,11 +12,27 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   importing oxyz leaves the GIL disabled. Separate threads may read and write
   concurrently; each iterator and `Writer` belongs to one thread at a time.
 
+### Performance
+
+- Gzip reads are ~13–27% faster and gzip writes 1.7× faster in parallel and
+  3.5× faster serial, on the `read_gzip` and `write_gzip` benchmarks. Deflate
+  now uses zlib-rs instead of miniz_oxide, and the serial writer no longer
+  feeds the compressor one token at a time. Compressed bytes differ from
+  earlier releases: within 1% in size at the default level, while level 1 is
+  faster but larger (about 40% on the benchmark trajectories), as in zlib.
+  Serial, parallel and batched writes still produce identical bytes.
+
 ### Fixed
 
 - Comparing two `Schema` or `FrameIndex` objects with `==` no longer raises
   `ValueError` for a file of more than one frame, and `FrameIndex` volumes
   that are NaN now compare equal. Both are unhashable, as `Frame` is.
+
+### Internal
+
+- PyO3 0.30 and rust-numpy 0.30.
+- zip 9, ruzstd 0.9, compact_str 0.10 and criterion 0.8, with the rest of
+  the lockfile refreshed. `oxyz-core` now needs Rust 1.89.
 
 ## [1.4.0] - 2026-11-18
 

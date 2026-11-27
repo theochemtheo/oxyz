@@ -370,7 +370,7 @@ enum Inner {
 
 enum Stream {
     Plain(BufWriter<Box<dyn Write + Send + Sync>>),
-    Gzip(GzEncoder<Box<dyn Write + Send + Sync>>),
+    Gzip(Box<Blocks<GzEncoder<Box<dyn Write + Send + Sync>>>>),
 }
 
 impl FrameSink {
@@ -382,10 +382,10 @@ impl FrameSink {
         level: Option<i32>,
         append: bool,
     ) -> Result<Self> {
-        if let Some(level) = level {
-            if !(0..=9).contains(&level) {
-                return Err(ExtxyzError::InvalidCompressionLevel { level });
-            }
+        if let Some(level) = level
+            && !(0..=9).contains(&level)
+        {
+            return Err(ExtxyzError::InvalidCompressionLevel { level });
         }
 
         let codec = detect_for_write(path, compression);
@@ -419,7 +419,9 @@ impl FrameSink {
         } else {
             let raw = open_sink(path, stdout, append)?;
             Inner::Stream(match codec {
-                Codec::Gzip => Stream::Gzip(GzEncoder::new(raw, gz_level(level))),
+                Codec::Gzip => {
+                    Stream::Gzip(Box::new(Blocks::new(GzEncoder::new(raw, gz_level(level)))))
+                }
                 _ => Stream::Plain(BufWriter::new(raw)),
             })
         };
@@ -461,7 +463,7 @@ impl FrameSink {
                 Ok(())
             }
             Inner::Stream(Stream::Gzip(w)) => {
-                w.finish()?.flush()?;
+                w.into_inner()?.finish()?.flush()?;
                 Ok(())
             }
             Inner::Archive {
@@ -486,6 +488,61 @@ fn open_sink(path: &Path, stdout: bool, append: bool) -> Result<Box<dyn Write + 
         .truncate(!append)
         .open(path)?;
     Ok(Box::new(file))
+}
+
+const BLOCK: usize = 64 * 1024;
+
+/// Feeds `inner` in whole `BLOCK`-byte writes, so a compressor sees the same
+/// calls for the same bytes however the writes into it were split. Not every
+/// deflate backend's output is independent of input chunking.
+struct Blocks<W: Write> {
+    inner: W,
+    pending: Vec<u8>,
+}
+
+impl<W: Write> Blocks<W> {
+    fn new(inner: W) -> Self {
+        Blocks {
+            inner,
+            pending: Vec::with_capacity(BLOCK),
+        }
+    }
+
+    /// Write the final partial block and return `inner`.
+    fn into_inner(mut self) -> io::Result<W> {
+        self.inner.write_all(&self.pending)?;
+        Ok(self.inner)
+    }
+}
+
+impl<W: Write> Write for Blocks<W> {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        let mut rest = data;
+        if !self.pending.is_empty() {
+            let take = (BLOCK - self.pending.len()).min(rest.len());
+            self.pending.extend_from_slice(&rest[..take]);
+            rest = &rest[take..];
+            if self.pending.len() < BLOCK {
+                return Ok(data.len());
+            }
+            self.inner.write_all(&self.pending)?;
+            self.pending.clear();
+        }
+        let (blocks, remainder) = rest.as_chunks::<BLOCK>();
+        for block in blocks {
+            self.inner.write_all(block)?;
+        }
+        self.pending.extend_from_slice(remainder);
+        Ok(data.len())
+    }
+
+    /// Forwards the partial block, so a mid-stream flush gives up the
+    /// chunking guarantee for the rest of the stream.
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.write_all(&self.pending)?;
+        self.pending.clear();
+        self.inner.flush()
+    }
 }
 
 fn gz_level(level: Option<i32>) -> GzLevel {
@@ -753,5 +810,48 @@ mod tests {
         }
         let text = String::from_utf8(out).unwrap();
         assert_eq!(reparse(&text).len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    #[derive(Default)]
+    struct Recorder(Vec<Vec<u8>>);
+
+    impl Write for Recorder {
+        fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+            self.0.push(data.to_vec());
+            Ok(data.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn blocks_forward_whole_blocks_however_writes_are_split(
+            len in prop_oneof![Just(0), Just(BLOCK), Just(3 * BLOCK), 0..4 * BLOCK + 7],
+            mut cuts in prop::collection::vec(0..4 * BLOCK + 7, 0..12),
+        ) {
+            let data: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
+            cuts.push(len);
+            cuts.sort_unstable();
+
+            let mut blocks = Blocks::new(Recorder::default());
+            let mut start = 0;
+            for cut in cuts.into_iter().map(|c| c.min(len)) {
+                blocks.write_all(&data[start..cut]).unwrap();
+                start = cut;
+            }
+            let calls = blocks.into_inner().unwrap().0;
+
+            let expected: Vec<Vec<u8>> = data.chunks(BLOCK).map(<[u8]>::to_vec).collect();
+            prop_assert_eq!(calls, expected);
+        }
     }
 }

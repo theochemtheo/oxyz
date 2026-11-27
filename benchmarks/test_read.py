@@ -269,6 +269,27 @@ def test_read_all_mace_mixed(benchmark, read, mace_mixed):
     assert len(frames) == 1_000
 
 
+READ_GZIP = [
+    pytest.param(oxyz_read_all_with(t), id=f"oxyz-gz-{t}t") for t in THREAD_SWEEP
+]
+
+
+@pytest.mark.benchmark(group="read_gzip/many_small_frames")
+@pytest.mark.parametrize("read", READ_GZIP)
+def test_read_gzip_many_small_frames(
+    benchmark, read, many_small_frames, many_small_frames_gz
+):
+    frames = run(benchmark, read, many_small_frames_gz, file_shape(many_small_frames))
+    assert len(frames) == 2_000
+
+
+@pytest.mark.benchmark(group="read_gzip/large_frames")
+@pytest.mark.parametrize("read", READ_GZIP)
+def test_read_gzip_large_frames(benchmark, read, large_frames, large_frames_gz):
+    frames = run(benchmark, read, large_frames_gz, file_shape(large_frames))
+    assert len(frames) == 4
+
+
 SCHEMA_READ = [
     pytest.param(oxyz_read_all_with(None), id="baseline"),
     pytest.param(oxyz_read_all_schema_with("required"), id="schema-required"),
