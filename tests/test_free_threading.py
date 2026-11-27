@@ -25,10 +25,6 @@ def many_frames(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return path
 
 
-def _schema_parts(schema: oxyz.Schema) -> tuple[object, ...]:
-    return (schema.columns, schema.metadata, schema.n_atoms.tolist(), str(schema))
-
-
 def _workload(path: Path, out: Path, threads: int | None) -> dict[str, Any]:
     frames = oxyz.read(path, threads=threads)
     oxyz.write(out, frames, threads=threads)
@@ -37,7 +33,8 @@ def _workload(path: Path, out: Path, threads: int | None) -> dict[str, Any]:
         "streamed": list(oxyz.iread(path)),
         "batch": oxyz.read_batch(path, threads=threads),
         "batches": list(oxyz.iread_batch(path, frames_per_batch=7, threads=threads)),
-        "schema": _schema_parts(oxyz.infer_schema(path)),
+        "schema": oxyz.infer_schema(path),
+        "index": oxyz.scan(path, with_volume=True),
         "slice": oxyz.read(path, index="::3", threads=threads),
         "written": out.read_bytes(),
     }
