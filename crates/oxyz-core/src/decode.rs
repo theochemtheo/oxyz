@@ -5,6 +5,7 @@
 //! stays on raw files.
 
 use std::{
+    borrow::Cow,
     fs::File,
     io::{self, BufRead, BufReader, Cursor, Read, Seek},
     ops::ControlFlow,
@@ -356,25 +357,29 @@ where
     R: Read + Seek + Send + 'static,
 {
     let mut archive = zip::ZipArchive::new(source).map_err(zip_error)?;
-    let names: Vec<String> = archive
+    let entries: Vec<String> = archive
         .file_names()
+        .map(|name| name.map(Cow::into_owned))
+        .collect::<zip::result::ZipResult<_>>()
+        .map_err(zip_error)?;
+    let names: Vec<String> = entries
+        .iter()
         .filter(|name| !name.ends_with('/'))
-        .map(str::to_owned)
+        .cloned()
         .collect();
     let target = match resolve_member(&names, member)? {
         Selection::One(target) => target,
         Selection::All => {
-            let indices: Vec<usize> = (0..archive.len())
-                .filter(|&i| archive.name_for_index(i).is_some_and(is_extxyz_member))
+            let members: Vec<(usize, String)> = entries
+                .into_iter()
+                .enumerate()
+                .filter(|(_, name)| is_extxyz_member(name))
                 .collect();
             return Ok(spawn_pipe(move |tx| {
                 let mut stream = MemberStream::new(tx);
-                for index in indices {
+                for (index, name) in members {
                     let flow = match archive.by_index(index) {
-                        Ok(entry) => {
-                            let name = entry.name().to_owned();
-                            stream.append(&name, entry)
-                        }
+                        Ok(entry) => stream.append(&name, entry),
                         Err(error) => stream.fail(io::Error::other(error.to_string())),
                     };
                     if flow.is_break() {
@@ -385,12 +390,9 @@ where
             }));
         }
     };
-    let index = (0..archive.len())
-        .find(|&i| {
-            archive
-                .by_index_raw(i)
-                .is_ok_and(|entry| entry.name() == target)
-        })
+    let index = entries
+        .iter()
+        .position(|name| *name == target)
         .expect("resolved member is present");
 
     Ok(spawn_pipe(move |tx| match archive.by_index(index) {

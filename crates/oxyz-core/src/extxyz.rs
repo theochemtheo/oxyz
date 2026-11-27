@@ -864,13 +864,13 @@ fn assemble_batch(
 
     let mut builder = BatchBuilder::new();
     for &index in indices {
-        if let Some(n_frames) = n_frames {
-            if index >= n_frames {
-                return Err(ExtxyzError::FrameOutOfRange {
-                    frame_index: index,
-                    n_frames,
-                });
-            }
+        if let Some(n_frames) = n_frames
+            && index >= n_frames
+        {
+            return Err(ExtxyzError::FrameOutOfRange {
+                frame_index: index,
+                n_frames,
+            });
         }
 
         let remaining = uses.get_mut(&index).expect("counted above");
@@ -1014,13 +1014,13 @@ fn assemble_projected_batch(
 
     let mut acc = ProjectedAccumulator::default();
     for &index in indices {
-        if let Some(n_frames) = n_frames {
-            if index >= n_frames {
-                return Err(ExtxyzError::FrameOutOfRange {
-                    frame_index: index,
-                    n_frames,
-                });
-            }
+        if let Some(n_frames) = n_frames
+            && index >= n_frames
+        {
+            return Err(ExtxyzError::FrameOutOfRange {
+                frame_index: index,
+                n_frames,
+            });
         }
 
         let remaining = uses.get_mut(&index).expect("counted above");
@@ -1947,7 +1947,7 @@ fn empty_column_data(kind: ColumnKind, cells: usize) -> ColumnData {
 fn parse_properties(descriptor: &str) -> Result<Vec<PropertySpec>> {
     let parts: Vec<&str> = descriptor.split(':').collect();
 
-    if parts.len() % 3 != 0 {
+    if !parts.len().is_multiple_of(3) {
         return Err(ExtxyzError::InvalidProperties {
             descriptor: descriptor.to_owned(),
             reason: "expected name:kind:width triplets",

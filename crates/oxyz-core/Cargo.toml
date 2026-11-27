@@ -12,25 +12,25 @@ default = ["parallel"]
 parallel = ["dep:rayon"]
 
 [dependencies]
-compact_str = "0.8"
+compact_str = "0.10"
 fast-float2 = "0.2.3"
 flate2 = "1"
 memchr = "2.8.1"
 rayon = { version = "1", optional = true }
-ruzstd = "0.8"
+ruzstd = "0.9"
 # Shortest round-trippable f64 formatting, so read -> write -> read is exact.
 ryu = "1"
 tar = { version = "0.4", default-features = false }
 thiserror = "2"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 
 [dev-dependencies]
-criterion = "0.7.0"
+criterion = "0.8.2"
 # ruzstd only decodes, so zstd fixtures are committed rather than encoded.
 flate2 = "1"
 proptest = "1.11.0"
 tar = { version = "0.4", default-features = false }
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 
 [[bench]]
 name = "parse"

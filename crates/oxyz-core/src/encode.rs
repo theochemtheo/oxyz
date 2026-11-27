@@ -382,10 +382,10 @@ impl FrameSink {
         level: Option<i32>,
         append: bool,
     ) -> Result<Self> {
-        if let Some(level) = level {
-            if !(0..=9).contains(&level) {
-                return Err(ExtxyzError::InvalidCompressionLevel { level });
-            }
+        if let Some(level) = level
+            && !(0..=9).contains(&level)
+        {
+            return Err(ExtxyzError::InvalidCompressionLevel { level });
         }
 
         let codec = detect_for_write(path, compression);

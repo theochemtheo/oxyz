@@ -21,6 +21,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Internal
 
 - PyO3 0.30 and rust-numpy 0.30.
+- zip 9, ruzstd 0.9, compact_str 0.10 and criterion 0.8, with the rest of
+  the lockfile refreshed. `oxyz-core` now needs Rust 1.89.
 
 ## [1.4.0] - 2026-11-18
 

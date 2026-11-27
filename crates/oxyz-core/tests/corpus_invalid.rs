@@ -120,15 +120,15 @@ fn every_invalid_fixture_fails_with_contract() {
                 case.line
             ));
         }
-        if let Some(column) = case.column {
-            if error.column() != Some(column) {
-                problems.push(format!(
-                    "{}: column {:?}, expected {}",
-                    case.file,
-                    error.column(),
-                    column
-                ));
-            }
+        if let Some(column) = case.column
+            && error.column() != Some(column)
+        {
+            problems.push(format!(
+                "{}: column {:?}, expected {}",
+                case.file,
+                error.column(),
+                column
+            ));
         }
         let message = error.to_string();
         if !message.contains(case.wording) {
