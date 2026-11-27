@@ -1955,10 +1955,10 @@ fn parse_properties(descriptor: &str) -> Result<Vec<PropertySpec>> {
     }
 
     parts
-        .chunks_exact(3)
-        .map(|triplet| {
-            let (name, kind, width) = (triplet[0], triplet[1], triplet[2]);
-
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|&[name, kind, width]| {
             if name.is_empty() {
                 return Err(ExtxyzError::InvalidProperties {
                     descriptor: descriptor.to_owned(),
