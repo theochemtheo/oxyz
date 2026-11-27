@@ -34,7 +34,8 @@ pip install "oxyz[s3]"
 The base runtime requires Python ≥3.12, NumPy ≥2 and PyYAML ≥6. Extras add
 `ase.Atoms`, `metatomic.torch.System`, `torch_sim.SimState`, or remote reads
 (including HuggingFace) respectively; optional libraries are imported when used.
-Wheels cover Linux, macOS and Windows. The support window follows
+Wheels cover Linux, macOS and Windows, including free-threaded CPython 3.14
+(`3.14t`), on which oxyz leaves the GIL disabled. The support window follows
 [SPEC 0](https://scientific-python.org/specs/spec-0000/).
 
 Installing also provides `oxyz scan`, `oxyz check` and `oxyz freeze`.

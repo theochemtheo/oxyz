@@ -30,6 +30,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: 3.15",
+    "Programming Language :: Python :: Free Threading :: 3 - Stable",
     "Programming Language :: Rust",
     "Topic :: Scientific/Engineering :: Chemistry",
     "Topic :: Scientific/Engineering :: Physics",
@@ -66,7 +67,9 @@ test = [
     "sybil[pytest]>=10.1,<11",
 ]
 # obstore comes from the `s3` extra, as a user would install it.
-s3-test = ["boto3>=1.35", "moto[s3,server]>=5"]
+# moto's `server` extra pulls in docker, whose pywin32 has no free-threaded wheel;
+# its S3 server needs only flask.
+s3-test = ["boto3>=1.35", "moto[s3]>=5", "flask", "flask-cors"]
 dev = [
     "ase>=3.28.0",
     "matplotlib>=3.10.9",

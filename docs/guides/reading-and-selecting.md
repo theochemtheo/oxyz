@@ -39,6 +39,9 @@ This is the local-data version of the inspection workflow in
 [`examples/read_numpy.py`](https://github.com/theochemtheo/oxyz/blob/main/examples/read_numpy.py).
 Use `threads=1` for serial eager parsing; the default uses available cores.
 Thread count does not change results or which parse error is reported.
+Parsing runs without the interpreter lock, so reads and writes called from
+separate Python threads overlap; on free-threaded Python (`3.14t`) the
+surrounding Python work does too.
 
 ## Choose a return type and order
 
@@ -99,7 +102,9 @@ assert repeated[1].metadata["energy"] == 0.0
 `iread` always returns an iterator, including for a single integer. Forward
 slices stream through the required prefix; skipped prefix frames are parsed too.
 The file stays open until the iterator is dropped. Do not retain every yielded
-frame if bounded memory is the objective.
+frame if bounded memory is the objective. Give each thread its own iterator: as
+with any Python generator, one advanced from two threads at once raises
+`ValueError`.
 
 ```python title="Consume and exhaust a frame iterator"
 import oxyz

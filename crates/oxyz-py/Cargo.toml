@@ -19,5 +19,5 @@ extension-module = ["pyo3/extension-module"]
 oxyz-core = { path = "../oxyz-core" }
 ndarray = "0.17"
 numpy = "0.28"
-# abi3 means one wheel per platform, but none for free-threaded builds.
+# abi3 excludes free-threaded builds, which get version-specific wheels instead.
 pyo3 = { version = "0.28", features = ["abi3-py312"] }
