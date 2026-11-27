@@ -67,7 +67,9 @@ test = [
     "sybil[pytest]>=10.1,<11",
 ]
 # obstore comes from the `s3` extra, as a user would install it.
-s3-test = ["boto3>=1.35", "moto[s3,server]>=5"]
+# moto's `server` extra pulls in docker, whose pywin32 has no free-threaded wheel;
+# its S3 server needs only flask.
+s3-test = ["boto3>=1.35", "moto[s3]>=5", "flask", "flask-cors"]
 dev = [
     "ase>=3.28.0",
     "matplotlib>=3.10.9",
