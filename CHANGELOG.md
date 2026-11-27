@@ -6,6 +6,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Free-threaded CPython 3.14 (`3.14t`) support: wheels for every platform, and
+  importing oxyz leaves the GIL disabled. Separate threads may read and write
+  concurrently; each iterator and `Writer` belongs to one thread at a time.
+
 ## [1.4.0] - 2026-11-18
 
 ### Added

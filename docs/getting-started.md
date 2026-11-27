@@ -6,7 +6,9 @@ converter is needed.
 
 ## Install
 
-oxyz requires Python 3.12 or newer. The base package depends on NumPy and PyYAML:
+oxyz requires Python 3.12 or newer, and supports free-threaded CPython 3.14
+(`3.14t`) without re-enabling the GIL. The base package depends on NumPy and
+PyYAML:
 
 === "Package"
 
