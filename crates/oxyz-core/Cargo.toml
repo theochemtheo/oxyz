@@ -14,7 +14,7 @@ parallel = ["dep:rayon"]
 [dependencies]
 compact_str = "0.10"
 fast-float2 = "0.2.3"
-flate2 = "1"
+flate2 = { version = "1", default-features = false, features = ["zlib-rs", "runtime_detection"] }
 memchr = "2.8.1"
 rayon = { version = "1", optional = true }
 ruzstd = "0.9"
@@ -27,7 +27,7 @@ zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 [dev-dependencies]
 criterion = "0.8.2"
 # ruzstd only decodes, so zstd fixtures are committed rather than encoded.
-flate2 = "1"
+flate2 = { version = "1", default-features = false, features = ["zlib-rs", "runtime_detection"] }
 proptest = "1.11.0"
 tar = { version = "0.4", default-features = false }
 zip = { version = "9", default-features = false, features = ["deflate-flate2"] }

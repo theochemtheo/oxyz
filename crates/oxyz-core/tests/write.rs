@@ -211,6 +211,45 @@ fn parallel_write_is_byte_identical_to_serial() {
     }
 }
 
+/// `count` frames of `n_atoms` atoms, each serialising to well over 64 KiB.
+fn large_frames(count: usize, n_atoms: usize) -> Vec<Frame> {
+    (0..count)
+        .map(|i| {
+            let pos = (0..3 * n_atoms)
+                .map(|k| ((i * 7919 + k * 104_729) % 10_007) as f64 / 97.0)
+                .collect();
+            Frame {
+                n_atoms,
+                columns: vec![
+                    col("species", 1, ColumnData::Str(vec!["Si".into(); n_atoms])),
+                    col("pos", 3, ColumnData::Real(pos)),
+                ],
+                metadata: vec![],
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn parallel_gzip_write_is_byte_identical_to_serial_across_blocks() {
+    let frames = large_frames(8, 2_000);
+    let path = temp_path("blocks.xyz.gz");
+    for level in [None, Some(0), Some(1)] {
+        write_frames(&path, &frames, Compression::Infer, level, false).unwrap();
+        let serial_bytes = fs::read(&path).unwrap();
+        for threads in [Some(1), Some(3), Some(8)] {
+            write_frames_parallel(&path, &frames, Compression::Infer, level, false, threads)
+                .unwrap();
+            assert_eq!(
+                fs::read(&path).unwrap(),
+                serial_bytes,
+                "parallel gzip differs from serial at level={level:?} threads={threads:?}"
+            );
+        }
+    }
+    fs::remove_file(&path).unwrap();
+}
+
 #[test]
 fn parallel_write_reports_the_first_invalid_frame_and_leaves_no_file() {
     // The frame missing `pos` is reported, as in the serial writer, and no file
