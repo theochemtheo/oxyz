@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-27
+
 ### Added
 
 - Free-threaded CPython 3.14 (`3.14t`) support: wheels for every platform, and
@@ -614,6 +616,7 @@ for reading atomistic-simulation datasets into numpy or ASE.
 - abi3 wheels for CPython 3.11 and newer on Linux (x86_64, aarch64), macOS
   (arm64, x86_64), and Windows (x64).
 
+[1.5.0]: https://github.com/theochemtheo/oxyz/releases/tag/v1.5.0
 [1.4.0]: https://github.com/theochemtheo/oxyz/releases/tag/v1.4.0
 [1.3.1]: https://github.com/theochemtheo/oxyz/releases/tag/v1.3.1
 [1.3.0]: https://github.com/theochemtheo/oxyz/releases/tag/v1.3.0

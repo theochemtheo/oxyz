@@ -1,6 +1,6 @@
 [package]
 name = "oxyz-py"
-version = "1.4.0"
+version = "1.5.0"
 description = "Python bindings for the oxyz extxyz reader and writer"
 edition.workspace = true
 rust-version.workspace = true
