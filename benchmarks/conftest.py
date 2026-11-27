@@ -7,7 +7,9 @@ the stores built from it need ~2 GB of cache and a slow first run.
 
 from __future__ import annotations
 
+import gzip
 import random
+import shutil
 from pathlib import Path
 
 import pytest
@@ -255,6 +257,28 @@ def large_frames() -> Path:
 @pytest.fixture(scope="session")
 def metadata_heavy() -> Path:
     return trajectory_files()["metadata_heavy"]
+
+
+def _gzipped(path: Path) -> Path:
+    gz = path.with_name(path.name + ".gz")
+    if gz.exists():
+        return gz
+    tmp = gz.with_suffix(".tmp")
+    # mtime=0 keeps the compressed bytes identical across regenerations.
+    with path.open("rb") as src, gzip.GzipFile(tmp, "wb", mtime=0) as dst:
+        shutil.copyfileobj(src, dst)
+    tmp.rename(gz)
+    return gz
+
+
+@pytest.fixture(scope="session")
+def many_small_frames_gz(many_small_frames: Path) -> Path:
+    return _gzipped(many_small_frames)
+
+
+@pytest.fixture(scope="session")
+def large_frames_gz(large_frames: Path) -> Path:
+    return _gzipped(large_frames)
 
 
 @pytest.fixture(scope="session")
