@@ -528,11 +528,11 @@ impl<W: Write> Write for Blocks<W> {
             self.inner.write_all(&self.pending)?;
             self.pending.clear();
         }
-        let mut blocks = rest.chunks_exact(BLOCK);
-        for block in &mut blocks {
+        let (blocks, remainder) = rest.as_chunks::<BLOCK>();
+        for block in blocks {
             self.inner.write_all(block)?;
         }
-        self.pending.extend_from_slice(blocks.remainder());
+        self.pending.extend_from_slice(remainder);
         Ok(data.len())
     }
 
