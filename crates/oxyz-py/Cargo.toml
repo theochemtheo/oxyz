@@ -18,6 +18,6 @@ extension-module = ["pyo3/extension-module"]
 [dependencies]
 oxyz-core = { path = "../oxyz-core" }
 ndarray = "0.17"
-numpy = "0.28"
+numpy = "0.30"
 # abi3 excludes free-threaded builds, which get version-specific wheels instead.
-pyo3 = { version = "0.28", features = ["abi3-py312"] }
+pyo3 = { version = "0.30", features = ["abi3-py312"] }

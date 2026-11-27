@@ -18,6 +18,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `ValueError` for a file of more than one frame, and `FrameIndex` volumes
   that are NaN now compare equal. Both are unhashable, as `Frame` is.
 
+### Internal
+
+- PyO3 0.30 and rust-numpy 0.30.
+
 ## [1.4.0] - 2026-11-18
 
 ### Added
