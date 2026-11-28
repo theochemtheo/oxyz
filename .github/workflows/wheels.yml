@@ -177,7 +177,8 @@ jobs:
             esac
           done
 
-  # PyPI accepts only single-subject provenance, so each file is signed alone.
+  # PyPI accepts only single-subject provenance, so each file is signed alone;
+  # `prepare` rejects a glob that matched more or fewer than one file.
   attest:
     name: Attest ${{ matrix.artifact }} (${{ matrix.subject.kind }})
     runs-on: ubuntu-latest
@@ -207,24 +208,11 @@ jobs:
         with:
           name: ${{ matrix.artifact }}
           path: dist
-      - name: Select the file to attest
-        id: subject
-        env:
-          GLOB: ${{ matrix.subject.glob }}
-        run: |
-          shopt -s nullglob
-          # shellcheck disable=SC2206
-          files=(dist/$GLOB)
-          if [ "${#files[@]}" -ne 1 ]; then
-            echo "::error::expected one file matching $GLOB, found ${#files[@]}"
-            exit 1
-          fi
-          echo "path=${files[0]}" >> "$GITHUB_OUTPUT"
       - name: Generate build provenance
         id: attest
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: ${{ steps.subject.outputs.path }}
+          subject-path: dist/${{ matrix.subject.glob }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: provenance-${{ matrix.artifact }}-${{ matrix.subject.kind }}
