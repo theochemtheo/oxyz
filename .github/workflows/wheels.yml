@@ -177,8 +177,10 @@ jobs:
             esac
           done
 
+  # PyPI accepts only single-subject provenance, so each file is signed alone;
+  # `prepare` rejects a glob that matched more or fewer than one file.
   attest:
-    name: Attest ${{ matrix.artifact }}
+    name: Attest ${{ matrix.artifact }} (${{ matrix.subject.kind }})
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     needs: [linux, macos, windows, sdist]
@@ -195,20 +197,25 @@ jobs:
           - wheels-macos-aarch64
           - wheels-macos-x86_64
           - wheels-windows-x64
-          - wheels-sdist
+        subject:
+          - { kind: abi3, glob: "*-abi3-*.whl" }
+          - { kind: cp314t, glob: "*-cp314t-*.whl" }
+        include:
+          - artifact: wheels-sdist
+            subject: { kind: sdist, glob: "*.tar.gz" }
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ matrix.artifact }}
           path: dist
-      - name: Generate per-file build provenance
+      - name: Generate build provenance
         id: attest
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: dist/*
+          subject-path: dist/${{ matrix.subject.glob }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: provenance-${{ matrix.artifact }}
+          name: provenance-${{ matrix.artifact }}-${{ matrix.subject.kind }}
           path: ${{ steps.attest.outputs.bundle-path }}
           if-no-files-found: error
 
@@ -234,13 +241,11 @@ jobs:
           enable-cache: false
       - name: Convert and verify build provenance
         run: |
-          for artifact in wheels-*; do
-            uv run --locked --script scripts/pypi_slsa_attestation.py \
-              provenance-"$artifact"/* "$artifact"/* \
-              --repository "$GITHUB_REPOSITORY" --workflow wheels.yml
-          done
           mkdir dist
           cp wheels-*/* dist/
+          uv run --locked --script scripts/pypi_slsa_attestation.py \
+            provenance-*/* --dist-dir dist \
+            --repository "$GITHUB_REPOSITORY" --workflow wheels.yml
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pypi-dist
